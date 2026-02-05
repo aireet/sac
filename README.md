@@ -1,92 +1,497 @@
-# sac
+# Claude Code Sandbox Platform
 
+企业内部 Claude Code 沙箱平台，为非技术人员提供基于 xterm.js 的 Web 终端访问。
 
-
-## Getting started
-
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+## 架构设计
 
 ```
-cd existing_repo
-git remote add origin http://g.echo.tech/dev/sac.git
-git branch -M master
-git push -uf origin master
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│                            Browser (运营人员操作界面)                                      │
+│                                                                                           │
+│  ┌──────────────────────────┐  ┌──────────────────────┐  ┌──────────────────────────┐  │
+│  │  xterm.js Terminal       │  │  Skill Panel         │  │  Skill Register          │  │
+│  │  - claude对话界面             │  │  (技能快捷列表)        │  │  (技能注册器)            │  │
+│  │  - 自然语言交互             │  │                      │  │                          │  │
+│  │  - 实时输出流              │  │  ┌───────────────┐   │  │  ┌────────────────────┐ │  │
+│  │  - 支持富文本/表格渲染   │  │  │ 数据查询      │   │    │  │ 官方 Skill         │ │  │
+│  └───────────┬──────────────┘  │  │ - 本周销售额  │     │  │  │ (研发提供)         │ │  │
+│              │                  │  │ - 用户增长    │    │  │  └────────────────────┘ │  │
+│              │                  │  │ - 订单统计    │   │  │  ┌────────────────────┐ │  │
+│              │                  │  └───────────────┘   │  │  │ 自定义 Skill       │ │  │
+│              │                  │  ┌───────────────┐   │  │  │ (运营创建)         │ │  │
+│              │                  │  │ 数据处理      │   │  │  │                    │ │  │
+│              │                  │  │ - 数据清洗    │   │  │  │ 📝 创建            │ │  │
+│              │                  │  │ - 格式转换    │   │  │  │ ✏️  编辑            │ │  │
+│              │                  │  │ - 导出报表    │   │  │  │ 🗑️  删除            │ │  │
+│              │                  │  └───────────────┘   │  │  │ 📤 分享            │ │  │
+│              │                  │  ┌───────────────┐   │  │  └────────────────────┘ │  │
+│              │                  │  │ 历史查询      │   │  └───────────┬──────────────┘  │
+│              │                  │  │ - 常用收藏    │   │              │                  │
+│              │                  │  │ - 一键重执行  │   │              │                  │
+│              │                  │  └───────────────┘   │              │                  │
+│              │                  └──────────┬───────────┘              │                  │
+│              │                             │                          │                  │
+│              │                             │        REST API          │                  │
+│              │                             │   (CRUD Skill 定义)      │                  │
+│              └─────────────────────────────┴──────────────────────────┘                  │
+│                                      共享同一个 WebSocket                                 │
+└────────────────────────────────────────────┼─────────────────────────────────────────────┘
+                                             │ WebSocket (ws://host/ws/userId/sessionId)
+                                             ↓
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                              Istio Ingress Gateway                                      │
+│                                                                                         │
+│  /ws/:userId/:sessionId  →  WebSocket Proxy                                            │
+│  /api/*                  →  API Gateway                                                │
+│  /hooks/conversation     →  Hook Collector                                             │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+              ↓                                              ↓
+┌──────────────────────────────┐              ┌──────────────────────────────┐
+│   Go Backend Services        │              │   PostgreSQL/MongoDB         │
+│                              │              │   (对话日志存储)             │
+│  ├─ WebSocket Proxy          │              └──────────────────────────────┘
+│  │   (双向透明转发)          │
+│  ├─ Container Manager        │
+│  ├─ Hook Collector           │
+│  ├─ Skill Registry           │
+│  └─ Auth Service             │
+└───────────────┬──────────────┘
+                │ 查询 Pod IP & 转发 WebSocket
+                ↓
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                              Kubernetes Cluster                                         │
+│                                                                                         │
+│  ┌───────────────────────────────────────────────────────────────────────────────┐     │
+│  │  User Pod: claude-code-user-001-session-abc                                   │     │
+│  │                                                                               │     │
+│  │  ┌─────────────────────────────────────────────────────────────────────────┐ │     │
+│  │  │  ttyd (Port 7681)                                                       │ │     │
+│  │  │  - 轻量级 WebSocket 服务器                                               │ │     │
+│  │  │  - 暴露 /ws endpoint                                                    │ │     │
+│  │  │  - 启动命令: bash 或 claude                                              │ │     │
+│  │  └────────────────────┬────────────────────────────────────────────────────┘ │     │
+│  │                       │ PTY (伪终端)                                          │     │
+│  │                       ↓                                                       │     │
+│  │  ┌─────────────────────────────────────────────────────────────────────────┐ │     │
+│  │  │  Bash Shell / Claude Code CLI                                           │ │     │
+│  │  │  - 接收命令并执行                                                        │ │     │
+│  │  │  - Custom Skills (/home/claude/.claude/...)                             │ │     │
+│  │  │  - Hooks (发送对话到后端)                                                │ │     │
+│  │  │  - Working Directory: /workspace                                        │ │     │
+│  │  └─────────────────────────────────────────────────────────────────────────┘ │     │
+│  │                                                                               │     │
+│  │  Resources: CPU 2 cores, Memory 4Gi, Storage 10Gi                            │     │
+│  └───────────────────────────────────────────────────────────────────────────────┘     │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Integrate with your tools
+### 数据流详解
 
-- [ ] [Set up project integrations](http://g.echo.tech/dev/sac/-/settings/integrations)
+**1. 用户输入流程**
+```
+用户键盘输入 "ls -la" + Enter
+    ↓
+xterm.js 捕获 onData 事件
+    ↓
+WebSocket.send("ls -la\r")
+    ↓
+Go WebSocket Proxy (透明转发)
+    ↓
+ttyd 接收字符流 (容器内 :7681/ws)
+    ↓
+写入 PTY (伪终端)
+    ↓
+Bash/Claude 进程执行命令
+```
 
-## Collaborate with your team
+**2. Skill Panel 交互流程**
+```
+用户点击 [本周销售额] 按钮
+    ↓
+JavaScript: ws.send("/query-sales --period=this-week\r")
+    ↓
+Go WebSocket Proxy (透明转发)
+    ↓
+ttyd 接收命令字符串
+    ↓
+写入 PTY
+    ↓
+Claude Code 执行 /query-sales skill
+    ↓
+输出结果 → PTY → ttyd → Go Proxy → xterm.js 显示
+```
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Automatically merge when pipeline succeeds](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+**3. Skill Register 工作流程**
+```
+运营用户在前端创建自定义 Skill
+    ↓
+前端: POST /api/skills (包含 skill 定义)
+    ↓
+Go Backend Skill Registry (存储到 PostgreSQL)
+    ↓
+异步同步到用户容器
+    ↓
+写入 /home/claude/.claude/skills/custom/my-skill.md
+    ↓
+Claude Code 热加载新 Skill
+    ↓
+前端 Skill Panel 自动刷新显示新按钮
+```
 
-## Test and Deploy
+**4. 关键特性**
+- xterm.js 和 Skill Panel 共享同一个 WebSocket 连接
+- ttyd 对命令来源无感知，统一处理所有字符流
+- 前端任何 UI 操作都可以通过发送命令字符串实现交互
+- 支持：按钮点击、快捷键、拖拽文件、右键菜单等
+- 运营可自助创建、编辑、分享自定义 Skill
+- Skill 定义支持参数化，可复用
 
-Use the built-in continuous integration in GitLab.
+## 核心功能
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing(SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+### 1. 对话采集（通过 Hooks）
 
-***
+Claude Code 配置文件 `~/.claude/config.json`:
+```json
+{
+  "hooks": {
+    "on-user-message": "curl -X POST http://hook-collector-service:8080/hooks/conversation -H 'Content-Type: application/json' -d '{\"user_id\":\"$USER_ID\",\"session_id\":\"$SESSION_ID\",\"type\":\"user\",\"content\":\"$MESSAGE\",\"timestamp\":\"$TIMESTAMP\"}' &",
+    "on-assistant-message": "curl -X POST http://hook-collector-service:8080/hooks/conversation -H 'Content-Type: application/json' -d '{\"user_id\":\"$USER_ID\",\"session_id\":\"$SESSION_ID\",\"type\":\"assistant\",\"content\":\"$MESSAGE\",\"timestamp\":\"$TIMESTAMP\"}' &"
+  }
+}
+```
 
-# Editing this README
+### 2. 预设 Skills
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thank you to [makeareadme.com](https://www.makeareadme.com/) for this template.
+前端展示常用操作按钮，通过 WebSocket 发送命令到容器：
 
-## Suggestions for a good README
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+```typescript
+// 实现原理
+const executeSkill = (command: string) => {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(command + '\r');  // \r 是回车键
+  }
+};
 
-## Name
-Choose a self-explaining name for your project.
+// 运营场景 Skills 示例
+skills = [
+  // 数据查询类
+  {
+    name: '本周销售额',
+    command: '/query-sales --period=this-week',
+    icon: '💰',
+    category: '数据查询'
+  },
+  {
+    name: '用户增长趋势',
+    command: '/query-user-growth --days=30',
+    icon: '📈',
+    category: '数据查询'
+  },
+  {
+    name: '订单统计',
+    command: '/query-orders --status=all',
+    icon: '📦',
+    category: '数据查询'
+  },
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+  // 数据分析类
+  {
+    name: '渠道转化分析',
+    command: '/analyze-conversion',
+    icon: '🎯',
+    category: '数据分析'
+  },
+  {
+    name: '用户留存分析',
+    command: '/analyze-retention',
+    icon: '🔄',
+    category: '数据分析'
+  },
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+  // 报表生成类
+  {
+    name: '生成周报',
+    command: '/report-weekly',
+    icon: '📊',
+    category: '报表生成'
+  },
+  {
+    name: '导出Excel',
+    command: '/export-excel',
+    icon: '📑',
+    category: '报表生成'
+  },
+];
+```
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+**支持的交互方式**：
+- ✅ 按钮点击
+- ✅ 快捷键绑定 (Ctrl+1, Ctrl+2...)
+- ✅ 右键菜单
+- ✅ 带参数的命令 (`/query-sales --period=this-week`)
+- ✅ 命令队列 (批量执行多个命令)
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+### 3. Skill Register (技能注册器)
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+运营人员可以通过图形化界面自助创建、管理自定义 Skill，无需编写代码。
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+#### 3.1 Skill 定义结构
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+```typescript
+interface SkillDefinition {
+  id: string;                    // 唯一标识
+  name: string;                  // 显示名称
+  description: string;           // 功能描述
+  icon: string;                  // 图标
+  category: string;              // 分类（数据查询/数据分析/报表生成）
+  prompt: string;                // 发送给 Claude 的提示词
+  parameters?: SkillParameter[]; // 可选参数
+  isOfficial: boolean;           // 是否官方 Skill
+  createdBy: string;             // 创建者
+  isPublic: boolean;             // 是否公开分享
+  createdAt: string;
+  updatedAt: string;
+}
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+interface SkillParameter {
+  name: string;                  // 参数名
+  label: string;                 // 显示标签
+  type: 'text' | 'select' | 'date' | 'number';
+  required: boolean;
+  defaultValue?: string;
+  options?: string[];            // select 类型的选项
+}
+```
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+#### 3.2 创建自定义 Skill 示例
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+**场景**: 运营想要查询特定时间段的退款订单
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+```javascript
+// 在前端 Skill Register 界面填写表单
+{
+  name: '退款订单查询',
+  description: '查询指定时间段内的退款订单，包含订单金额、退款原因等信息',
+  icon: '💸',
+  category: '数据查询',
+  prompt: `请帮我查询 {{startDate}} 到 {{endDate}} 之间的所有退款订单。
 
-## License
-For open source projects, say how it is licensed.
+要求：
+1. 连接数据库查询 refund_orders 表
+2. 统计总退款金额和订单数量
+3. 按退款原因分类汇总
+4. 以表格形式展示结果
+5. 如果退款金额超过10万，请特别标注`,
+  parameters: [
+    {
+      name: 'startDate',
+      label: '开始日期',
+      type: 'date',
+      required: true
+    },
+    {
+      name: 'endDate',
+      label: '结束日期',
+      type: 'date',
+      required: true
+    }
+  ],
+  isPublic: true  // 分享给其他运营同学使用
+}
+```
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+#### 3.3 Skill 执行流程
+
+```
+1. 用户在 Skill Panel 点击 [退款订单查询]
+   ↓
+2. 弹出参数输入表单（选择日期范围）
+   ↓
+3. 前端将参数填充到 prompt 模板
+   prompt = prompt.replace('{{startDate}}', '2024-01-01')
+                  .replace('{{endDate}}', '2024-01-31')
+   ↓
+4. 通过 WebSocket 发送完整 prompt 给 Claude
+   ws.send(`${filledPrompt}\r`)
+   ↓
+5. Claude 执行数据库查询并返回结果
+   ↓
+6. 结果在 Terminal 中实时显示
+```
+
+#### 3.4 Skill 管理 API
+
+```typescript
+// 前端调用后端 API 管理 Skill
+GET    /api/skills              // 获取所有 Skill（官方 + 自定义）
+GET    /api/skills/:id          // 获取单个 Skill
+POST   /api/skills              // 创建新 Skill
+PUT    /api/skills/:id          // 更新 Skill
+DELETE /api/skills/:id          // 删除 Skill
+POST   /api/skills/:id/fork     // 复制并修改他人的 Skill
+GET    /api/skills/public       // 获取所有公开分享的 Skill
+```
+
+#### 3.5 Skill 同步机制
+
+```
+后端 Skill Registry 变更
+    ↓
+触发 K8s ConfigMap 更新
+    ↓
+通过 Kubernetes API 同步到用户 Pod
+    ↓
+写入 /home/claude/.claude/skills/custom/
+    ↓
+Claude Code 自动加载新 Skill (inotify 监听文件变化)
+    ↓
+WebSocket 推送事件到前端
+    ↓
+前端 Skill Panel 自动刷新
+```
+
+#### 3.6 权限控制
+
+- **官方 Skill**: 仅研发/产品可创建，所有用户只读
+- **个人 Skill**: 用户可 CRUD 自己创建的 Skill
+- **公开 Skill**: 创建者可选择公开分享，其他用户可查看和 Fork
+- **团队 Skill**: 按部门/团队划分，团队成员可见
+
+### 4. 容器生命周期管理
+
+- 用户首次登录：创建专属 Pod
+- 闲置 2 小时：自动暂停（保留数据）
+- 闲置 7 天：销毁容器
+
+## 技术栈
+
+- **前端**: React + xterm.js + xterm-addon-fit + WebSocket API
+- **后端**: Go + Gin + gorilla/websocket + kubernetes/client-go
+- **容器终端**: ttyd (轻量级 WebSocket 终端服务器)
+- **容器基础**: Ubuntu 22.04 + Claude Code CLI + Bash
+- **基础设施**: Kubernetes + Istio + PostgreSQL/MongoDB
+
+### 核心技术选型说明
+
+**ttyd**:
+- gotty 的现代替代品，C 语言编写，性能优越
+- 原生支持 xterm.js，完美兼容 WebSocket 协议
+- 提供 PTY (伪终端) 管理，无需自己实现
+- 支持终端尺寸调整、认证、TLS 等企业级特性
+
+## 目录结构
+
+```
+claude-code-sandbox/
+├── backend/                 # Go 后端
+│   ├── cmd/
+│   │   ├── api/            # API Gateway
+│   │   ├── ws-proxy/       # WebSocket 代理
+│   │   └── hook-collector/ # Hook 采集服务
+│   ├── internal/
+│   │   ├── container/      # K8s 容器管理
+│   │   ├── session/        # 会话管理
+│   │   ├── auth/           # 认证授权
+│   │   ├── skill/          # Skill 注册与管理
+│   │   └── storage/        # 数据存储
+│   └── pkg/
+├── frontend/               # React 前端
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── Terminal.tsx
+│   │   │   ├── SkillPanel.tsx
+│   │   │   ├── SkillRegister.tsx    # Skill 注册器
+│   │   │   ├── SkillEditor.tsx      # Skill 编辑器
+│   │   │   └── SessionManager.tsx
+│   │   └── services/
+│   │       ├── websocket.ts
+│   │       └── skillAPI.ts          # Skill CRUD API
+├── docker/                 # 容器镜像
+│   ├── claude-code/
+│   │   ├── Dockerfile
+│   │   ├── entrypoint.sh
+│   │   └── skills/
+└── k8s/                    # K8s 配置
+    ├── deployments/
+    ├── services/
+    └── istio/
+```
+
+## 快速开始
+
+### 本地测试 ttyd
+
+```bash
+# 安装 ttyd
+brew install ttyd  # macOS
+apt install ttyd   # Ubuntu
+
+# 启动测试
+ttyd --port 7681 --writable bash
+
+# 浏览器访问
+open http://localhost:7681
+```
+
+### 容器镜像构建
+
+```bash
+cd docker/claude-code
+docker build -t claude-code-sandbox:latest .
+docker run -p 7681:7681 \
+  -e USER_ID=test-user \
+  -e SESSION_ID=test-session \
+  claude-code-sandbox:latest
+```
+
+### 前端开发
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### 后端开发
+
+```bash
+cd backend/cmd/ws-proxy
+go mod download
+go run main.go
+```
+
+## 实现细节
+
+详细实现文档请查看：
+- [容器配置](./docker/claude-code/README.md)
+- [前端实现](./frontend/README.md)
+- [后端服务](./backend/README.md)
+- [K8s 部署](./k8s/README.md)
+
+## 待办事项
+
+### 后端开发
+- [ ] 实现 Go WebSocket Proxy 认证逻辑
+- [ ] 配置 K8s Service 和 Istio Gateway
+- [ ] 实现容器生命周期管理 (创建/暂停/销毁)
+- [ ] 添加对话采集 Hook Collector
+- [ ] **实现 Skill Registry API (CRUD + 同步机制)**
+- [ ] **Skill 权限控制 (官方/个人/公开/团队)**
+- [ ] 监控和日志采集
+- [ ] 用户数据持久化 (PVC)
+
+### 前端开发
+- [ ] 前端 Skill Panel 界面实现
+- [ ] **Skill Register 界面实现**
+  - [ ] Skill 创建/编辑表单
+  - [ ] 参数配置界面
+  - [ ] Skill 预览和测试功能
+  - [ ] 公开 Skill 市场
+  - [ ] Fork 和分享功能
+- [ ] xterm.js Terminal 集成
+- [ ] WebSocket 连接管理
+
+### 容器镜像
+- [ ] 构建 Claude Code 基础镜像
+- [ ] 配置 Skill 热加载机制
+- [ ] 预装常用数据库客户端工具

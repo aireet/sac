@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: claude-code-USER_ID-SESSION_ID
+  labels:
+    app: claude-code
+    user-id: USER_ID
+    session-id: SESSION_ID
+spec:
+  containers:
+  - name: claude-code
+    image: docker-register-registry-vpc.cn-shanghai.cr.aliyuncs.com/dev/sac:latest
+    ports:
+    - containerPort: 7681
+      name: ttyd
+      protocol: TCP
+    env:
+    - name: USER_ID
+      value: "USER_ID"
+    - name: SESSION_ID
+      value: "SESSION_ID"
+    resources:
+      requests:
+        cpu: "2"
+        memory: 4Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+    volumeMounts:
+    - name: workspace
+      mountPath: /workspace
+  volumes:
+  - name: workspace
+    persistentVolumeClaim:
+      claimName: pvc-USER_ID-SESSION_ID
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-USER_ID-SESSION_ID
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

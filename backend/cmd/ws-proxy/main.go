@@ -1,0 +1,55 @@
+package main
+
+import (
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/echotech/sac/internal/database"
+	"github.com/echotech/sac/internal/websocket"
+	"github.com/echotech/sac/pkg/config"
+	"github.com/gin-gonic/gin"
+)
+
+func main() {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Initialize database
+	if err := database.Initialize(cfg); err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer database.Close()
+
+	// Create Gin router
+	router := gin.Default()
+
+	// Create WebSocket proxy handler
+	proxyHandler := websocket.NewProxyHandler(database.DB)
+
+	// Register routes
+	router.GET("/health", proxyHandler.HealthCheck)
+	router.GET("/ws/:userId/:sessionId", proxyHandler.HandleWebSocket)
+
+	// Start server
+	addr := ":" + cfg.WSProxyPort
+	log.Printf("WebSocket Proxy starting on %s", addr)
+
+	// Graceful shutdown
+	go func() {
+		if err := router.Run(addr); err != nil {
+			log.Fatalf("Failed to start server: %v", err)
+		}
+	}()
+
+	// Wait for interrupt signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("Shutting down WebSocket Proxy...")
+}

@@ -1,0 +1,39 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: sac-routes
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - sac-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /api/
+    route:
+    - destination:
+        host: api-gateway
+        port:
+          number: 8080
+    corsPolicy:
+      allowOrigins:
+      - exact: "*"
+      allowMethods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+      allowHeaders:
+      - "*"
+      maxAge: 24h
+  - match:
+    - uri:
+        prefix: /ws/
+    route:
+    - destination:
+        host: ws-proxy
+        port:
+          number: 8081
+    websocketUpgrade: true
