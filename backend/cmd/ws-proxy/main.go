@@ -35,8 +35,8 @@ func main() {
 	router.GET("/health", proxyHandler.HealthCheck)
 	router.GET("/ws/:userId/:sessionId", proxyHandler.HandleWebSocket)
 
-	// Start server
-	addr := ":" + cfg.WSProxyPort
+	// Start server (listen on all interfaces for remote debugging)
+	addr := "0.0.0.0:" + cfg.WSProxyPort
 	log.Printf("WebSocket Proxy starting on %s", addr)
 
 	// Graceful shutdown

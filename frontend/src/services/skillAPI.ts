@@ -1,6 +1,17 @@
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api'
+// Auto-detect API URL based on current host
+const getApiBaseUrl = () => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL
+  }
+  // Use current host with port 8080
+  const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:'
+  const host = window.location.hostname
+  return `${protocol}//${host}:8080/api`
+}
+
+const API_BASE_URL = getApiBaseUrl()
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,

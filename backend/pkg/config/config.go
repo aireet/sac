@@ -21,6 +21,7 @@ type Config struct {
 
 	// Kubernetes
 	KubeconfigPath string
+	Namespace      string
 
 	// Docker Registry
 	DockerRegistry string
@@ -41,14 +42,15 @@ func Load() (*Config, error) {
 		DBPort:     getEnv("DB_PORT", "5432"),
 		DBUser:     getEnv("DB_USER", "sandbox"),
 		DBPassword: getEnv("DB_PASSWORD", "4SOZfo6t6Oyj9A=="),
-		DBName:     getEnv("DB_NAME", "sac"),
+		DBName:     getEnv("DB_NAME", "sandbox"),
 
 		// Kubernetes
 		KubeconfigPath: getEnv("KUBECONFIG_PATH", "../kubeconfig.yaml"),
+		Namespace:      getEnv("K8S_NAMESPACE", "sac"),
 
 		// Docker Registry
-		DockerRegistry: getEnv("DOCKER_REGISTRY", "docker-register-registry-vpc.cn-shanghai.cr.aliyuncs.com/dev"),
-		DockerImage:    getEnv("DOCKER_IMAGE", "sac:latest"),
+		DockerRegistry: getEnv("DOCKER_REGISTRY", "docker-register-registry-vpc.cn-shanghai.cr.aliyuncs.com"),
+		DockerImage:    getEnv("DOCKER_IMAGE", "prod/sac/cc:0.0.1"),
 	}, nil
 }
 

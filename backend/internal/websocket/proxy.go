@@ -32,10 +32,23 @@ func NewProxyHandler(db *bun.DB) *ProxyHandler {
 	}
 }
 
+// getConfigKeys returns the keys of the agent config map
+func getConfigKeys(config map[string]interface{}) []string {
+	if config == nil {
+		return []string{}
+	}
+	keys := make([]string, 0, len(config))
+	for k := range config {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // HandleWebSocket handles WebSocket proxy connections
 func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 	userID := c.Param("userId")
 	sessionID := c.Param("sessionId")
+	agentIDStr := c.Query("agent_id")
 
 	if userID == "" || sessionID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "userId and sessionId are required"})
@@ -50,10 +63,26 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 	}
 	defer clientConn.Close()
 
-	log.Printf("Client connected: userID=%s, sessionID=%s", userID, sessionID)
+	log.Printf("Client connected: userID=%s, sessionID=%s, agentID=%s", userID, sessionID, agentIDStr)
 
 	// Get Pod IP from database
 	ctx := context.Background()
+
+	// Load Agent configuration if provided
+	var agent *models.Agent
+	if agentIDStr != "" {
+		var a models.Agent
+		err := h.db.NewSelect().
+			Model(&a).
+			Where("id = ?", agentIDStr).
+			Scan(ctx)
+		if err == nil {
+			agent = &a
+			log.Printf("Loaded agent: %s (config keys: %v)", agent.Name, getConfigKeys(agent.Config))
+		} else {
+			log.Printf("Warning: Failed to load agent %s: %v", agentIDStr, err)
+		}
+	}
 	var session models.Session
 	err = h.db.NewSelect().
 		Model(&session).

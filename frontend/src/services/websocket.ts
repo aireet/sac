@@ -119,8 +119,20 @@ export class WebSocketManager {
 // Singleton instance
 let wsManager: WebSocketManager | null = null
 
-export function createWebSocketManager(userId: string, sessionId: string, baseUrl = 'ws://localhost:8081'): WebSocketManager {
-  const url = `${baseUrl}/ws/${userId}/${sessionId}`
+// Auto-detect WebSocket URL based on current host
+function getWebSocketBaseUrl(): string {
+  if (import.meta.env.VITE_WS_URL) {
+    return import.meta.env.VITE_WS_URL
+  }
+  // Use current host with port 8081
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const host = window.location.hostname
+  return `${protocol}//${host}:8081`
+}
+
+export function createWebSocketManager(userId: string, sessionId: string, baseUrl?: string): WebSocketManager {
+  const wsBaseUrl = baseUrl || getWebSocketBaseUrl()
+  const url = `${wsBaseUrl}/ws/${userId}/${sessionId}`
   wsManager = new WebSocketManager(url)
   return wsManager
 }

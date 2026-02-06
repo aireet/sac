@@ -6,7 +6,9 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/echotech/sac/internal/agent"
 	"github.com/echotech/sac/internal/database"
+	"github.com/echotech/sac/internal/session"
 	"github.com/echotech/sac/internal/skill"
 	"github.com/echotech/sac/pkg/config"
 	"github.com/gin-gonic/gin"
@@ -64,10 +66,29 @@ func main() {
 		// Skill routes
 		skillHandler := skill.NewHandler(database.DB)
 		skillHandler.RegisterRoutes(apiGroup)
+
+		// Session routes
+		sessionHandler, err := session.NewHandler(database.DB, cfg)
+		if err != nil {
+			log.Fatalf("Failed to create session handler: %v", err)
+		}
+		sessionHandler.RegisterRoutes(apiGroup)
+
+		// Agent routes
+		agentRoutes := apiGroup.Group("/agents")
+		{
+			agentRoutes.GET("", agent.GetAgents)
+			agentRoutes.GET("/:id", agent.GetAgent)
+			agentRoutes.POST("", agent.CreateAgent)
+			agentRoutes.PUT("/:id", agent.UpdateAgent)
+			agentRoutes.DELETE("/:id", agent.DeleteAgent)
+			agentRoutes.POST("/:id/skills", agent.InstallSkill)
+			agentRoutes.DELETE("/:id/skills/:skillId", agent.UninstallSkill)
+		}
 	}
 
-	// Start server
-	addr := ":" + cfg.APIGatewayPort
+	// Start server (listen on all interfaces for remote debugging)
+	addr := "0.0.0.0:" + cfg.APIGatewayPort
 	log.Printf("API Gateway starting on %s", addr)
 
 	// Graceful shutdown

@@ -12,7 +12,7 @@
           </template>
         </n-input>
 
-        <n-tabs type="line" animated>
+        <n-tabs v-model:value="activeCategory" type="line" animated>
           <n-tab-pane
             v-for="category in categories"
             :key="category"
@@ -115,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import {
   NCard,
   NSpace,
@@ -147,6 +147,7 @@ const message = useMessage()
 
 const skills = ref<Skill[]>([])
 const searchQuery = ref('')
+const activeCategory = ref<string>('')
 const showParameterModal = ref(false)
 const currentSkill = ref<Skill | null>(null)
 const parameterValues = ref<Record<string, any>>({})
@@ -216,6 +217,13 @@ const loadSkills = async () => {
     console.error(error)
   }
 }
+
+// Auto-select first category when categories change
+watch(categories, (newCategories) => {
+  if (newCategories.length > 0 && !activeCategory.value) {
+    activeCategory.value = newCategories[0]
+  }
+}, { immediate: true })
 
 onMounted(() => {
   loadSkills()

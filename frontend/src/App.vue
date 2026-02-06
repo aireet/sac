@@ -1,9 +1,16 @@
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
+import { NMessageProvider, NDialogProvider, NConfigProvider } from 'naive-ui'
 </script>
 
 <template>
-  <RouterView />
+  <NConfigProvider>
+    <NMessageProvider>
+      <NDialogProvider>
+        <RouterView />
+      </NDialogProvider>
+    </NMessageProvider>
+  </NConfigProvider>
 </template>
 
 <style>

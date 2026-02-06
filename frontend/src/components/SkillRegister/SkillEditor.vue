@@ -49,10 +49,11 @@
         </n-form-item>
 
         <n-form-item label="Icon" path="icon">
-          <n-input
+          <n-select
             v-model:value="formData.icon"
-            placeholder="Emoji icon (e.g., 💰)"
-            maxlength="2"
+            :options="iconOptions"
+            placeholder="Select an emoji icon"
+            :render-label="renderIconLabel"
           />
         </n-form-item>
 
@@ -65,43 +66,17 @@
         </n-form-item>
 
         <n-form-item label="Prompt" path="prompt">
-          <n-input
-            v-model:value="formData.prompt"
-            type="textarea"
-            placeholder="Enter the prompt for Claude. Use {{paramName}} for parameters."
-            :rows="10"
-          />
-        </n-form-item>
-
-        <n-form-item label="Parameters">
           <n-space vertical style="width: 100%">
-            <n-dynamic-input
-              v-model:value="formData.parameters"
-              :on-create="createParameter"
-            >
-              <template #default="{ value }">
-                <n-space>
-                  <n-input
-                    v-model:value="value.name"
-                    placeholder="Parameter name"
-                    style="width: 120px"
-                  />
-                  <n-input
-                    v-model:value="value.label"
-                    placeholder="Display label"
-                    style="width: 150px"
-                  />
-                  <n-select
-                    v-model:value="value.type"
-                    :options="parameterTypeOptions"
-                    style="width: 100px"
-                  />
-                  <n-checkbox v-model:checked="value.required">
-                    Required
-                  </n-checkbox>
-                </n-space>
-              </template>
-            </n-dynamic-input>
+            <n-input
+              v-model:value="formData.prompt"
+              type="textarea"
+              placeholder="Write your skill prompt in Markdown format.&#10;&#10;Example:&#10;# Task&#10;Help the user analyze data and create visualizations.&#10;&#10;## Guidelines&#10;- Be clear and concise&#10;- Provide step-by-step instructions&#10;- Include examples when helpful"
+              :rows="20"
+              :autosize="{ minRows: 20, maxRows: 40 }"
+            />
+            <n-text depth="3" style="font-size: 12px">
+              💡 Tip: Use Markdown syntax for formatting. Claude Code skills are written in Markdown.
+            </n-text>
           </n-space>
         </n-form-item>
 
@@ -129,7 +104,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, h, onMounted, computed } from 'vue'
+import { ref, h, onMounted } from 'vue'
 import {
   NCard,
   NSpace,
@@ -185,6 +160,39 @@ const categoryOptions = [
   { label: '其他', value: '其他' },
 ]
 
+const iconOptions = [
+  { label: '💰 Money', value: '💰' },
+  { label: '📈 Chart', value: '📈' },
+  { label: '📊 Bar Chart', value: '📊' },
+  { label: '📦 Package', value: '📦' },
+  { label: '🎯 Target', value: '🎯' },
+  { label: '📅 Calendar', value: '📅' },
+  { label: '📝 Note', value: '📝' },
+  { label: '🔍 Search', value: '🔍' },
+  { label: '⚙️ Settings', value: '⚙️' },
+  { label: '📧 Email', value: '📧' },
+  { label: '📱 Phone', value: '📱' },
+  { label: '💡 Bulb', value: '💡' },
+  { label: '🚀 Rocket', value: '🚀' },
+  { label: '⭐ Star', value: '⭐' },
+  { label: '✅ Check', value: '✅' },
+  { label: '❌ Cross', value: '❌' },
+  { label: '📂 Folder', value: '📂' },
+  { label: '📄 Document', value: '📄' },
+  { label: '🔔 Bell', value: '🔔' },
+  { label: '🎨 Palette', value: '🎨' },
+  { label: '🛠️ Tools', value: '🛠️' },
+  { label: '📌 Pin', value: '📌' },
+  { label: '🔗 Link', value: '🔗' },
+  { label: '💬 Chat', value: '💬' },
+  { label: '📸 Camera', value: '📸' },
+  { label: '🎬 Movie', value: '🎬' },
+  { label: '🌟 Sparkle', value: '🌟' },
+  { label: '🔥 Fire', value: '🔥' },
+  { label: '⚡ Lightning', value: '⚡' },
+  { label: '🎁 Gift', value: '🎁' },
+]
+
 const parameterTypeOptions = [
   { label: 'Text', value: 'text' },
   { label: 'Number', value: 'number' },
@@ -202,6 +210,13 @@ const pagination = {
   pageSize: 10,
 }
 
+const renderIconLabel = (option: any) => {
+  return h('div', { style: 'display: flex; align-items: center; gap: 8px; font-size: 16px;' }, [
+    h('span', { style: 'font-size: 20px;' }, option.value),
+    h('span', option.label.substring(3)), // Remove emoji from label text
+  ])
+}
+
 const createParameter = (): SkillParameter => ({
   name: '',
   label: '',
@@ -214,10 +229,15 @@ const columns: DataTableColumns<Skill> = [
     title: 'Icon',
     key: 'icon',
     width: 60,
+    align: 'center',
   },
   {
     title: 'Name',
     key: 'name',
+    minWidth: 200,
+    ellipsis: {
+      tooltip: true
+    }
   },
   {
     title: 'Category',
@@ -227,7 +247,7 @@ const columns: DataTableColumns<Skill> = [
   {
     title: 'Status',
     key: 'status',
-    width: 100,
+    width: 150,
     render(row) {
       return h(
         NSpace,
@@ -244,7 +264,8 @@ const columns: DataTableColumns<Skill> = [
   {
     title: 'Actions',
     key: 'actions',
-    width: 200,
+    width: 180,
+    fixed: 'right',
     render(row) {
       return h(
         NSpace,
@@ -368,5 +389,14 @@ onMounted(() => {
 .skill-editor {
   height: 100%;
   overflow-y: auto;
+  padding: 16px;
+}
+
+:deep(.n-data-table) {
+  font-size: 14px;
+}
+
+:deep(.n-data-table-td) {
+  padding: 12px 8px;
 }
 </style>

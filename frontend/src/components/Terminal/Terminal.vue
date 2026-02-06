@@ -12,6 +12,7 @@ const props = defineProps<{
   userId: string
   sessionId: string
   wsUrl?: string
+  agentId?: number
 }>()
 
 const terminalContainer = ref<HTMLElement>()
@@ -57,9 +58,24 @@ const initTerminal = () => {
   window.addEventListener('resize', handleResize)
 }
 
+const getWebSocketUrl = (): string => {
+  if (props.wsUrl) {
+    return props.wsUrl
+  }
+  // Auto-detect WebSocket URL based on current host
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const host = window.location.hostname
+  return `${protocol}//${host}:8081`
+}
+
 const connectWebSocket = () => {
-  const baseUrl = props.wsUrl || 'ws://localhost:8081'
-  const url = `${baseUrl}/ws/${props.userId}/${props.sessionId}`
+  const baseUrl = getWebSocketUrl()
+  let url = `${baseUrl}/ws/${props.userId}/${props.sessionId}`
+
+  // Add agent_id query parameter if provided
+  if (props.agentId && props.agentId > 0) {
+    url += `?agent_id=${props.agentId}`
+  }
 
   console.log('Connecting to WebSocket:', url)
 

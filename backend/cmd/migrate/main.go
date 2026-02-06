@@ -33,6 +33,11 @@ func main() {
 	ctx := context.Background()
 	migrator := migrate.NewMigrator(database.DB, migrations.Migrations)
 
+	// Initialize migration tables if needed
+	if err := migrator.Init(ctx); err != nil {
+		log.Fatalf("Failed to initialize migrator: %v", err)
+	}
+
 	switch action {
 	case "up":
 		if err := migrator.Lock(ctx); err != nil {

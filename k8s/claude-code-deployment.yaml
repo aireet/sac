@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: claude-code
+  namespace: sac
+  labels:
+    app: claude-code
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: claude-code
+  template:
+    metadata:
+      labels:
+        app: claude-code
+    spec:
+      containers:
+      - name: claude-code
+        image: docker-register-registry-vpc.cn-shanghai.cr.aliyuncs.com/prod/sac/cc:0.0.1
+        ports:
+        - name: ttyd
+          containerPort: 7681
+          protocol: TCP
+        env:
+        - name: USER_ID
+          value: "shared"
+        - name: SESSION_ID
+          value: "shared"
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+      volumes:
+      - name: workspace
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: claude-code
+  namespace: sac
+  labels:
+    app: claude-code
+spec:
+  type: ClusterIP
+  selector:
+    app: claude-code
+  ports:
+  - name: ttyd
+    port: 7681
+    targetPort: 7681
+    protocol: TCP
