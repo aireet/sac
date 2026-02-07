@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -252,84 +253,96 @@ func (m *Manager) CreatePVC(ctx context.Context, userID, sessionID string) error
 	return nil
 }
 
-// CreateDeployment creates a per-agent Claude Code deployment (1 replica)
-func (m *Manager) CreateDeployment(ctx context.Context, userID string, agentID int64, agentConfig map[string]interface{}) error {
-	deploymentName := fmt.Sprintf("claude-code-%s-%d", userID, agentID)
-	imageFullPath := fmt.Sprintf("%s/%s", m.dockerRegistry, m.dockerImage)
+// statefulSetName returns the consistent name for a user-agent StatefulSet
+func (m *Manager) statefulSetName(userID string, agentID int64) string {
+	return fmt.Sprintf("claude-code-%s-%d", userID, agentID)
+}
 
-	// Build environment variables
+// buildAgentEnvVars builds environment variables from agent configuration
+func (m *Manager) buildAgentEnvVars(userID string, agentID int64, agentConfig map[string]interface{}) []corev1.EnvVar {
 	envVars := []corev1.EnvVar{
-		{
-			Name:  "USER_ID",
-			Value: userID,
-		},
-		{
-			Name:  "AGENT_ID",
-			Value: fmt.Sprintf("%d", agentID),
-		},
+		{Name: "USER_ID", Value: userID},
+		{Name: "AGENT_ID", Value: fmt.Sprintf("%d", agentID)},
 	}
 
-	// Add ANTHROPIC configuration from agent config
-	if agentConfig != nil {
-		if authToken, ok := agentConfig["anthropic_auth_token"].(string); ok && authToken != "" {
-			envVars = append(envVars, corev1.EnvVar{
-				Name:  "ANTHROPIC_AUTH_TOKEN",
-				Value: authToken,
-			})
-		}
-		if baseURL, ok := agentConfig["anthropic_base_url"].(string); ok && baseURL != "" {
-			envVars = append(envVars, corev1.EnvVar{
-				Name:  "ANTHROPIC_BASE_URL",
-				Value: baseURL,
-			})
-		}
-		if haikuModel, ok := agentConfig["anthropic_haiku_model"].(string); ok && haikuModel != "" {
-			envVars = append(envVars, corev1.EnvVar{
-				Name:  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-				Value: haikuModel,
-			})
-		}
-		if opusModel, ok := agentConfig["anthropic_opus_model"].(string); ok && opusModel != "" {
-			envVars = append(envVars, corev1.EnvVar{
-				Name:  "ANTHROPIC_DEFAULT_OPUS_MODEL",
-				Value: opusModel,
-			})
-		}
-		if sonnetModel, ok := agentConfig["anthropic_sonnet_model"].(string); ok && sonnetModel != "" {
-			envVars = append(envVars, corev1.EnvVar{
-				Name:  "ANTHROPIC_DEFAULT_SONNET_MODEL",
-				Value: sonnetModel,
-			})
+	if agentConfig == nil {
+		return envVars
+	}
+
+	configMap := map[string]string{
+		"anthropic_auth_token":   "ANTHROPIC_AUTH_TOKEN",
+		"anthropic_base_url":     "ANTHROPIC_BASE_URL",
+		"anthropic_haiku_model":  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+		"anthropic_opus_model":   "ANTHROPIC_DEFAULT_OPUS_MODEL",
+		"anthropic_sonnet_model": "ANTHROPIC_DEFAULT_SONNET_MODEL",
+	}
+
+	for jsonKey, envKey := range configMap {
+		if val, ok := agentConfig[jsonKey].(string); ok && val != "" {
+			envVars = append(envVars, corev1.EnvVar{Name: envKey, Value: val})
 		}
 	}
 
-	replicas := int32(1)
-	deployment := &appsv1.Deployment{
+	return envVars
+}
+
+// CreateStatefulSet creates a per-agent StatefulSet with a headless service.
+// The headless service is required for StatefulSet DNS to work.
+// Pod DNS will be: claude-code-{userID}-{agentID}-0.claude-code-{userID}-{agentID}.{namespace}.svc.cluster.local
+func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID int64, agentConfig map[string]interface{}) error {
+	name := m.statefulSetName(userID, agentID)
+	imageFullPath := fmt.Sprintf("%s/%s", m.dockerRegistry, m.dockerImage)
+	envVars := m.buildAgentEnvVars(userID, agentID, agentConfig)
+
+	labels := map[string]string{
+		"app":      "claude-code",
+		"user-id":  userID,
+		"agent-id": fmt.Sprintf("%d", agentID),
+	}
+
+	// Step 1: Create headless service (ClusterIP: None) — required for StatefulSet
+	headlessSvc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      deploymentName,
+			Name:      name,
 			Namespace: m.namespace,
-			Labels: map[string]string{
-				"app":      "claude-code",
-				"user-id":  userID,
-				"agent-id": fmt.Sprintf("%d", agentID),
+			Labels:    labels,
+		},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: "None",
+			Selector:  labels,
+			Ports: []corev1.ServicePort{
+				{
+					Name:     "ttyd",
+					Port:     7681,
+					Protocol: corev1.ProtocolTCP,
+				},
 			},
 		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
+	}
+
+	_, err := m.clientset.CoreV1().Services(m.namespace).Create(ctx, headlessSvc, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create headless service: %w", err)
+	}
+	log.Printf("Headless Service %s created successfully", name)
+
+	// Step 2: Create StatefulSet
+	replicas := int32(1)
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: m.namespace,
+			Labels:    labels,
+		},
+		Spec: appsv1.StatefulSetSpec{
+			ServiceName: name, // must match headless service name
+			Replicas:    &replicas,
 			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"app":      "claude-code",
-					"user-id":  userID,
-					"agent-id": fmt.Sprintf("%d", agentID),
-				},
+				MatchLabels: labels,
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"app":      "claude-code",
-						"user-id":  userID,
-						"agent-id": fmt.Sprintf("%d", agentID),
-					},
+					Labels: labels,
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -375,92 +388,77 @@ func (m *Manager) CreateDeployment(ctx context.Context, userID string, agentID i
 		},
 	}
 
-	_, err := m.clientset.AppsV1().Deployments(m.namespace).Create(ctx, deployment, metav1.CreateOptions{})
+	_, err = m.clientset.AppsV1().StatefulSets(m.namespace).Create(ctx, sts, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to create deployment: %w", err)
+		// Cleanup headless service if StatefulSet creation fails
+		_ = m.clientset.CoreV1().Services(m.namespace).Delete(ctx, name, metav1.DeleteOptions{})
+		return fmt.Errorf("failed to create statefulset: %w", err)
 	}
 
-	log.Printf("Deployment %s created successfully", deploymentName)
+	log.Printf("StatefulSet %s created successfully", name)
 	return nil
 }
 
-// GetDeployment gets the Claude Code deployment for a specific user and agent
-func (m *Manager) GetDeployment(ctx context.Context, userID string, agentID int64) (*appsv1.Deployment, error) {
-	deploymentName := fmt.Sprintf("claude-code-%s-%d", userID, agentID)
+// GetStatefulSet gets the StatefulSet for a specific user and agent
+func (m *Manager) GetStatefulSet(ctx context.Context, userID string, agentID int64) (*appsv1.StatefulSet, error) {
+	name := m.statefulSetName(userID, agentID)
 
-	deployment, err := m.clientset.AppsV1().Deployments(m.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+	sts, err := m.clientset.AppsV1().StatefulSets(m.namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get deployment: %w", err)
+		return nil, fmt.Errorf("failed to get statefulset: %w", err)
 	}
 
-	return deployment, nil
+	return sts, nil
 }
 
-// DeleteDeployment deletes the Claude Code deployment for a specific user and agent
-func (m *Manager) DeleteDeployment(ctx context.Context, userID string, agentID int64) error {
-	deploymentName := fmt.Sprintf("claude-code-%s-%d", userID, agentID)
+// DeleteStatefulSet deletes the StatefulSet and its headless service
+func (m *Manager) DeleteStatefulSet(ctx context.Context, userID string, agentID int64) error {
+	name := m.statefulSetName(userID, agentID)
 
-	err := m.clientset.AppsV1().Deployments(m.namespace).Delete(ctx, deploymentName, metav1.DeleteOptions{})
+	// Delete StatefulSet first
+	err := m.clientset.AppsV1().StatefulSets(m.namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to delete deployment: %w", err)
+		return fmt.Errorf("failed to delete statefulset: %w", err)
+	}
+	log.Printf("StatefulSet %s deleted successfully", name)
+
+	// Delete headless service
+	err = m.clientset.CoreV1().Services(m.namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil {
+		log.Printf("Warning: failed to delete headless service %s: %v", name, err)
+		// Not fatal — StatefulSet is already deleted
+	} else {
+		log.Printf("Headless Service %s deleted successfully", name)
 	}
 
-	log.Printf("Deployment %s deleted successfully", deploymentName)
 	return nil
 }
 
-// CreateService creates a ClusterIP service for Claude Code deployment
-func (m *Manager) CreateService(ctx context.Context, userID string, agentID int64) error {
-	serviceName := fmt.Sprintf("claude-code-%s-%d", userID, agentID)
-
-	service := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      serviceName,
-			Namespace: m.namespace,
-			Labels: map[string]string{
-				"app":      "claude-code",
-				"user-id":  userID,
-				"agent-id": fmt.Sprintf("%d", agentID),
-			},
-		},
-		Spec: corev1.ServiceSpec{
-			Type: corev1.ServiceTypeClusterIP,
-			Selector: map[string]string{
-				"app":      "claude-code",
-				"user-id":  userID,
-				"agent-id": fmt.Sprintf("%d", agentID),
-			},
-			Ports: []corev1.ServicePort{
-				{
-					Name:     "ttyd",
-					Port:     7681,
-					Protocol: corev1.ProtocolTCP,
-				},
-			},
-		},
-	}
-
-	_, err := m.clientset.CoreV1().Services(m.namespace).Create(ctx, service, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create service: %w", err)
-	}
-
-	log.Printf("Service %s created successfully", serviceName)
-	return nil
+// GetStatefulSetPodAddress returns the stable DNS name for the StatefulSet pod.
+// This is deterministic and doesn't require querying the pod list.
+func (m *Manager) GetStatefulSetPodAddress(userID string, agentID int64) string {
+	name := m.statefulSetName(userID, agentID)
+	// StatefulSet pod DNS: {podName}.{serviceName}.{namespace}.svc.cluster.local
+	// Pod name for replica 0: {statefulsetName}-0
+	return fmt.Sprintf("%s-0.%s.%s.svc.cluster.local", name, name, m.namespace)
 }
 
-// GetServiceClusterIP gets the ClusterIP of the Claude Code service
-func (m *Manager) GetServiceClusterIP(ctx context.Context, userID string, agentID int64) (string, error) {
-	serviceName := fmt.Sprintf("claude-code-%s-%d", userID, agentID)
+// WaitForStatefulSetReady polls until the StatefulSet pod is Running.
+func (m *Manager) WaitForStatefulSetReady(ctx context.Context, userID string, agentID int64, maxRetries int, retryInterval time.Duration) error {
+	name := m.statefulSetName(userID, agentID)
+	podName := fmt.Sprintf("%s-0", name)
 
-	service, err := m.clientset.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
-	if err != nil {
-		return "", fmt.Errorf("failed to get service: %w", err)
+	for i := 0; i < maxRetries; i++ {
+		pod, err := m.clientset.CoreV1().Pods(m.namespace).Get(ctx, podName, metav1.GetOptions{})
+		if err == nil && pod.Status.Phase == corev1.PodRunning {
+			log.Printf("StatefulSet pod %s is ready", podName)
+			return nil
+		}
+
+		if i < maxRetries-1 {
+			time.Sleep(retryInterval)
+		}
 	}
 
-	if service.Spec.ClusterIP == "" {
-		return "", fmt.Errorf("service ClusterIP not yet assigned")
-	}
-
-	return service.Spec.ClusterIP, nil
+	return fmt.Errorf("timeout waiting for statefulset pod %s to be ready", podName)
 }

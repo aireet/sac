@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/echotech/sac/internal/database"
-	"github.com/echotech/sac/internal/models"
+	"g.echo.tech/dev/sac/internal/database"
+	"g.echo.tech/dev/sac/internal/models"
 	"github.com/gin-gonic/gin"
 )
 

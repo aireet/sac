@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/echotech/sac/internal/models"
+	"g.echo.tech/dev/sac/internal/models"
 	"github.com/uptrace/bun"
 )
 

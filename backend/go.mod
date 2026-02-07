@@ -1,4 +1,4 @@
-module github.com/echotech/sac
+module g.echo.tech/dev/sac
 
 go 1.25.1
 

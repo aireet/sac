@@ -1,10 +1,20 @@
 import axios from 'axios'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api'
+const getApiBaseUrl = () => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL
+  }
+  const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:'
+  const host = window.location.hostname
+  return `${protocol}//${host}:8080/api`
+}
+
+const API_URL = getApiBaseUrl()
 
 export interface Session {
   id: number
   user_id: number
+  agent_id: number
   session_id: string
   pod_name: string
   pod_ip: string

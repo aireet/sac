@@ -6,9 +6,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/echotech/sac/internal/database"
-	"github.com/echotech/sac/internal/websocket"
-	"github.com/echotech/sac/pkg/config"
+	"g.echo.tech/dev/sac/internal/database"
+	"g.echo.tech/dev/sac/internal/websocket"
+	"g.echo.tech/dev/sac/pkg/config"
 	"github.com/gin-gonic/gin"
 )
 

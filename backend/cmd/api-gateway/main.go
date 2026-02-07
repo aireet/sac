@@ -6,11 +6,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/echotech/sac/internal/agent"
-	"github.com/echotech/sac/internal/database"
-	"github.com/echotech/sac/internal/session"
-	"github.com/echotech/sac/internal/skill"
-	"github.com/echotech/sac/pkg/config"
+	"g.echo.tech/dev/sac/internal/agent"
+	"g.echo.tech/dev/sac/internal/database"
+	"g.echo.tech/dev/sac/internal/session"
+	"g.echo.tech/dev/sac/internal/skill"
+	"g.echo.tech/dev/sac/pkg/config"
 	"github.com/gin-gonic/gin"
 )
 

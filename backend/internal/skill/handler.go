@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/echotech/sac/internal/models"
+	"g.echo.tech/dev/sac/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/uptrace/bun"
 )

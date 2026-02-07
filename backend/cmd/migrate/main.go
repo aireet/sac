@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/echotech/sac/internal/database"
-	"github.com/echotech/sac/internal/models"
-	"github.com/echotech/sac/migrations"
-	"github.com/echotech/sac/pkg/config"
+	"g.echo.tech/dev/sac/internal/database"
+	"g.echo.tech/dev/sac/internal/models"
+	"g.echo.tech/dev/sac/migrations"
+	"g.echo.tech/dev/sac/pkg/config"
 	"github.com/uptrace/bun/migrate"
 )
 

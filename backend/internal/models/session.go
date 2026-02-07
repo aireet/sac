@@ -21,6 +21,7 @@ type Session struct {
 
 	ID         int64         `bun:"id,pk,autoincrement" json:"id"`
 	UserID     int64         `bun:"user_id,notnull" json:"user_id"`
+	AgentID    int64         `bun:"agent_id" json:"agent_id"`
 	SessionID  string        `bun:"session_id,notnull,unique" json:"session_id"`
 	PodName    string        `bun:"pod_name" json:"pod_name"`
 	PodIP      string        `bun:"pod_ip" json:"pod_ip"`

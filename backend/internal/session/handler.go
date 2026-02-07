@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/echotech/sac/internal/container"
-	"github.com/echotech/sac/internal/models"
-	"github.com/echotech/sac/pkg/config"
+	"g.echo.tech/dev/sac/internal/container"
+	"g.echo.tech/dev/sac/internal/models"
+	"g.echo.tech/dev/sac/pkg/config"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -49,7 +49,7 @@ type CreateSessionResponse struct {
 	CreatedAt time.Time            `json:"created_at"`
 }
 
-// CreateSession creates a new session using the shared Claude Code deployment
+// CreateSession creates a new session using a per-agent StatefulSet
 func (h *Handler) CreateSession(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
@@ -77,9 +77,26 @@ func (h *Handler) CreateSession(c *gin.Context) {
 
 	log.Printf("Creating session: userID=%s, sessionID=%s, agentID=%d", userIDStr, sessionID, req.AgentID)
 
+	// Auto-close any existing running sessions for this user
+	_, err := h.db.NewUpdate().
+		Model((*models.Session)(nil)).
+		Set("status = ?", models.SessionStatusDeleted).
+		Set("updated_at = ?", time.Now()).
+		Where("user_id = ?", userIDInt).
+		Where("status IN (?)", bun.In([]models.SessionStatus{
+			models.SessionStatusRunning,
+			models.SessionStatusCreating,
+			models.SessionStatusIdle,
+		})).
+		Exec(ctx)
+	if err != nil {
+		log.Printf("Warning: failed to auto-close old sessions: %v", err)
+		// Not fatal, continue
+	}
+
 	// Load agent configuration
 	var agent models.Agent
-	err := h.db.NewSelect().
+	err = h.db.NewSelect().
 		Model(&agent).
 		Where("id = ?", req.AgentID).
 		Where("created_by = ?", userIDInt).
@@ -93,47 +110,41 @@ func (h *Handler) CreateSession(c *gin.Context) {
 
 	log.Printf("Using agent: %s (ID: %d)", agent.Name, agent.ID)
 
-	// Check if deployment exists for this user-agent combination
-	deployment, err := h.containerManager.GetDeployment(ctx, userIDStr, req.AgentID)
+	// Check if StatefulSet exists for this user-agent combination
+	sts, err := h.containerManager.GetStatefulSet(ctx, userIDStr, req.AgentID)
 	if err != nil {
-		log.Printf("Deployment not found, creating it...")
+		log.Printf("StatefulSet not found, creating it...")
 
-		// Create deployment with agent config
-		if err := h.containerManager.CreateDeployment(ctx, userIDStr, req.AgentID, agent.Config); err != nil {
-			log.Printf("Failed to create deployment: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create deployment"})
+		// Create StatefulSet with headless service
+		if err := h.containerManager.CreateStatefulSet(ctx, userIDStr, req.AgentID, agent.Config); err != nil {
+			log.Printf("Failed to create StatefulSet: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create StatefulSet"})
 			return
 		}
 
-		// Create service
-		if err := h.containerManager.CreateService(ctx, userIDStr, req.AgentID); err != nil {
-			log.Printf("Failed to create service: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create service"})
-			return
-		}
+		log.Printf("StatefulSet and headless service created, waiting for pod to be ready...")
 
-		log.Printf("Deployment and Service created successfully")
+		// Wait for pod to be ready before returning
+		if err := h.containerManager.WaitForStatefulSetReady(ctx, userIDStr, req.AgentID, 60, 5*time.Second); err != nil {
+			log.Printf("Warning: %v", err)
+			// Don't fail — pod may still be starting, session can be used once ready
+		}
 	} else {
-		log.Printf("Using existing deployment: %s", deployment.Name)
+		log.Printf("Using existing StatefulSet: %s", sts.Name)
 	}
 
-	// Get service ClusterIP
-	serviceIP, err := h.containerManager.GetServiceClusterIP(ctx, userIDStr, req.AgentID)
-	if err != nil {
-		log.Printf("Failed to get service IP: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get service IP"})
-		return
-	}
-
-	log.Printf("Service ClusterIP: %s", serviceIP)
+	// Get stable DNS address (deterministic, no need to query pods)
+	podAddress := h.containerManager.GetStatefulSetPodAddress(userIDStr, req.AgentID)
+	log.Printf("Pod DNS address: %s", podAddress)
 
 	// Save session to database
-	deploymentName := fmt.Sprintf("claude-code-%s-%d", userIDStr, req.AgentID)
+	stsName := fmt.Sprintf("claude-code-%s-%d", userIDStr, req.AgentID)
 	session := &models.Session{
 		UserID:     userIDInt,
+		AgentID:    req.AgentID,
 		SessionID:  sessionID,
-		PodName:    deploymentName, // Deployment name
-		PodIP:      serviceIP,      // Use service ClusterIP
+		PodName:    stsName,    // StatefulSet name
+		PodIP:      podAddress, // Stable DNS address
 		Status:     models.SessionStatusRunning,
 		LastActive: time.Now(),
 		CreatedAt:  time.Now(),
@@ -150,51 +161,9 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	c.JSON(http.StatusCreated, CreateSessionResponse{
 		SessionID: sessionID,
 		Status:    models.SessionStatusRunning,
-		PodName:   deploymentName,
+		PodName:   stsName,
 		CreatedAt: session.CreatedAt,
 	})
-}
-
-// waitForPodReady waits for the pod to be ready and updates the session
-func (h *Handler) waitForPodReady(ctx context.Context, userID, sessionID string) {
-	maxRetries := 60 // Wait up to 5 minutes
-	retryInterval := 5 * time.Second
-
-	for i := 0; i < maxRetries; i++ {
-		time.Sleep(retryInterval)
-
-		// Get pod IP
-		podIP, err := h.containerManager.GetPodIP(ctx, userID, sessionID)
-		if err != nil {
-			log.Printf("Waiting for pod IP (attempt %d/%d): %v", i+1, maxRetries, err)
-			continue
-		}
-
-		// Update session with pod IP
-		_, err = h.db.NewUpdate().
-			Model(&models.Session{}).
-			Set("pod_ip = ?", podIP).
-			Set("status = ?", models.SessionStatusRunning).
-			Set("updated_at = ?", time.Now()).
-			Where("session_id = ?", sessionID).
-			Exec(ctx)
-
-		if err != nil {
-			log.Printf("Failed to update session with pod IP: %v", err)
-			return
-		}
-
-		log.Printf("Session %s is ready with pod IP: %s", sessionID, podIP)
-		return
-	}
-
-	// Timeout
-	log.Printf("Timeout waiting for pod to be ready: %s", sessionID)
-	h.db.NewUpdate().
-		Model(&models.Session{}).
-		Set("status = ?", models.SessionStatusStopped).
-		Where("session_id = ?", sessionID).
-		Exec(ctx)
 }
 
 // GetSession retrieves a session by ID
@@ -249,7 +218,8 @@ func (h *Handler) ListSessions(c *gin.Context) {
 	c.JSON(http.StatusOK, sessions)
 }
 
-// DeleteSession deletes a session and its pod
+// DeleteSession soft-deletes a session (marks as deleted).
+// The StatefulSet is NOT deleted because other sessions may share it.
 func (h *Handler) DeleteSession(c *gin.Context) {
 	sessionID := c.Param("sessionId")
 	userID, exists := c.Get("userID")
@@ -273,17 +243,9 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 		return
 	}
 
-	userIDStr := fmt.Sprintf("%d", userID.(int64))
-
-	// Delete pod
-	if err := h.containerManager.DeletePod(ctx, userIDStr, sessionID); err != nil {
-		log.Printf("Failed to delete pod: %v", err)
-		// Continue anyway
-	}
-
-	// Update session status
+	// Soft-delete: mark session as deleted
 	_, err = h.db.NewUpdate().
-		Model(&models.Session{}).
+		Model((*models.Session)(nil)).
 		Set("status = ?", models.SessionStatusDeleted).
 		Set("updated_at = ?", time.Now()).
 		Where("id = ?", session.ID).

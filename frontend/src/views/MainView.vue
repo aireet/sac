@@ -127,12 +127,12 @@ import SkillEditor from '../components/SkillRegister/SkillEditor.vue'
 import AgentSelector from '../components/Agent/AgentSelector.vue'
 import AgentCreator from '../components/Agent/AgentCreator.vue'
 import { getAgent, getAgents, type Agent } from '../services/agentAPI'
-import { createSession, waitForSessionReady } from '../services/sessionAPI'
+import { createSession, deleteSession, waitForSessionReady } from '../services/sessionAPI'
 
 // Configuration - these should come from environment or auth context
 const userId = ref('1')
 const sessionId = ref('')
-const wsUrl = ref(import.meta.env.VITE_WS_URL || 'ws://localhost:8081')
+const wsUrl = ref(import.meta.env.VITE_WS_URL || `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.hostname}:8081`)
 const message = useMessage()
 
 const terminalRef = ref()
@@ -156,24 +156,37 @@ const agentOptions = computed(() => {
   }))
 })
 
+const switchingAgent = ref(false)
+
 const handleAgentSelect = async (agentId: number) => {
+  if (agentId === selectedAgentId.value) return
+  if (switchingAgent.value) return
+
   selectedAgentId.value = agentId
 
   if (agentId > 0) {
+    switchingAgent.value = true
     try {
       selectedAgent.value = await getAgent(agentId)
       activeTab.value = 'skills'
 
-      // Create a new session for this agent if we don't have one
-      if (!sessionId.value) {
-        await createSessionForAgent(agentId)
-      } else {
-        // TODO: Check if we need to restart the session with new agent config
-        message.warning('Session already running. Reconnect to apply new agent.')
+      // Delete old session if one exists
+      if (sessionId.value) {
+        try {
+          await deleteSession(sessionId.value)
+        } catch (err) {
+          console.warn('Failed to delete old session:', err)
+        }
+        sessionId.value = ''
       }
+
+      // Create new session for the selected agent
+      await createSessionForAgent(agentId)
     } catch (error) {
-      console.error('Failed to load agent:', error)
+      console.error('Failed to switch agent:', error)
       selectedAgent.value = null
+    } finally {
+      switchingAgent.value = false
     }
   } else {
     selectedAgent.value = null

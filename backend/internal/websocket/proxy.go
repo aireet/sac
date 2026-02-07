@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -9,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/echotech/sac/internal/database"
-	"github.com/echotech/sac/internal/models"
+	"g.echo.tech/dev/sac/internal/database"
+	"g.echo.tech/dev/sac/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/uptrace/bun"
@@ -105,7 +106,10 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 	ttydURL := fmt.Sprintf("ws://%s:7681/ws", session.PodIP)
 	log.Printf("Connecting to ttyd at: %s", ttydURL)
 
-	ttydConn, _, err := websocket.DefaultDialer.Dial(ttydURL, nil)
+	// ttyd requires the "tty" WebSocket subprotocol
+	ttydHeaders := http.Header{}
+	ttydHeaders.Set("Sec-WebSocket-Protocol", "tty")
+	ttydConn, _, err := websocket.DefaultDialer.Dial(ttydURL, ttydHeaders)
 	if err != nil {
 		log.Printf("Failed to connect to ttyd: %v", err)
 		clientConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("Error: Failed to connect to container: %v", err)))
@@ -114,6 +118,15 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 	defer ttydConn.Close()
 
 	log.Printf("Connected to ttyd successfully")
+
+	// Step 1: Send authentication handshake (required by ttyd protocol)
+	authMsg := `{"AuthToken":"","columns":100,"rows":30}`
+	if err := ttydConn.WriteMessage(websocket.BinaryMessage, []byte(authMsg)); err != nil {
+		log.Printf("Failed to send auth handshake: %v", err)
+		clientConn.WriteMessage(websocket.TextMessage, []byte("Error: Failed to authenticate with container"))
+		return
+	}
+	log.Printf("Sent ttyd auth handshake")
 
 	// Update last active time
 	_, err = h.db.NewUpdate().
@@ -125,22 +138,22 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 		log.Printf("Failed to update last_active: %v", err)
 	}
 
-	// Start bidirectional forwarding
+	// Start bidirectional forwarding with ttyd protocol translation
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// Forward messages from client to ttyd
+	// Forward messages from client to ttyd (wrap as ttyd INPUT messages)
 	go func() {
 		defer wg.Done()
 		defer ttydConn.Close()
-		h.forwardMessages(clientConn, ttydConn, "client->ttyd")
+		h.forwardClientToTtyd(clientConn, ttydConn)
 	}()
 
-	// Forward messages from ttyd to client
+	// Forward messages from ttyd to client (extract terminal output)
 	go func() {
 		defer wg.Done()
 		defer clientConn.Close()
-		h.forwardMessages(ttydConn, clientConn, "ttyd->client")
+		h.forwardTtydToClient(ttydConn, clientConn)
 	}()
 
 	// Wait for both directions to complete
@@ -148,21 +161,98 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 	log.Printf("WebSocket proxy closed for session: %s", sessionID)
 }
 
-// forwardMessages forwards messages from source to destination
-func (h *ProxyHandler) forwardMessages(src, dst *websocket.Conn, direction string) {
+// ttyd WebSocket protocol uses ASCII character bytes as message type prefixes.
+// Client -> Server:
+//
+//	'0' (0x30) = INPUT (terminal input data)
+//	'1' (0x31) = RESIZE_TERMINAL (JSON: {"columns":N,"rows":N})
+//	'{' (0x7B) = JSON_DATA (initial auth handshake)
+//
+// Server -> Client:
+//
+//	'0' (0x30) = OUTPUT (terminal output data)
+//	'1' (0x31) = SET_WINDOW_TITLE
+//	'2' (0x32) = SET_PREFERENCES
+const (
+	ttydInput          byte = '0' // Client -> Server: terminal input
+	ttydResizeTerminal byte = '1' // Client -> Server: resize terminal
+	ttydOutput         byte = '0' // Server -> Client: terminal output
+	ttydSetWindowTitle byte = '1' // Server -> Client: set window title
+	ttydSetPreferences byte = '2' // Server -> Client: set preferences
+)
+
+// forwardClientToTtyd wraps client messages as ttyd binary messages.
+// Supports two message types from the frontend:
+//   - JSON with "type":"resize" → ttyd RESIZE_TERMINAL message
+//   - Everything else → ttyd INPUT message
+func (h *ProxyHandler) forwardClientToTtyd(src, dst *websocket.Conn) {
 	for {
-		messageType, message, err := src.ReadMessage()
+		_, message, err := src.ReadMessage()
 		if err != nil {
 			if err != io.EOF && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				log.Printf("Error reading message (%s): %v", direction, err)
+				log.Printf("Error reading message (client->ttyd): %v", err)
 			}
 			return
 		}
 
-		err = dst.WriteMessage(messageType, message)
-		if err != nil {
-			log.Printf("Error writing message (%s): %v", direction, err)
+		// Check if this is a resize message from the frontend
+		if len(message) > 0 && message[0] == '{' {
+			var msg struct {
+				Type    string `json:"type"`
+				Columns int    `json:"columns"`
+				Rows    int    `json:"rows"`
+			}
+			if json.Unmarshal(message, &msg) == nil && msg.Type == "resize" {
+				resizeJSON := fmt.Sprintf(`{"columns":%d,"rows":%d}`, msg.Columns, msg.Rows)
+				wrapped := append([]byte{ttydResizeTerminal}, []byte(resizeJSON)...)
+				if err := dst.WriteMessage(websocket.BinaryMessage, wrapped); err != nil {
+					log.Printf("Error writing resize (client->ttyd): %v", err)
+					return
+				}
+				continue
+			}
+		}
+
+		// Wrap as ttyd INPUT message: ASCII '0' + data
+		wrapped := make([]byte, len(message)+1)
+		wrapped[0] = ttydInput
+		copy(wrapped[1:], message)
+
+		if err := dst.WriteMessage(websocket.BinaryMessage, wrapped); err != nil {
+			log.Printf("Error writing message (client->ttyd): %v", err)
 			return
+		}
+	}
+}
+
+// forwardTtydToClient extracts terminal output from ttyd binary messages and forwards as text
+func (h *ProxyHandler) forwardTtydToClient(src, dst *websocket.Conn) {
+	for {
+		_, message, err := src.ReadMessage()
+		if err != nil {
+			if err != io.EOF && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				log.Printf("Error reading message (ttyd->client): %v", err)
+			}
+			return
+		}
+
+		if len(message) < 1 {
+			continue
+		}
+
+		msgType := message[0]
+		payload := message[1:]
+
+		switch msgType {
+		case ttydOutput: // Terminal output - forward to client as text
+			if err := dst.WriteMessage(websocket.TextMessage, payload); err != nil {
+				log.Printf("Error writing message (ttyd->client): %v", err)
+				return
+			}
+		case ttydSetWindowTitle, ttydSetPreferences:
+			// Ignore window title and preferences messages
+		default:
+			log.Printf("Skipping unknown ttyd message type: %d", msgType)
 		}
 	}
 }
