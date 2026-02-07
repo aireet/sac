@@ -21,13 +21,17 @@ RUN apt-get update && apt-get install -y \
     redis-tools \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Node.js 22 LTS
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code CLI via npm
+RUN npm install -g @anthropic-ai/claude-code
+
 # Install ttyd
 RUN wget https://github.com/tsl0922/ttyd/releases/download/1.7.4/ttyd.x86_64 -O /usr/local/bin/ttyd \
     && chmod +x /usr/local/bin/ttyd
-
-# Install Claude Code CLI
-# Note: Replace with actual Claude Code installation steps
-RUN curl -fsSL https://claude.ai/install.sh | bash || echo "Claude Code installation placeholder"
 
 # Create workspace directory
 RUN mkdir -p /workspace
