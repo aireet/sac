@@ -5,9 +5,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebglAddon } from '@xterm/addon-webgl'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
 import '@xterm/xterm/css/xterm.css'
 
 const props = defineProps<{
@@ -15,6 +17,7 @@ const props = defineProps<{
   sessionId: string
   wsUrl?: string
   agentId?: number
+  interactiveMode?: boolean
 }>()
 
 const terminalContainer = ref<HTMLElement>()
@@ -31,10 +34,11 @@ const initTerminal = () => {
 
   // Create terminal instance
   terminal = new Terminal({
-    cursorBlink: false,
-    disableStdin: true,
+    cursorBlink: !!props.interactiveMode,
+    disableStdin: !props.interactiveMode,
     fontSize: 14,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    allowProposedApi: true,
     theme: {
       background: '#1e1e1e',
       foreground: '#cccccc',
@@ -45,8 +49,27 @@ const initTerminal = () => {
   fitAddon = new FitAddon()
   terminal.loadAddon(fitAddon)
 
+  // Load Unicode11 addon for proper CJK wide-character handling
+  const unicode11 = new Unicode11Addon()
+  terminal.loadAddon(unicode11)
+  terminal.unicode.activeVersion = '11'
+
   // Open terminal in container
   terminal.open(terminalContainer.value)
+
+  // Activate WebGL renderer for pixel-perfect character grid alignment.
+  // The default DOM renderer uses <span> elements whose widths accumulate
+  // sub-pixel rounding errors, causing columns to drift. The WebGL renderer
+  // draws each character cell at exact pixel coordinates, eliminating this.
+  try {
+    const webgl = new WebglAddon()
+    webgl.onContextLoss(() => {
+      webgl.dispose()
+    })
+    terminal.loadAddon(webgl)
+  } catch (e) {
+    console.warn('WebGL renderer not available, using default DOM renderer:', e)
+  }
 
   // Delay initial fit so the container has its final layout dimensions
   requestAnimationFrame(() => {
@@ -55,6 +78,15 @@ const initTerminal = () => {
 
   // Connect to WebSocket
   connectWebSocket()
+
+  // In interactive mode, forward keystrokes directly to the PTY via WebSocket
+  if (props.interactiveMode) {
+    terminal.onData((data) => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(data)
+      }
+    })
+  }
 
   // Handle terminal resize - notify backend so ttyd can resize the PTY
   terminal.onResize(({ cols, rows }) => {
@@ -89,6 +121,12 @@ const cleanup = () => {
     reconnectTimer = null
   }
   if (ws) {
+    // Remove event handlers before closing to prevent stale onclose
+    // from racing with a new connection and triggering reconnect loops
+    ws.onopen = null
+    ws.onmessage = null
+    ws.onerror = null
+    ws.onclose = null
     ws.close()
     ws = null
   }
@@ -111,6 +149,9 @@ const connectWebSocket = () => {
   console.log('Connecting to WebSocket:', url)
 
   ws = new WebSocket(url)
+  // Receive PTY output as raw binary to preserve byte stream integrity
+  // (prevents UTF-8 fragmentation issues with TextMessage)
+  ws.binaryType = 'arraybuffer'
 
   ws.onopen = () => {
     console.log('WebSocket connected')
@@ -123,7 +164,15 @@ const connectWebSocket = () => {
 
   ws.onmessage = (event) => {
     if (terminal) {
-      terminal.write(event.data)
+      if (event.data instanceof ArrayBuffer) {
+        // Binary frame from proxy — pass raw bytes to xterm.js
+        // xterm.js handles UTF-8 decoding internally, including buffering
+        // incomplete multi-byte sequences across messages
+        terminal.write(new Uint8Array(event.data))
+      } else {
+        // Text frame (e.g. error messages during connection setup)
+        terminal.write(event.data)
+      }
     }
   }
 
@@ -146,15 +195,16 @@ const connectWebSocket = () => {
 }
 
 const sendMessage = (text: string) => {
+  console.log('[Terminal] sendMessage:', text, 'ws:', !!ws, 'readyState:', ws?.readyState)
   if (ws && ws.readyState === WebSocket.OPEN) {
-    // Send text and Enter as separate messages so ttyd delivers them
-    // as separate PTY writes — this ensures Claude Code sees the Enter key
     ws.send(text)
     setTimeout(() => {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send('\r')
       }
     }, 50)
+  } else {
+    console.warn('[Terminal] WebSocket not connected, cannot send message')
   }
 }
 
@@ -192,6 +242,24 @@ watch(() => props.sessionId, (newId, oldId) => {
       connectWebSocket()
     }
   }
+})
+
+// When interactiveMode changes, re-create the terminal with new settings
+watch(() => props.interactiveMode, () => {
+  // Tear down old terminal and WebSocket
+  cleanup()
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
+  if (terminal) {
+    terminal.dispose()
+    terminal = null
+  }
+  // Re-create with new mode
+  nextTick(() => {
+    initTerminal()
+  })
 })
 
 onUnmounted(() => {

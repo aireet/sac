@@ -54,6 +54,37 @@
               </template>
               Marketplace
             </n-button>
+            <n-divider vertical />
+            <n-button-group size="small">
+              <n-tooltip trigger="hover">
+                <template #trigger>
+                  <n-button
+                    :type="inputMode === 'chat' ? 'primary' : 'default'"
+                    :secondary="inputMode === 'chat'"
+                    @click="inputMode = 'chat'"
+                  >
+                    <template #icon>
+                      <n-icon><ChatbubblesOutline /></n-icon>
+                    </template>
+                  </n-button>
+                </template>
+                Chat Mode
+              </n-tooltip>
+              <n-tooltip trigger="hover">
+                <template #trigger>
+                  <n-button
+                    :type="inputMode === 'terminal' ? 'primary' : 'default'"
+                    :secondary="inputMode === 'terminal'"
+                    @click="inputMode = 'terminal'"
+                  >
+                    <template #icon>
+                      <n-icon><TerminalOutline /></n-icon>
+                    </template>
+                  </n-button>
+                </template>
+                Terminal Mode
+              </n-tooltip>
+            </n-button-group>
           </n-space>
         </div>
       </n-layout-header>
@@ -103,10 +134,11 @@
                 :session-id="sessionId"
                 :ws-url="wsUrl"
                 :agent-id="selectedAgentId"
+                :interactive-mode="inputMode === 'terminal'"
               />
             </div>
             <ChatInput
-              v-if="sessionId"
+              v-if="sessionId && inputMode === 'chat'"
               @send="handleSendMessage"
               @interrupt="handleInterrupt"
             />
@@ -146,13 +178,15 @@ import {
   NText,
   NSelect,
   NButton,
+  NButtonGroup,
   NIcon,
   NDivider,
   NEmpty,
+  NTooltip,
   darkTheme,
   useMessage,
 } from 'naive-ui'
-import { Add, StorefrontOutline } from '@vicons/ionicons5'
+import { Add, StorefrontOutline, TerminalOutline, ChatbubblesOutline } from '@vicons/ionicons5'
 import Terminal from '../components/Terminal/Terminal.vue'
 import ChatInput from '../components/ChatInput/ChatInput.vue'
 import SkillPanel from '../components/SkillPanel/SkillPanel.vue'
@@ -177,6 +211,7 @@ const selectedAgent = ref<Agent | null>(null)
 const showAgentCreator = ref(false)
 const editingAgent = ref<Agent | null>(null)
 const viewMode = ref<'terminal' | 'marketplace'>('terminal')
+const inputMode = ref<'chat' | 'terminal'>('chat')
 
 // Agent list for header dropdown
 const agents = ref<Agent[]>([])
@@ -292,8 +327,12 @@ const handleAgentCreated = async () => {
 }
 
 const handleSendMessage = (text: string) => {
+  console.log('[MainView] handleSendMessage:', text, 'terminalRef:', !!terminalRef.value)
   if (terminalRef.value) {
     terminalRef.value.sendMessage(text)
+  } else {
+    console.warn('[MainView] Terminal not available, cannot send message')
+    message.warning('Terminal not connected. Please wait for the session to be ready.')
   }
 }
 
@@ -304,6 +343,7 @@ const handleInterrupt = () => {
 }
 
 const handleExecuteCommand = (command: string) => {
+  console.log('[MainView] handleExecuteCommand:', command)
   handleSendMessage(command)
 }
 

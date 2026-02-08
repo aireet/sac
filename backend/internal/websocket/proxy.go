@@ -269,8 +269,8 @@ func (h *ProxyHandler) forwardTtydToClient(src, dst *websocket.Conn) {
 		payload := message[1:]
 
 		switch msgType {
-		case ttydOutput: // Terminal output - forward to client as text
-			if err := dst.WriteMessage(websocket.TextMessage, payload); err != nil {
+		case ttydOutput: // Terminal output - forward as binary to preserve raw PTY bytes
+			if err := dst.WriteMessage(websocket.BinaryMessage, payload); err != nil {
 				log.Printf("Error writing message (ttyd->client): %v", err)
 				return
 			}

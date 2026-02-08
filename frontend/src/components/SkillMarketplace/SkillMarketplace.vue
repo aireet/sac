@@ -314,7 +314,7 @@ import {
   type Skill,
   type SkillParameter,
 } from '../../services/skillAPI'
-import { installSkill, type Agent } from '../../services/agentAPI'
+import { installSkill, uninstallSkill, type Agent } from '../../services/agentAPI'
 
 const props = defineProps<{
   agentId: number
@@ -429,14 +429,36 @@ async function loadSkills() {
 }
 
 async function handleInstall(skill: Skill) {
-  if (!props.agentId) return
+  if (!props.agentId) {
+    message.warning('Please select an agent first')
+    return
+  }
+  if (isInstalled(skill.id)) {
+    message.info('This skill is already installed on the current agent')
+    return
+  }
   installingId.value = skill.id
   try {
     await installSkill(props.agentId, skill.id)
-    message.success('Skill installed')
+    message.success('Skill installed successfully')
     emit('skillsChanged')
   } catch (error) {
     message.error('Failed to install skill')
+    console.error(error)
+  } finally {
+    installingId.value = null
+  }
+}
+
+async function handleUninstall(skill: Skill) {
+  if (!props.agentId) return
+  installingId.value = skill.id
+  try {
+    await uninstallSkill(props.agentId, skill.id)
+    message.success('Skill uninstalled')
+    emit('skillsChanged')
+  } catch (error) {
+    message.error('Failed to uninstall skill')
     console.error(error)
   } finally {
     installingId.value = null

@@ -76,9 +76,10 @@
           size="small"
           hoverable
           class="skill-card"
+          @click="executeSkill(skill)"
         >
           <n-space align="center" justify="space-between">
-            <n-space align="center" :size="8" @click="executeSkill(skill)" style="cursor: pointer; flex: 1">
+            <n-space align="center" :size="8" style="cursor: pointer; flex: 1">
               <span class="skill-icon">{{ skill.icon }}</span>
               <div>
                 <n-text strong style="font-size: 13px">{{ skill.name }}</n-text>
@@ -88,16 +89,18 @@
                 </n-text>
               </div>
             </n-space>
-            <n-popconfirm @positive-click="handleUninstall(skill.id)">
-              <template #trigger>
-                <n-button size="tiny" quaternary type="error" title="Uninstall">
-                  <template #icon>
-                    <n-icon><CloseOutline /></n-icon>
-                  </template>
-                </n-button>
-              </template>
-              Uninstall this skill?
-            </n-popconfirm>
+            <div @click.stop>
+              <n-popconfirm @positive-click="handleUninstall(skill.id)">
+                <template #trigger>
+                  <n-button size="tiny" quaternary type="error" title="Uninstall">
+                    <template #icon>
+                      <n-icon><CloseOutline /></n-icon>
+                    </template>
+                  </n-button>
+                </template>
+                Uninstall this skill?
+              </n-popconfirm>
+            </div>
           </n-space>
         </n-card>
       </n-space>
@@ -268,6 +271,7 @@ const handleUninstall = async (skillId: number) => {
 }
 
 const executeSkill = (skill: Skill) => {
+  console.log('[SkillPanel] executeSkill called:', skill.name, '/', skill.command_name)
   currentSkill.value = skill
 
   if (skill.parameters && skill.parameters.length > 0) {
@@ -299,8 +303,9 @@ const executeWithParameters = () => {
 }
 
 const sendCommand = (command: string) => {
+  console.log('[SkillPanel] sendCommand:', command)
   emit('executeCommand', command)
-  message.success('Command sent to terminal')
+  message.success(`Sending: ${command}`)
 }
 </script>
 
