@@ -22,10 +22,15 @@ func init() {
 			return fmt.Errorf("failed to create unique index: %w", err)
 		}
 
-		// Backfill: convert existing skill names to kebab-case command_name
+		// Backfill: use 'skill-<id>' for names that produce empty strings (e.g. Chinese),
+		// otherwise convert to kebab-case
 		_, err = db.ExecContext(ctx, `
 			UPDATE skills
-			SET command_name = LOWER(REGEXP_REPLACE(REGEXP_REPLACE(TRIM(name), '[^a-zA-Z0-9\s-]', '', 'g'), '\s+', '-', 'g'))
+			SET command_name = CASE
+				WHEN TRIM(LOWER(REGEXP_REPLACE(REGEXP_REPLACE(TRIM(name), '[^a-zA-Z0-9\s-]', '', 'g'), '\s+', '-', 'g')), '-') = ''
+				THEN 'skill-' || id::text
+				ELSE LOWER(REGEXP_REPLACE(REGEXP_REPLACE(TRIM(name), '[^a-zA-Z0-9\s-]', '', 'g'), '\s+', '-', 'g'))
+			END
 			WHERE command_name IS NULL
 		`)
 		if err != nil {
