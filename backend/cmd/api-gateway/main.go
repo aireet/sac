@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"g.echo.tech/dev/sac/internal/agent"
+	"g.echo.tech/dev/sac/internal/container"
 	"g.echo.tech/dev/sac/internal/database"
 	"g.echo.tech/dev/sac/internal/session"
 	"g.echo.tech/dev/sac/internal/skill"
@@ -60,31 +61,29 @@ func main() {
 		})
 	})
 
+	// Create shared container manager
+	containerMgr, err := container.NewManager(cfg.KubeconfigPath, cfg.Namespace, cfg.DockerRegistry, cfg.DockerImage)
+	if err != nil {
+		log.Fatalf("Failed to create container manager: %v", err)
+	}
+
 	// Register API routes
 	apiGroup := router.Group("/api")
 	{
-		// Skill routes
-		skillHandler := skill.NewHandler(database.DB)
+		// Skill routes (creates its own SyncService internally)
+		skillHandler := skill.NewHandler(database.DB, containerMgr)
 		skillHandler.RegisterRoutes(apiGroup)
 
+		// Shared sync service for agent & session handlers
+		syncService := skillHandler.GetSyncService()
+
 		// Session routes
-		sessionHandler, err := session.NewHandler(database.DB, cfg)
-		if err != nil {
-			log.Fatalf("Failed to create session handler: %v", err)
-		}
+		sessionHandler := session.NewHandler(database.DB, containerMgr, syncService)
 		sessionHandler.RegisterRoutes(apiGroup)
 
 		// Agent routes
-		agentRoutes := apiGroup.Group("/agents")
-		{
-			agentRoutes.GET("", agent.GetAgents)
-			agentRoutes.GET("/:id", agent.GetAgent)
-			agentRoutes.POST("", agent.CreateAgent)
-			agentRoutes.PUT("/:id", agent.UpdateAgent)
-			agentRoutes.DELETE("/:id", agent.DeleteAgent)
-			agentRoutes.POST("/:id/skills", agent.InstallSkill)
-			agentRoutes.DELETE("/:id/skills/:skillId", agent.UninstallSkill)
-		}
+		agentHandler := agent.NewHandler(database.DB, containerMgr, syncService)
+		agentHandler.RegisterRoutes(apiGroup)
 	}
 
 	// Start server (listen on all interfaces for remote debugging)

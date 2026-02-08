@@ -88,6 +88,7 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 	err = h.db.NewSelect().
 		Model(&session).
 		Where("session_id = ?", sessionID).
+		Where("status != ?", "deleted").
 		Scan(ctx)
 
 	if err != nil {
@@ -100,6 +101,30 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 		log.Printf("Pod IP not available for session: %s", sessionID)
 		clientConn.WriteMessage(websocket.TextMessage, []byte("Error: Pod is not ready yet"))
 		return
+	}
+
+	// Step 1: Wait for client's first message to get actual terminal dimensions.
+	// The frontend sends a JSON resize message immediately on connection:
+	//   {"type":"resize","columns":N,"rows":N}
+	// We use these dimensions in the ttyd auth handshake so the PTY starts
+	// at the correct size, preventing output misalignment.
+	columns, rows := 100, 30 // sensible defaults
+	_, firstMsg, err := clientConn.ReadMessage()
+	if err != nil {
+		log.Printf("Failed to read initial message from client: %v", err)
+		return
+	}
+	if len(firstMsg) > 0 && firstMsg[0] == '{' {
+		var msg struct {
+			Type    string `json:"type"`
+			Columns int    `json:"columns"`
+			Rows    int    `json:"rows"`
+		}
+		if json.Unmarshal(firstMsg, &msg) == nil && msg.Columns > 0 && msg.Rows > 0 {
+			columns = msg.Columns
+			rows = msg.Rows
+			log.Printf("Client reported terminal size: %dx%d", columns, rows)
+		}
 	}
 
 	// Connect to ttyd in the pod
@@ -119,14 +144,14 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 
 	log.Printf("Connected to ttyd successfully")
 
-	// Step 1: Send authentication handshake (required by ttyd protocol)
-	authMsg := `{"AuthToken":"","columns":100,"rows":30}`
+	// Send authentication handshake with the client's actual terminal dimensions
+	authMsg := fmt.Sprintf(`{"AuthToken":"","columns":%d,"rows":%d}`, columns, rows)
 	if err := ttydConn.WriteMessage(websocket.BinaryMessage, []byte(authMsg)); err != nil {
 		log.Printf("Failed to send auth handshake: %v", err)
 		clientConn.WriteMessage(websocket.TextMessage, []byte("Error: Failed to authenticate with container"))
 		return
 	}
-	log.Printf("Sent ttyd auth handshake")
+	log.Printf("Sent ttyd auth handshake with dimensions: %dx%d", columns, rows)
 
 	// Update last active time
 	_, err = h.db.NewUpdate().

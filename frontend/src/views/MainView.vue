@@ -13,7 +13,7 @@
           <n-space align="center" :size="12">
             <n-text depth="3" style="font-size: 13px">Current Agent:</n-text>
             <n-select
-              v-model:value="selectedAgentId"
+              :value="selectedAgentId"
               :options="agentOptions"
               :loading="loadingAgents"
               placeholder="Select an agent"
@@ -60,17 +60,21 @@
               <AgentSelector
                 ref="agentSelectorRef"
                 :selected-agent-id="selectedAgentId"
+                :pod-statuses="podStatuses"
                 @select="handleAgentSelect"
                 @create="showAgentCreator = true"
                 @edit="handleEditAgent"
               />
             </n-tab-pane>
-            <n-tab-pane name="skills" tab="Installed Skills" :disabled="!selectedAgentId">
+            <n-tab-pane name="skills" tab="Agent Dashboard" :disabled="!selectedAgentId">
               <SkillPanel
                 v-if="selectedAgent"
                 :agent-id="selectedAgentId"
+                :agent="selectedAgent"
+                :pod-status="podStatuses.get(selectedAgentId) || null"
                 :installed-skills="selectedAgent.installed_skills"
                 @execute-command="handleExecuteCommand"
+                @restart="handleRestartFromPanel"
               />
             </n-tab-pane>
             <n-tab-pane name="marketplace" tab="Skill Marketplace">
@@ -79,13 +83,20 @@
           </n-tabs>
         </n-layout-sider>
 
-        <n-layout-content>
-          <Terminal
-            ref="terminalRef"
-            :user-id="userId"
-            :session-id="sessionId"
-            :ws-url="wsUrl"
-            :agent-id="selectedAgentId"
+        <n-layout-content content-class="main-content">
+          <div class="terminal-area">
+            <Terminal
+              ref="terminalRef"
+              :user-id="userId"
+              :session-id="sessionId"
+              :ws-url="wsUrl"
+              :agent-id="selectedAgentId"
+            />
+          </div>
+          <ChatInput
+            v-if="sessionId"
+            @send="handleSendMessage"
+            @interrupt="handleInterrupt"
           />
         </n-layout-content>
       </n-layout>
@@ -101,7 +112,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import {
   NConfigProvider,
   NLayout,
@@ -122,11 +133,12 @@ import {
 } from 'naive-ui'
 import { Add } from '@vicons/ionicons5'
 import Terminal from '../components/Terminal/Terminal.vue'
+import ChatInput from '../components/ChatInput/ChatInput.vue'
 import SkillPanel from '../components/SkillPanel/SkillPanel.vue'
 import SkillEditor from '../components/SkillRegister/SkillEditor.vue'
 import AgentSelector from '../components/Agent/AgentSelector.vue'
 import AgentCreator from '../components/Agent/AgentCreator.vue'
-import { getAgent, getAgents, type Agent } from '../services/agentAPI'
+import { getAgent, getAgents, getAgentStatuses, type Agent, type AgentStatus } from '../services/agentAPI'
 import { createSession, deleteSession, waitForSessionReady } from '../services/sessionAPI'
 
 // Configuration - these should come from environment or auth context
@@ -147,6 +159,23 @@ const editingAgent = ref<Agent | null>(null)
 // Agent list for header dropdown
 const agents = ref<Agent[]>([])
 const loadingAgents = ref(false)
+
+// Pod statuses polling (shared with AgentSelector and SkillPanel)
+const podStatuses = ref<Map<number, AgentStatus>>(new Map())
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+const pollStatuses = async () => {
+  try {
+    const statuses = await getAgentStatuses()
+    const map = new Map<number, AgentStatus>()
+    for (const s of statuses) {
+      map.set(s.agent_id, s)
+    }
+    podStatuses.value = map
+  } catch {
+    // silently ignore polling errors
+  }
+}
 
 const agentOptions = computed(() => {
   return agents.value.map(agent => ({
@@ -170,7 +199,8 @@ const handleAgentSelect = async (agentId: number) => {
       selectedAgent.value = await getAgent(agentId)
       activeTab.value = 'skills'
 
-      // Delete old session if one exists
+      // Clean up old connection and session
+      terminalRef.value?.cleanup()
       if (sessionId.value) {
         try {
           await deleteSession(sessionId.value)
@@ -208,6 +238,11 @@ const createSessionForAgent = async (agentId: number) => {
     sessionId.value = session.session_id
     console.log('Session ready:', session)
 
+    // Show agent switch banner in terminal
+    if (selectedAgent.value) {
+      terminalRef.value?.writeBanner(selectedAgent.value.name)
+    }
+
     loadingMsg.type = 'success'
     loadingMsg.content = 'Session ready!'
     setTimeout(() => loadingMsg.destroy(), 2000)
@@ -234,17 +269,39 @@ const handleAgentCreated = async () => {
   }
 }
 
-const handleExecuteCommand = (command: string) => {
+const handleSendMessage = (text: string) => {
   if (terminalRef.value) {
-    terminalRef.value.sendCommand(command)
+    terminalRef.value.sendMessage(text)
   }
+}
+
+const handleInterrupt = () => {
+  if (terminalRef.value) {
+    terminalRef.value.sendInterrupt()
+  }
+}
+
+const handleExecuteCommand = (command: string) => {
+  handleSendMessage(command)
+}
+
+const handleRestartFromPanel = () => {
+  // Fast poll for 30s to catch the transition back to Running
+  let fastPolls = 15
+  const fastTimer = setInterval(async () => {
+    await pollStatuses()
+    fastPolls--
+    if (fastPolls <= 0) {
+      clearInterval(fastTimer)
+    }
+  }, 2000)
 }
 
 // Load agents list for header dropdown
 const loadAgents = async () => {
   loadingAgents.value = true
   try {
-    agents.value = await getAgents()
+    agents.value = (await getAgents()) || []
   } catch (error) {
     console.error('Failed to load agents:', error)
   } finally {
@@ -262,6 +319,15 @@ watch(showAgentCreator, (newVal) => {
 
 onMounted(() => {
   loadAgents()
+  pollStatuses()
+  pollTimer = setInterval(pollStatuses, 5000)
+})
+
+onUnmounted(() => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
 })
 </script>
 
@@ -301,5 +367,18 @@ onMounted(() => {
 
 :deep(.n-base-selection-input) {
   font-size: 14px;
+}
+
+:deep(.main-content) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.terminal-area {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 </style>

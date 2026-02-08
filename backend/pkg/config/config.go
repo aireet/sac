@@ -50,7 +50,7 @@ func Load() (*Config, error) {
 
 		// Docker Registry
 		DockerRegistry: getEnv("DOCKER_REGISTRY", "docker-register-registry-vpc.cn-shanghai.cr.aliyuncs.com"),
-		DockerImage:    getEnv("DOCKER_IMAGE", "prod/sac/cc:0.0.1"),
+		DockerImage:    getEnv("DOCKER_IMAGE", "prod/sac/cc:0.0.3"),
 	}, nil
 }
 

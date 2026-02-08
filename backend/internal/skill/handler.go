@@ -2,21 +2,33 @@ package skill
 
 import (
 	"context"
+	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
 
+	"g.echo.tech/dev/sac/internal/container"
 	"g.echo.tech/dev/sac/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/uptrace/bun"
 )
 
 type Handler struct {
-	db *bun.DB
+	db          *bun.DB
+	syncService *SyncService
 }
 
-func NewHandler(db *bun.DB) *Handler {
-	return &Handler{db: db}
+func NewHandler(db *bun.DB, containerManager *container.Manager) *Handler {
+	return &Handler{
+		db:          db,
+		syncService: NewSyncService(db, containerManager),
+	}
+}
+
+// GetSyncService returns the handler's SyncService for use by other handlers.
+func (h *Handler) GetSyncService() *SyncService {
+	return h.syncService
 }
 
 // CreateSkill creates a new skill
@@ -38,6 +50,11 @@ func (h *Handler) CreateSkill(c *gin.Context) {
 	skill.CreatedAt = time.Now()
 	skill.UpdatedAt = time.Now()
 	skill.IsOfficial = false // Only admins can create official skills
+
+	// Auto-generate command_name from name if not provided
+	if skill.CommandName == "" {
+		skill.CommandName = SanitizeCommandName(skill.Name)
+	}
 
 	ctx := context.Background()
 	_, err := h.db.NewInsert().Model(&skill).Exec(ctx)
@@ -142,9 +159,14 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 	updateData.ID = skillID
 	updateData.UpdatedAt = time.Now()
 
+	// Regenerate command_name if name changed
+	if updateData.Name != "" {
+		updateData.CommandName = SanitizeCommandName(updateData.Name)
+	}
+
 	_, err = h.db.NewUpdate().
 		Model(&updateData).
-		Column("name", "description", "icon", "category", "prompt", "parameters", "is_public", "updated_at").
+		Column("name", "description", "icon", "category", "prompt", "command_name", "parameters", "is_public", "updated_at").
 		Where("id = ?", skillID).
 		Exec(ctx)
 
@@ -152,6 +174,33 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update skill"})
 		return
 	}
+
+	// Async: sync updated skill to all agents that have it installed
+	go func() {
+		bgCtx := context.Background()
+		var agentSkills []models.AgentSkill
+		_ = h.db.NewSelect().
+			Model(&agentSkills).
+			Where("skill_id = ?", skillID).
+			Scan(bgCtx)
+
+		for _, as := range agentSkills {
+			// Look up the agent to get user ID
+			var agent models.Agent
+			err := h.db.NewSelect().Model(&agent).Where("id = ?", as.AgentID).Scan(bgCtx)
+			if err != nil {
+				continue
+			}
+			userIDStr := fmt.Sprintf("%d", agent.CreatedBy)
+
+			// If name changed, remove old command file
+			if existingSkill.CommandName != "" && existingSkill.CommandName != updateData.CommandName {
+				_ = h.syncService.RemoveSkillFromAgent(bgCtx, userIDStr, as.AgentID, existingSkill.CommandName)
+			}
+			// Write updated file
+			_ = h.syncService.SyncSkillToAgent(bgCtx, userIDStr, as.AgentID, &updateData)
+		}
+	}()
 
 	c.JSON(http.StatusOK, updateData)
 }
@@ -194,6 +243,13 @@ func (h *Handler) DeleteSkill(c *gin.Context) {
 		return
 	}
 
+	// Find all agents that have this skill installed (before deleting)
+	var agentSkills []models.AgentSkill
+	_ = h.db.NewSelect().
+		Model(&agentSkills).
+		Where("skill_id = ?", skillID).
+		Scan(ctx)
+
 	_, err = h.db.NewDelete().
 		Model(&skill).
 		Where("id = ?", skillID).
@@ -202,6 +258,24 @@ func (h *Handler) DeleteSkill(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete skill"})
 		return
+	}
+
+	// Async: remove .md files from all agent pods
+	if skill.CommandName != "" {
+		go func() {
+			bgCtx := context.Background()
+			for _, as := range agentSkills {
+				var agent models.Agent
+				err := h.db.NewSelect().Model(&agent).Where("id = ?", as.AgentID).Scan(bgCtx)
+				if err != nil {
+					continue
+				}
+				userIDStr := fmt.Sprintf("%d", agent.CreatedBy)
+				if err := h.syncService.RemoveSkillFromAgent(bgCtx, userIDStr, as.AgentID, skill.CommandName); err != nil {
+					log.Printf("Warning: failed to remove skill /%s from agent %d: %v", skill.CommandName, as.AgentID, err)
+				}
+			}
+		}()
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Skill deleted successfully"})
@@ -241,12 +315,14 @@ func (h *Handler) ForkSkill(c *gin.Context) {
 	}
 
 	// Create forked skill
+	forkedName := originalSkill.Name + " (Fork)"
 	forkedSkill := models.Skill{
-		Name:        originalSkill.Name + " (Fork)",
+		Name:        forkedName,
 		Description: originalSkill.Description,
 		Icon:        originalSkill.Icon,
 		Category:    originalSkill.Category,
 		Prompt:      originalSkill.Prompt,
+		CommandName: SanitizeCommandName(forkedName),
 		Parameters:  originalSkill.Parameters,
 		IsOfficial:  false,
 		CreatedBy:   userID.(int64),

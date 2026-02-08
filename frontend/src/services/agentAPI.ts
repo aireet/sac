@@ -86,6 +86,11 @@ export const deleteAgent = async (id: number): Promise<void> => {
   await api.delete(`/agents/${id}`)
 }
 
+// Restart an agent (delete pod, K8s will recreate it)
+export const restartAgent = async (id: number): Promise<void> => {
+  await api.post(`/agents/${id}/restart`)
+}
+
 // Install a skill to an agent
 export const installSkill = async (agentId: number, skillId: number): Promise<void> => {
   await api.post(`/agents/${agentId}/skills`, { skill_id: skillId })
@@ -94,4 +99,21 @@ export const installSkill = async (agentId: number, skillId: number): Promise<vo
 // Uninstall a skill from an agent
 export const uninstallSkill = async (agentId: number, skillId: number): Promise<void> => {
   await api.delete(`/agents/${agentId}/skills/${skillId}`)
+}
+
+// Agent pod status
+export interface AgentStatus {
+  agent_id: number
+  status: string
+  restart_count: number
+  cpu_request: string
+  cpu_limit: string
+  memory_request: string
+  memory_limit: string
+}
+
+// Get pod statuses for all agents
+export const getAgentStatuses = async (): Promise<AgentStatus[]> => {
+  const response = await api.get<AgentStatus[]>('/agent-statuses')
+  return response.data
 }

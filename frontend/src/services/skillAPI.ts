@@ -36,6 +36,7 @@ export interface Skill {
   icon: string
   category: string
   prompt: string
+  command_name: string
   parameters?: SkillParameter[]
   is_official: boolean
   created_by: number
@@ -87,4 +88,8 @@ export async function forkSkill(id: number): Promise<Skill> {
 export async function getPublicSkills(): Promise<Skill[]> {
   const response = await apiClient.get('/skills/public')
   return response.data
+}
+
+export async function syncAgentSkills(agentId: number): Promise<void> {
+  await apiClient.post(`/agents/${agentId}/sync-skills`)
 }

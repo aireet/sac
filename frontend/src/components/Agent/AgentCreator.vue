@@ -44,6 +44,21 @@
 
       <n-divider>Anthropic Configuration</n-divider>
 
+      <n-form-item label="Provider Preset">
+        <n-space :size="8">
+          <n-button
+            v-for="preset in providerPresets"
+            :key="preset.name"
+            size="small"
+            :type="activePreset === preset.name ? 'primary' : 'default'"
+            secondary
+            @click="applyPreset(preset)"
+          >
+            {{ preset.name }}
+          </n-button>
+        </n-space>
+      </n-form-item>
+
       <n-form-item label="Auth Token" path="anthropic_auth_token">
         <n-input
           v-model:value="formData.anthropic_auth_token"
@@ -138,6 +153,46 @@ const formData = ref({
   anthropic_sonnet_model: 'claude-sonnet-4.5',
 })
 
+const activePreset = ref('')
+
+const providerPresets = [
+  {
+    name: 'OpenRouter',
+    token: '',
+    base_url: 'https://openrouter.ai/api/v1',
+    haiku: 'anthropic/claude-haiku-4.5',
+    sonnet: 'anthropic/claude-sonnet-4.5',
+    opus: 'anthropic/claude-opus-4.6',
+  },
+  {
+    name: 'GLM',
+    token: '11d59b7971f04ca2be14d6d1b5dd8f0e.j0kNQOALCJtOPtDC',
+    base_url: 'https://open.bigmodel.cn/api/anthropic',
+    haiku: 'glm-4.7',
+    sonnet: 'glm-4.7',
+    opus: 'glm-4.7',
+  },
+  {
+    name: 'Qwen',
+    token: 'sk-e09722a77937446b85a4e88d11921187',
+    base_url: 'https://dashscope.aliyuncs.com/api/v2/apps/claude-code-proxy',
+    haiku: 'qwen3-coder-plus',
+    sonnet: 'qwen3-coder-plus',
+    opus: 'qwen3-coder-plus',
+  },
+]
+
+const applyPreset = (preset: typeof providerPresets[0]) => {
+  activePreset.value = preset.name
+  if (preset.token) {
+    formData.value.anthropic_auth_token = preset.token
+  }
+  formData.value.anthropic_base_url = preset.base_url
+  formData.value.anthropic_haiku_model = preset.haiku
+  formData.value.anthropic_sonnet_model = preset.sonnet
+  formData.value.anthropic_opus_model = preset.opus
+}
+
 const iconOptions = [
   { label: '🤖 Robot', value: '🤖' },
   { label: '🧠 Brain', value: '🧠' },
@@ -192,11 +247,24 @@ const handleSubmit = async () => {
 
   submitting.value = true
   try {
+    const payload = {
+      name: formData.value.name,
+      description: formData.value.description,
+      icon: formData.value.icon,
+      config: {
+        anthropic_auth_token: formData.value.anthropic_auth_token,
+        anthropic_base_url: formData.value.anthropic_base_url,
+        anthropic_haiku_model: formData.value.anthropic_haiku_model,
+        anthropic_opus_model: formData.value.anthropic_opus_model,
+        anthropic_sonnet_model: formData.value.anthropic_sonnet_model,
+      },
+    }
+
     if (isEditing.value && props.agent) {
-      await updateAgent(props.agent.id, formData.value)
+      await updateAgent(props.agent.id, payload)
       message.success('Agent updated successfully')
     } else {
-      await createAgent(formData.value)
+      await createAgent(payload)
       message.success('Agent created successfully')
     }
 

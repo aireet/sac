@@ -50,6 +50,7 @@ type Skill struct {
 	Icon        string          `bun:"icon" json:"icon"`
 	Category    string          `bun:"category,notnull" json:"category"`
 	Prompt      string          `bun:"prompt,type:text,notnull" json:"prompt"`
+	CommandName string          `bun:"command_name" json:"command_name"`
 	Parameters  SkillParameters `bun:"parameters,type:jsonb" json:"parameters,omitempty"`
 	IsOfficial  bool            `bun:"is_official,notnull,default:false" json:"is_official"`
 	CreatedBy   int64           `bun:"created_by,notnull" json:"created_by"`

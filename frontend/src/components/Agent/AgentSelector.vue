@@ -42,6 +42,14 @@
                 >
                   Active
                 </n-tag>
+                <n-tag
+                  v-if="podStatuses.get(agent.id)"
+                  :type="statusTagType(agent.id)"
+                  size="small"
+                  round
+                >
+                  {{ statusLabel(agent.id) }}
+                </n-tag>
               </n-space>
             </template>
 
@@ -106,10 +114,11 @@ import {
   useMessage,
 } from 'naive-ui'
 import { Add, CreateOutline, TrashOutline } from '@vicons/ionicons5'
-import { getAgents, deleteAgent, type Agent } from '../../services/agentAPI'
+import { getAgents, deleteAgent, type Agent, type AgentStatus } from '../../services/agentAPI'
 
 const props = defineProps<{
   selectedAgentId?: number
+  podStatuses: Map<number, AgentStatus>
 }>()
 
 const emit = defineEmits<{
@@ -122,6 +131,29 @@ const message = useMessage()
 
 const agents = ref<Agent[]>([])
 const loading = ref(false)
+
+const statusTagType = (agentId: number): 'success' | 'warning' | 'error' | 'default' => {
+  const info = props.podStatuses.get(agentId)
+  switch (info?.status) {
+    case 'Running': return 'success'
+    case 'Pending': return 'warning'
+    case 'Failed':
+    case 'Error': return 'error'
+    default: return 'default'
+  }
+}
+
+const statusLabel = (agentId: number): string => {
+  const info = props.podStatuses.get(agentId)
+  switch (info?.status) {
+    case 'Running': return 'Running'
+    case 'Pending': return 'Pending'
+    case 'Failed': return 'Failed'
+    case 'Error': return 'Error'
+    case 'NotDeployed': return 'Not Deployed'
+    default: return 'Unknown'
+  }
+}
 
 const loadAgents = async () => {
   loading.value = true

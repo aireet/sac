@@ -1,6 +1,57 @@
 <template>
   <div class="skill-panel">
-    <n-card title="Skills" :bordered="false">
+    <!-- Upper Section: Agent Info & Pod Status -->
+    <n-card :bordered="false" size="small" class="agent-info-card">
+      <n-space align="center" :size="12" style="margin-bottom: 12px">
+        <span class="agent-icon-large">{{ agent?.icon || '🤖' }}</span>
+        <div>
+          <n-text strong style="font-size: 16px">{{ agent?.name }}</n-text>
+          <br />
+          <n-text depth="3" style="font-size: 13px">{{ agent?.description || 'No description' }}</n-text>
+        </div>
+      </n-space>
+
+      <n-descriptions label-placement="left" :column="2" bordered size="small">
+        <n-descriptions-item label="Status">
+          <n-tag :type="statusTagType" size="small" round>
+            {{ statusLabel }}
+          </n-tag>
+        </n-descriptions-item>
+        <n-descriptions-item label="Restarts">
+          {{ podStatus?.restart_count ?? '-' }}
+        </n-descriptions-item>
+        <n-descriptions-item label="CPU Request">
+          {{ podStatus?.cpu_request || '-' }}
+        </n-descriptions-item>
+        <n-descriptions-item label="CPU Limit">
+          {{ podStatus?.cpu_limit || '-' }}
+        </n-descriptions-item>
+        <n-descriptions-item label="Mem Request">
+          {{ podStatus?.memory_request || '-' }}
+        </n-descriptions-item>
+        <n-descriptions-item label="Mem Limit">
+          {{ podStatus?.memory_limit || '-' }}
+        </n-descriptions-item>
+      </n-descriptions>
+
+      <n-space style="margin-top: 12px" :size="8">
+        <n-button
+          size="small"
+          :loading="restarting"
+          @click="handleRestart"
+        >
+          <template #icon>
+            <n-icon><RefreshOutline /></n-icon>
+          </template>
+          Restart Pod
+        </n-button>
+      </n-space>
+    </n-card>
+
+    <n-divider style="margin: 12px 0" />
+
+    <!-- Lower Section: Skills -->
+    <n-card title="Skills" :bordered="false" size="small">
       <n-space vertical>
         <n-input
           v-model:value="searchQuery"
@@ -34,6 +85,9 @@
                   <template #header-extra>
                     <span class="skill-icon">{{ skill.icon }}</span>
                   </template>
+                  <n-text depth="3" style="font-size: 11px; font-family: monospace; display: block; margin-bottom: 4px">
+                    /{{ skill.command_name }}
+                  </n-text>
                   <n-ellipsis :line-clamp="2">
                     {{ skill.description }}
                   </n-ellipsis>
@@ -134,17 +188,71 @@ import {
   NSelect,
   NButton,
   NIcon,
+  NText,
+  NDescriptions,
+  NDescriptionsItem,
+  NDivider,
   useMessage,
 } from 'naive-ui'
-import { Search as SearchIcon } from '@vicons/ionicons5'
+import { Search as SearchIcon, RefreshOutline } from '@vicons/ionicons5'
 import { getSkills, type Skill } from '../../services/skillAPI'
+import { restartAgent, type Agent, type AgentStatus } from '../../services/agentAPI'
+
+const props = defineProps<{
+  agentId: number
+  agent: Agent
+  podStatus: AgentStatus | null
+  installedSkills?: any[]
+}>()
 
 const emit = defineEmits<{
   executeCommand: [command: string]
+  restart: []
 }>()
 
 const message = useMessage()
 
+// --- Agent Info Section ---
+const restarting = ref(false)
+
+const statusTagType = computed((): 'success' | 'warning' | 'error' | 'default' => {
+  const status = props.podStatus?.status
+  switch (status) {
+    case 'Running': return 'success'
+    case 'Pending': return 'warning'
+    case 'Failed':
+    case 'Error': return 'error'
+    default: return 'default'
+  }
+})
+
+const statusLabel = computed((): string => {
+  const status = props.podStatus?.status
+  switch (status) {
+    case 'Running': return 'Running'
+    case 'Pending': return 'Pending'
+    case 'Failed': return 'Failed'
+    case 'Error': return 'Error'
+    case 'NotDeployed': return 'Not Deployed'
+    default: return status || 'Unknown'
+  }
+})
+
+const handleRestart = async () => {
+  restarting.value = true
+  try {
+    await restartAgent(props.agentId)
+    message.success('Agent pod is restarting')
+    emit('restart')
+  } catch (error) {
+    message.error('Failed to restart agent pod')
+    console.error(error)
+  } finally {
+    restarting.value = false
+  }
+}
+
+// --- Skills Section ---
 const skills = ref<Skill[]>([])
 const searchQuery = ref('')
 const activeCategory = ref<string>('')
@@ -181,27 +289,25 @@ const executeSkill = (skill: Skill) => {
     })
     showParameterModal.value = true
   } else {
-    // Execute directly
-    sendCommand(skill.prompt)
+    // Execute as slash command
+    sendCommand(`/${skill.command_name}`)
   }
 }
 
 const executeWithParameters = () => {
   if (!currentSkill.value) return
 
-  let prompt = currentSkill.value.prompt
+  // Build slash command with arguments
+  const args = currentSkill.value.parameters
+    ?.map((p) => parameterValues.value[p.name])
+    .filter((v) => v !== undefined && v !== null && v !== '')
+    .map(String)
+    .join(' ')
 
-  // Replace parameter placeholders
-  currentSkill.value.parameters?.forEach((param) => {
-    const value = parameterValues.value[param.name]
-    if (value !== undefined && value !== null) {
-      const placeholder = `{{${param.name}}}`
-      prompt = prompt.replace(new RegExp(placeholder, 'g'), String(value))
-    }
-  })
+  const command = `/${currentSkill.value.command_name}${args ? ' ' + args : ''}`
 
   showParameterModal.value = false
-  sendCommand(prompt)
+  sendCommand(command)
 }
 
 const sendCommand = (command: string) => {
@@ -234,6 +340,15 @@ onMounted(() => {
 .skill-panel {
   height: 100%;
   overflow-y: auto;
+}
+
+.agent-info-card {
+  background: transparent;
+}
+
+.agent-icon-large {
+  font-size: 36px;
+  line-height: 1;
 }
 
 .skill-card {

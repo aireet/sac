@@ -1,5 +1,7 @@
 <template>
-  <div ref="terminalContainer" class="terminal-container"></div>
+  <div class="terminal-wrapper">
+    <div ref="terminalContainer" class="terminal-container"></div>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -20,8 +22,8 @@ let terminal: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let ws: WebSocket | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+let resizeObserver: ResizeObserver | null = null
 let intentionalClose = false
-let inputBuffer = ''
 
 const initTerminal = () => {
   if (!terminalContainer.value) return
@@ -29,15 +31,14 @@ const initTerminal = () => {
 
   // Create terminal instance
   terminal = new Terminal({
-    cursorBlink: true,
+    cursorBlink: false,
+    disableStdin: true,
     fontSize: 14,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     theme: {
       background: '#1e1e1e',
       foreground: '#cccccc',
     },
-    rows: 30,
-    cols: 100,
   })
 
   // Create fit addon
@@ -46,65 +47,14 @@ const initTerminal = () => {
 
   // Open terminal in container
   terminal.open(terminalContainer.value)
-  fitAddon.fit()
+
+  // Delay initial fit so the container has its final layout dimensions
+  requestAnimationFrame(() => {
+    fitAddon!.fit()
+  })
 
   // Connect to WebSocket
   connectWebSocket()
-
-  // Handle user input - buffer locally, send complete line on Enter
-  terminal.onData((data) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return
-
-    for (let i = 0; i < data.length; i++) {
-      const char = data[i]
-      const code = char.charCodeAt(0)
-
-      if (char === '\r') {
-        // Enter: erase local echo, send complete line to server
-        // Server PTY will echo the text back naturally
-        if (inputBuffer.length > 0) {
-          terminal!.write('\b \b'.repeat(inputBuffer.length))
-        }
-        ws.send(inputBuffer + '\r')
-        inputBuffer = ''
-      } else if (char === '\x7f') {
-        // Backspace: delete last character from buffer
-        if (inputBuffer.length > 0) {
-          inputBuffer = inputBuffer.slice(0, -1)
-          terminal!.write('\b \b')
-        }
-      } else if (char === '\x03') {
-        // Ctrl+C: clear buffer, send interrupt immediately
-        if (inputBuffer.length > 0) {
-          terminal!.write('\b \b'.repeat(inputBuffer.length))
-          inputBuffer = ''
-        }
-        ws.send('\x03')
-      } else if (char === '\x04') {
-        // Ctrl+D: send EOF immediately
-        ws.send('\x04')
-      } else if (char === '\x15') {
-        // Ctrl+U: clear entire input buffer
-        if (inputBuffer.length > 0) {
-          terminal!.write('\b \b'.repeat(inputBuffer.length))
-          inputBuffer = ''
-        }
-      } else if (char === '\x1b') {
-        // Escape sequence (arrow keys etc.) - skip entire sequence
-        if (i + 1 < data.length && data[i + 1] === '[') {
-          i++ // skip '['
-          while (i + 1 < data.length) {
-            i++
-            if (data.charCodeAt(i) >= 0x40 && data.charCodeAt(i) <= 0x7e) break
-          }
-        }
-      } else if (code >= 32) {
-        // Printable character: buffer + local echo
-        inputBuffer += char
-        terminal!.write(char)
-      }
-    }
-  })
 
   // Handle terminal resize - notify backend so ttyd can resize the PTY
   terminal.onResize(({ cols, rows }) => {
@@ -113,8 +63,13 @@ const initTerminal = () => {
     }
   })
 
-  // Handle window resize
-  window.addEventListener('resize', handleResize)
+  // Use ResizeObserver to track container size changes (sidebar toggle, window resize, etc.)
+  resizeObserver = new ResizeObserver(() => {
+    if (fitAddon && terminal) {
+      fitAddon.fit()
+    }
+  })
+  resizeObserver.observe(terminalContainer.value)
 }
 
 const getWebSocketUrl = (): string => {
@@ -144,7 +99,6 @@ const connectWebSocket = () => {
 
   cleanup()
   intentionalClose = false
-  inputBuffer = ''
 
   const baseUrl = getWebSocketUrl()
   let url = `${baseUrl}/ws/${props.userId}/${props.sessionId}`
@@ -160,23 +114,16 @@ const connectWebSocket = () => {
 
   ws.onopen = () => {
     console.log('WebSocket connected')
-    // Send initial resize so the backend knows our terminal dimensions
-    if (terminal) {
+    // Re-fit and send accurate dimensions after connection is established
+    if (fitAddon && terminal) {
+      fitAddon.fit()
       ws!.send(JSON.stringify({ type: 'resize', columns: terminal.cols, rows: terminal.rows }))
     }
   }
 
   ws.onmessage = (event) => {
     if (terminal) {
-      // If user has partially typed input, hide it before writing server output,
-      // then redraw after, so output doesn't interleave with the input buffer
-      if (inputBuffer.length > 0) {
-        terminal.write('\b \b'.repeat(inputBuffer.length))
-        terminal.write(event.data)
-        terminal.write(inputBuffer)
-      } else {
-        terminal.write(event.data)
-      }
+      terminal.write(event.data)
     }
   }
 
@@ -198,16 +145,34 @@ const connectWebSocket = () => {
   }
 }
 
-const handleResize = () => {
-  if (fitAddon && terminal) {
-    fitAddon.fit()
+const sendMessage = (text: string) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    // Send text and Enter as separate messages so ttyd delivers them
+    // as separate PTY writes — this ensures Claude Code sees the Enter key
+    ws.send(text)
+    setTimeout(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send('\r')
+      }
+    }, 50)
   }
 }
 
-const sendCommand = (command: string) => {
+const sendInterrupt = () => {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(command + '\r')
+    ws.send('\x03')
   }
+}
+
+const writeBanner = (agentName: string) => {
+  if (!terminal) return
+  terminal.clear()
+  terminal.writeln('\x1b[2J') // clear screen
+  terminal.writeln('')
+  terminal.writeln('\x1b[1;36m  ╔══════════════════════════════════════════╗\x1b[0m')
+  terminal.writeln(`\x1b[1;36m  ║\x1b[0m  \x1b[1;33m Switched to: \x1b[1;32m${agentName.padEnd(22)}\x1b[1;36m   ║\x1b[0m`)
+  terminal.writeln('\x1b[1;36m  ╚══════════════════════════════════════════╝\x1b[0m')
+  terminal.writeln('')
 }
 
 onMounted(() => {
@@ -215,7 +180,11 @@ onMounted(() => {
 })
 
 // When sessionId changes (e.g. after creating a session), init/reconnect terminal
-watch(() => props.sessionId, (newId) => {
+watch(() => props.sessionId, (newId, oldId) => {
+  if (newId !== oldId) {
+    // Always clean up old connection first to stop auto-reconnect loops
+    cleanup()
+  }
   if (newId) {
     if (!terminal) {
       initTerminal()
@@ -226,7 +195,10 @@ watch(() => props.sessionId, (newId) => {
 })
 
 onUnmounted(() => {
-  window.removeEventListener('resize', handleResize)
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
   cleanup()
 
   if (terminal) {
@@ -235,17 +207,26 @@ onUnmounted(() => {
   }
 })
 
-// Expose sendCommand for parent components
 defineExpose({
-  sendCommand,
+  sendMessage,
+  sendInterrupt,
+  cleanup,
+  writeBanner,
 })
 </script>
 
 <style scoped>
-.terminal-container {
+.terminal-wrapper {
   width: 100%;
   height: 100%;
   background: #1e1e1e;
   padding: 10px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.terminal-container {
+  width: 100%;
+  height: 100%;
 }
 </style>

@@ -36,7 +36,12 @@
         label-width="120"
       >
         <n-form-item label="Name" path="name">
-          <n-input v-model:value="formData.name" placeholder="Skill name" />
+          <n-space vertical style="width: 100%">
+            <n-input v-model:value="formData.name" placeholder="Skill name" />
+            <n-text v-if="commandNamePreview" depth="3" style="font-size: 12px">
+              Slash command: <n-text code style="font-size: 12px">/{{ commandNamePreview }}</n-text>
+            </n-text>
+          </n-space>
         </n-form-item>
 
         <n-form-item label="Description" path="description">
@@ -75,7 +80,7 @@
               :autosize="{ minRows: 20, maxRows: 40 }"
             />
             <n-text depth="3" style="font-size: 12px">
-              💡 Tip: Use Markdown syntax for formatting. Claude Code skills are written in Markdown.
+              Write the prompt in Markdown. This becomes a Claude Code slash command. Use $ARGUMENTS for parameter values.
             </n-text>
           </n-space>
         </n-form-item>
@@ -104,7 +109,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, h, onMounted } from 'vue'
+import { ref, h, computed, onMounted } from 'vue'
 import {
   NCard,
   NSpace,
@@ -150,6 +155,19 @@ const formData = ref({
   prompt: '',
   parameters: [] as SkillParameter[],
   is_public: false,
+})
+
+const sanitizeCommandName = (name: string): string => {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+const commandNamePreview = computed(() => {
+  return sanitizeCommandName(formData.value.name)
 })
 
 const categoryOptions = [
@@ -234,9 +252,17 @@ const columns: DataTableColumns<Skill> = [
   {
     title: 'Name',
     key: 'name',
-    minWidth: 200,
+    minWidth: 150,
     ellipsis: {
       tooltip: true
+    }
+  },
+  {
+    title: 'Command',
+    key: 'command_name',
+    width: 160,
+    render(row) {
+      return h(NText, { code: true, style: 'font-size: 12px' }, { default: () => `/${row.command_name}` })
     }
   },
   {

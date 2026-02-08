@@ -1,23 +1,31 @@
 package container
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"path/filepath"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/client-go/util/homedir"
 )
 
 type Manager struct {
 	clientset      *kubernetes.Clientset
+	restConfig     *rest.Config
 	namespace      string
 	dockerImage    string
 	dockerRegistry string
@@ -50,6 +58,7 @@ func NewManager(kubeconfigPath, namespace, dockerRegistry, dockerImage string) (
 
 	return &Manager{
 		clientset:      clientset,
+		restConfig:     config,
 		namespace:      namespace,
 		dockerImage:    dockerImage,
 		dockerRegistry: dockerRegistry,
@@ -253,6 +262,16 @@ func (m *Manager) CreatePVC(ctx context.Context, userID, sessionID string) error
 	return nil
 }
 
+// DeletePodByName deletes a specific pod by name, used to restart StatefulSet pods
+func (m *Manager) DeletePodByName(ctx context.Context, podName string) error {
+	err := m.clientset.CoreV1().Pods(m.namespace).Delete(ctx, podName, metav1.DeleteOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to delete pod %s: %w", podName, err)
+	}
+	log.Printf("Pod %s deleted (will be recreated by StatefulSet)", podName)
+	return nil
+}
+
 // statefulSetName returns the consistent name for a user-agent StatefulSet
 func (m *Manager) statefulSetName(userID string, agentID int64) string {
 	return fmt.Sprintf("claude-code-%s-%d", userID, agentID)
@@ -434,13 +453,152 @@ func (m *Manager) DeleteStatefulSet(ctx context.Context, userID string, agentID 
 	return nil
 }
 
-// GetStatefulSetPodAddress returns the stable DNS name for the StatefulSet pod.
-// This is deterministic and doesn't require querying the pod list.
-func (m *Manager) GetStatefulSetPodAddress(userID string, agentID int64) string {
+// GetStatefulSetPodIP returns the Pod IP of the StatefulSet's replica-0 pod.
+// StatefulSet pods have stable IPs that persist across restarts.
+func (m *Manager) GetStatefulSetPodIP(ctx context.Context, userID string, agentID int64) (string, error) {
 	name := m.statefulSetName(userID, agentID)
-	// StatefulSet pod DNS: {podName}.{serviceName}.{namespace}.svc.cluster.local
-	// Pod name for replica 0: {statefulsetName}-0
-	return fmt.Sprintf("%s-0.%s.%s.svc.cluster.local", name, name, m.namespace)
+	podName := fmt.Sprintf("%s-0", name)
+
+	pod, err := m.clientset.CoreV1().Pods(m.namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to get pod %s: %w", podName, err)
+	}
+
+	if pod.Status.PodIP == "" {
+		return "", fmt.Errorf("pod %s has no IP assigned yet", podName)
+	}
+
+	return pod.Status.PodIP, nil
+}
+
+// PodInfo contains detailed information about a StatefulSet's pod.
+type PodInfo struct {
+	Status        string `json:"status"`
+	RestartCount  int32  `json:"restart_count"`
+	CPURequest    string `json:"cpu_request"`
+	CPULimit      string `json:"cpu_limit"`
+	MemoryRequest string `json:"memory_request"`
+	MemoryLimit   string `json:"memory_limit"`
+}
+
+// GetStatefulSetPodInfo returns detailed info for a StatefulSet's pod.
+// Returns PodInfo with Status "NotDeployed" if the pod doesn't exist,
+// "Error" for CrashLoopBackOff/ImagePullBackOff, or the pod phase string.
+func (m *Manager) GetStatefulSetPodInfo(ctx context.Context, userID string, agentID int64) PodInfo {
+	name := m.statefulSetName(userID, agentID)
+	podName := fmt.Sprintf("%s-0", name)
+
+	pod, err := m.clientset.CoreV1().Pods(m.namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return PodInfo{Status: "NotDeployed"}
+		}
+		return PodInfo{Status: "Unknown"}
+	}
+
+	info := PodInfo{
+		Status: string(pod.Status.Phase),
+	}
+
+	// Read resource requests/limits from the first container
+	if len(pod.Spec.Containers) > 0 {
+		res := pod.Spec.Containers[0].Resources
+		if q, ok := res.Requests[corev1.ResourceCPU]; ok {
+			info.CPURequest = q.String()
+		}
+		if q, ok := res.Requests[corev1.ResourceMemory]; ok {
+			info.MemoryRequest = q.String()
+		}
+		if q, ok := res.Limits[corev1.ResourceCPU]; ok {
+			info.CPULimit = q.String()
+		}
+		if q, ok := res.Limits[corev1.ResourceMemory]; ok {
+			info.MemoryLimit = q.String()
+		}
+	}
+
+	// Check container statuses for error conditions and restart count
+	for _, cs := range pod.Status.ContainerStatuses {
+		info.RestartCount = cs.RestartCount
+		if cs.State.Waiting != nil {
+			reason := cs.State.Waiting.Reason
+			if reason == "CrashLoopBackOff" || reason == "ImagePullBackOff" || reason == "ErrImagePull" {
+				info.Status = "Error"
+			}
+		}
+	}
+
+	return info
+}
+
+// ExecInPod executes a command inside a pod using SPDY remotecommand.
+func (m *Manager) ExecInPod(ctx context.Context, podName string, command []string, stdin io.Reader) (string, string, error) {
+	req := m.clientset.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podName).
+		Namespace(m.namespace).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: "claude-code",
+			Command:   command,
+			Stdin:     stdin != nil,
+			Stdout:    true,
+			Stderr:    true,
+		}, scheme.ParameterCodec)
+
+	exec, err := remotecommand.NewSPDYExecutor(m.restConfig, "POST", req.URL())
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create executor: %w", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	streamOpts := remotecommand.StreamOptions{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+	if stdin != nil {
+		streamOpts.Stdin = stdin
+	}
+
+	err = exec.StreamWithContext(ctx, streamOpts)
+	return stdout.String(), stderr.String(), err
+}
+
+// WriteFileInPod writes content to a file inside a pod.
+func (m *Manager) WriteFileInPod(ctx context.Context, podName, filePath, content string) error {
+	cmd := []string{"bash", "-c", fmt.Sprintf("mkdir -p $(dirname %s) && cat > %s", filePath, filePath)}
+	_, stderr, err := m.ExecInPod(ctx, podName, cmd, strings.NewReader(content))
+	if err != nil {
+		return fmt.Errorf("failed to write file %s in pod %s: %w (stderr: %s)", filePath, podName, err, stderr)
+	}
+	return nil
+}
+
+// DeleteFileInPod deletes a file from a pod.
+func (m *Manager) DeleteFileInPod(ctx context.Context, podName, filePath string) error {
+	cmd := []string{"rm", "-f", filePath}
+	_, stderr, err := m.ExecInPod(ctx, podName, cmd, nil)
+	if err != nil {
+		return fmt.Errorf("failed to delete file %s in pod %s: %w (stderr: %s)", filePath, podName, err, stderr)
+	}
+	return nil
+}
+
+// ListFilesInPod lists files in a directory inside a pod.
+func (m *Manager) ListFilesInPod(ctx context.Context, podName, dirPath string) ([]string, error) {
+	cmd := []string{"bash", "-c", fmt.Sprintf("ls -1 %s 2>/dev/null || true", dirPath)}
+	stdout, _, err := m.ExecInPod(ctx, podName, cmd, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list files in %s: %w", dirPath, err)
+	}
+
+	var files []string
+	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+	return files, nil
 }
 
 // WaitForStatefulSetReady polls until the StatefulSet pod is Running.
