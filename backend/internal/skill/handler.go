@@ -213,6 +213,18 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 		return
 	}
 
+	// Re-read full record from DB to return complete data
+	var updatedSkill models.Skill
+	err = h.db.NewSelect().
+		Model(&updatedSkill).
+		Where("id = ?", skillID).
+		Scan(ctx)
+	if err != nil {
+		// Fallback to partial data if re-read fails
+		c.JSON(http.StatusOK, updateData)
+		return
+	}
+
 	// Async: sync updated skill to all agents that have it installed
 	go func() {
 		bgCtx := context.Background()
@@ -232,15 +244,15 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 			userIDStr := fmt.Sprintf("%d", agent.CreatedBy)
 
 			// If name changed, remove old command file
-			if existingSkill.CommandName != "" && existingSkill.CommandName != updateData.CommandName {
+			if existingSkill.CommandName != "" && existingSkill.CommandName != updatedSkill.CommandName {
 				_ = h.syncService.RemoveSkillFromAgent(bgCtx, userIDStr, as.AgentID, existingSkill.CommandName)
 			}
 			// Write updated file
-			_ = h.syncService.SyncSkillToAgent(bgCtx, userIDStr, as.AgentID, &updateData)
+			_ = h.syncService.SyncSkillToAgent(bgCtx, userIDStr, as.AgentID, &updatedSkill)
 		}
 	}()
 
-	c.JSON(http.StatusOK, updateData)
+	c.JSON(http.StatusOK, updatedSkill)
 }
 
 // DeleteSkill deletes a skill

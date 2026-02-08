@@ -252,6 +252,7 @@ const handleAgentSelect = async (agentId: number) => {
 
   if (agentId > 0) {
     switchingAgent.value = true
+    viewMode.value = 'terminal'
     try {
       selectedAgent.value = await getAgent(agentId)
       activeTab.value = 'skills'
