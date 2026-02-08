@@ -9,10 +9,10 @@ import (
 )
 
 // AgentConfig stores additional agent configuration as JSONB
-type AgentConfig map[string]interface{}
+type AgentConfig map[string]any
 
 // Scan implements sql.Scanner interface for reading from database
-func (ac *AgentConfig) Scan(value interface{}) error {
+func (ac *AgentConfig) Scan(value any) error {
 	if value == nil {
 		*ac = nil
 		return nil
@@ -32,7 +32,7 @@ func (ac *AgentConfig) Scan(value interface{}) error {
 // Value implements driver.Valuer interface for writing to database
 // We return the JSON as a string to avoid PostgreSQL treating it as bytea
 func (ac AgentConfig) Value() (driver.Value, error) {
-	if ac == nil || len(ac) == 0 {
+	if len(ac) == 0 {
 		return "{}", nil
 	}
 	bytes, err := json.Marshal(ac)

@@ -21,7 +21,7 @@ type SkillParameter struct {
 type SkillParameters []SkillParameter
 
 // Scan implements sql.Scanner interface
-func (sp *SkillParameters) Scan(value interface{}) error {
+func (sp *SkillParameters) Scan(value any) error {
 	if value == nil {
 		*sp = nil
 		return nil
@@ -38,7 +38,11 @@ func (sp SkillParameters) Value() (driver.Value, error) {
 	if sp == nil {
 		return nil, nil
 	}
-	return json.Marshal(sp)
+	b, err := json.Marshal(sp)
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
 }
 
 type Skill struct {
