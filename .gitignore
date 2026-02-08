@@ -1,0 +1,4 @@
+# Build binaries
+backend/api-gateway
+backend/ws-proxy
+backend/migrate
