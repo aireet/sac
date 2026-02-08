@@ -120,7 +120,6 @@ import {
   NButton,
   NSpace,
   NDivider,
-  NText,
   useMessage,
 } from 'naive-ui'
 import { createAgent, updateAgent, type Agent } from '../../services/agentAPI'

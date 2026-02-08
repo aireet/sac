@@ -50,64 +50,56 @@
 
     <n-divider style="margin: 12px 0" />
 
-    <!-- Lower Section: Skills -->
-    <n-card title="Skills" :bordered="false" size="small">
-      <n-space vertical>
-        <n-input
-          v-model:value="searchQuery"
-          placeholder="Search skills..."
-          clearable
-        >
-          <template #prefix>
-            <n-icon :component="SearchIcon" />
-          </template>
-        </n-input>
+    <!-- Lower Section: Installed Skills -->
+    <n-card :bordered="false" size="small">
+      <template #header>
+        <n-space align="center" justify="space-between" style="width: 100%">
+          <n-text strong>Skills</n-text>
+          <n-button size="tiny" quaternary @click="$emit('openMarketplace')">
+            + Install
+          </n-button>
+        </n-space>
+      </template>
 
-        <n-tabs v-model:value="activeCategory" type="line" animated>
-          <n-tab-pane
-            v-for="category in categories"
-            :key="category"
-            :name="category"
-            :tab="category"
-          >
-            <n-grid :x-gap="12" :y-gap="12" :cols="2">
-              <n-grid-item
-                v-for="skill in filteredSkillsByCategory(category)"
-                :key="skill.id"
-              >
-                <n-card
-                  :title="skill.name"
-                  size="small"
-                  hoverable
-                  @click="executeSkill(skill)"
-                  class="skill-card"
-                >
-                  <template #header-extra>
-                    <span class="skill-icon">{{ skill.icon }}</span>
+      <n-empty v-if="installedSkillList.length === 0" description="No skills installed" size="small">
+        <template #extra>
+          <n-button size="small" @click="$emit('openMarketplace')">
+            Browse Marketplace
+          </n-button>
+        </template>
+      </n-empty>
+
+      <n-space vertical v-else>
+        <n-card
+          v-for="skill in installedSkillList"
+          :key="skill.id"
+          size="small"
+          hoverable
+          class="skill-card"
+        >
+          <n-space align="center" justify="space-between">
+            <n-space align="center" :size="8" @click="executeSkill(skill)" style="cursor: pointer; flex: 1">
+              <span class="skill-icon">{{ skill.icon }}</span>
+              <div>
+                <n-text strong style="font-size: 13px">{{ skill.name }}</n-text>
+                <br />
+                <n-text depth="3" style="font-size: 11px; font-family: monospace">
+                  /{{ skill.command_name }}
+                </n-text>
+              </div>
+            </n-space>
+            <n-popconfirm @positive-click="handleUninstall(skill.id)">
+              <template #trigger>
+                <n-button size="tiny" quaternary type="error" title="Uninstall">
+                  <template #icon>
+                    <n-icon><CloseOutline /></n-icon>
                   </template>
-                  <n-text depth="3" style="font-size: 11px; font-family: monospace; display: block; margin-bottom: 4px">
-                    /{{ skill.command_name }}
-                  </n-text>
-                  <n-ellipsis :line-clamp="2">
-                    {{ skill.description }}
-                  </n-ellipsis>
-                  <template #footer>
-                    <n-tag
-                      v-if="skill.is_official"
-                      type="success"
-                      size="small"
-                    >
-                      Official
-                    </n-tag>
-                    <n-tag v-if="skill.is_public" type="info" size="small">
-                      Public
-                    </n-tag>
-                  </template>
-                </n-card>
-              </n-grid-item>
-            </n-grid>
-          </n-tab-pane>
-        </n-tabs>
+                </n-button>
+              </template>
+              Uninstall this skill?
+            </n-popconfirm>
+          </n-space>
+        </n-card>
       </n-space>
     </n-card>
 
@@ -169,17 +161,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed } from 'vue'
 import {
   NCard,
   NSpace,
   NInput,
-  NTabs,
-  NTabPane,
-  NGrid,
-  NGridItem,
   NTag,
-  NEllipsis,
   NModal,
   NForm,
   NFormItem,
@@ -192,11 +179,13 @@ import {
   NDescriptions,
   NDescriptionsItem,
   NDivider,
+  NEmpty,
+  NPopconfirm,
   useMessage,
 } from 'naive-ui'
-import { Search as SearchIcon, RefreshOutline } from '@vicons/ionicons5'
-import { getSkills, type Skill } from '../../services/skillAPI'
-import { restartAgent, type Agent, type AgentStatus } from '../../services/agentAPI'
+import { RefreshOutline, CloseOutline } from '@vicons/ionicons5'
+import { type Skill } from '../../services/skillAPI'
+import { restartAgent, uninstallSkill, type Agent, type AgentStatus } from '../../services/agentAPI'
 
 const props = defineProps<{
   agentId: number
@@ -208,6 +197,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   executeCommand: [command: string]
   restart: []
+  skillsChanged: []
+  openMarketplace: []
 }>()
 
 const message = useMessage()
@@ -253,34 +244,33 @@ const handleRestart = async () => {
 }
 
 // --- Skills Section ---
-const skills = ref<Skill[]>([])
-const searchQuery = ref('')
-const activeCategory = ref<string>('')
 const showParameterModal = ref(false)
 const currentSkill = ref<Skill | null>(null)
 const parameterValues = ref<Record<string, any>>({})
 
-const categories = computed(() => {
-  const cats = new Set(skills.value.map((s) => s.category))
-  return Array.from(cats)
+// Installed skills derived from agent data
+const installedSkillList = computed((): Skill[] => {
+  if (!props.installedSkills) return []
+  return props.installedSkills
+    .map((as: any) => as.skill)
+    .filter((s: any) => s != null) as Skill[]
 })
 
-const filteredSkillsByCategory = (category: string) => {
-  return skills.value.filter((skill) => {
-    const matchesCategory = skill.category === category
-    const matchesSearch =
-      searchQuery.value === '' ||
-      skill.name.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
-      skill.description.toLowerCase().includes(searchQuery.value.toLowerCase())
-    return matchesCategory && matchesSearch
-  })
+const handleUninstall = async (skillId: number) => {
+  try {
+    await uninstallSkill(props.agentId, skillId)
+    message.success('Skill uninstalled')
+    emit('skillsChanged')
+  } catch (error) {
+    message.error('Failed to uninstall skill')
+    console.error(error)
+  }
 }
 
 const executeSkill = (skill: Skill) => {
   currentSkill.value = skill
 
   if (skill.parameters && skill.parameters.length > 0) {
-    // Show parameter input modal
     parameterValues.value = {}
     skill.parameters.forEach((param) => {
       if (param.default_value) {
@@ -289,7 +279,6 @@ const executeSkill = (skill: Skill) => {
     })
     showParameterModal.value = true
   } else {
-    // Execute as slash command
     sendCommand(`/${skill.command_name}`)
   }
 }
@@ -297,7 +286,6 @@ const executeSkill = (skill: Skill) => {
 const executeWithParameters = () => {
   if (!currentSkill.value) return
 
-  // Build slash command with arguments
   const args = currentSkill.value.parameters
     ?.map((p) => parameterValues.value[p.name])
     .filter((v) => v !== undefined && v !== null && v !== '')
@@ -314,26 +302,6 @@ const sendCommand = (command: string) => {
   emit('executeCommand', command)
   message.success('Command sent to terminal')
 }
-
-const loadSkills = async () => {
-  try {
-    skills.value = await getSkills()
-  } catch (error) {
-    message.error('Failed to load skills')
-    console.error(error)
-  }
-}
-
-// Auto-select first category when categories change
-watch(categories, (newCategories) => {
-  if (newCategories.length > 0 && !activeCategory.value) {
-    activeCategory.value = newCategories[0]
-  }
-}, { immediate: true })
-
-onMounted(() => {
-  loadSkills()
-})
 </script>
 
 <style scoped>

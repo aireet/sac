@@ -56,8 +56,27 @@ func (h *Handler) CreateSkill(c *gin.Context) {
 		skill.CommandName = SanitizeCommandName(skill.Name)
 	}
 
+	if skill.CommandName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot derive a valid command name from skill name"})
+		return
+	}
+
 	ctx := context.Background()
-	_, err := h.db.NewInsert().Model(&skill).Exec(ctx)
+
+	// Check command_name uniqueness
+	exists, err := h.db.NewSelect().Model((*models.Skill)(nil)).
+		Where("command_name = ?", skill.CommandName).
+		Exists(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check command name"})
+		return
+	}
+	if exists {
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Command name '/%s' is already taken", skill.CommandName)})
+		return
+	}
+
+	_, err = h.db.NewInsert().Model(&skill).Exec(ctx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create skill"})
 		return
@@ -159,9 +178,28 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 	updateData.ID = skillID
 	updateData.UpdatedAt = time.Now()
 
-	// Regenerate command_name if name changed
-	if updateData.Name != "" {
+	// If user supplied a command_name, use it; otherwise regenerate from name
+	if updateData.CommandName == "" && updateData.Name != "" {
 		updateData.CommandName = SanitizeCommandName(updateData.Name)
+	}
+
+	if updateData.CommandName == "" {
+		updateData.CommandName = existingSkill.CommandName
+	}
+
+	// Check command_name uniqueness (exclude self)
+	if updateData.CommandName != existingSkill.CommandName {
+		dup, dupErr := h.db.NewSelect().Model((*models.Skill)(nil)).
+			Where("command_name = ? AND id != ?", updateData.CommandName, skillID).
+			Exists(ctx)
+		if dupErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check command name"})
+			return
+		}
+		if dup {
+			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Command name '/%s' is already taken", updateData.CommandName)})
+			return
+		}
 	}
 
 	_, err = h.db.NewUpdate().
@@ -314,15 +352,33 @@ func (h *Handler) ForkSkill(c *gin.Context) {
 		return
 	}
 
-	// Create forked skill
+	// Create forked skill with a unique command_name
 	forkedName := originalSkill.Name + " (Fork)"
+	baseCmd := SanitizeCommandName(forkedName)
+	cmdName := baseCmd
+
+	// Ensure uniqueness by appending a numeric suffix if needed
+	for i := 2; i <= 100; i++ {
+		exists, exErr := h.db.NewSelect().Model((*models.Skill)(nil)).
+			Where("command_name = ?", cmdName).
+			Exists(ctx)
+		if exErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check command name"})
+			return
+		}
+		if !exists {
+			break
+		}
+		cmdName = fmt.Sprintf("%s-%d", baseCmd, i)
+	}
+
 	forkedSkill := models.Skill{
 		Name:        forkedName,
 		Description: originalSkill.Description,
 		Icon:        originalSkill.Icon,
 		Category:    originalSkill.Category,
 		Prompt:      originalSkill.Prompt,
-		CommandName: SanitizeCommandName(forkedName),
+		CommandName: cmdName,
 		Parameters:  originalSkill.Parameters,
 		IsOfficial:  false,
 		CreatedBy:   userID.(int64),

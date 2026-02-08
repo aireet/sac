@@ -42,6 +42,18 @@
                 <n-icon><Add /></n-icon>
               </template>
             </n-button>
+            <n-divider vertical />
+            <n-button
+              size="small"
+              :type="viewMode === 'marketplace' ? 'primary' : 'default'"
+              :secondary="viewMode === 'marketplace'"
+              @click="viewMode = viewMode === 'marketplace' ? 'terminal' : 'marketplace'"
+            >
+              <template #icon>
+                <n-icon><StorefrontOutline /></n-icon>
+              </template>
+              Marketplace
+            </n-button>
           </n-space>
         </div>
       </n-layout-header>
@@ -75,28 +87,37 @@
                 :installed-skills="selectedAgent.installed_skills"
                 @execute-command="handleExecuteCommand"
                 @restart="handleRestartFromPanel"
+                @skills-changed="handleSkillsChanged"
+                @open-marketplace="viewMode = 'marketplace'"
               />
-            </n-tab-pane>
-            <n-tab-pane name="marketplace" tab="Skill Marketplace">
-              <SkillEditor />
             </n-tab-pane>
           </n-tabs>
         </n-layout-sider>
 
         <n-layout-content content-class="main-content">
-          <div class="terminal-area">
-            <Terminal
-              ref="terminalRef"
-              :user-id="userId"
-              :session-id="sessionId"
-              :ws-url="wsUrl"
-              :agent-id="selectedAgentId"
+          <template v-if="viewMode === 'terminal'">
+            <div class="terminal-area">
+              <Terminal
+                ref="terminalRef"
+                :user-id="userId"
+                :session-id="sessionId"
+                :ws-url="wsUrl"
+                :agent-id="selectedAgentId"
+              />
+            </div>
+            <ChatInput
+              v-if="sessionId"
+              @send="handleSendMessage"
+              @interrupt="handleInterrupt"
             />
-          </div>
-          <ChatInput
-            v-if="sessionId"
-            @send="handleSendMessage"
-            @interrupt="handleInterrupt"
+          </template>
+          <SkillMarketplace
+            v-else
+            :agent-id="selectedAgentId"
+            :agent="selectedAgent"
+            :installed-skills="selectedAgent?.installed_skills"
+            @skills-changed="handleSkillsChanged"
+            @close="viewMode = 'terminal'"
           />
         </n-layout-content>
       </n-layout>
@@ -123,19 +144,19 @@ import {
   NTabPane,
   NSpace,
   NText,
-  NTag,
   NSelect,
   NButton,
   NIcon,
+  NDivider,
   NEmpty,
   darkTheme,
   useMessage,
 } from 'naive-ui'
-import { Add } from '@vicons/ionicons5'
+import { Add, StorefrontOutline } from '@vicons/ionicons5'
 import Terminal from '../components/Terminal/Terminal.vue'
 import ChatInput from '../components/ChatInput/ChatInput.vue'
 import SkillPanel from '../components/SkillPanel/SkillPanel.vue'
-import SkillEditor from '../components/SkillRegister/SkillEditor.vue'
+import SkillMarketplace from '../components/SkillMarketplace/SkillMarketplace.vue'
 import AgentSelector from '../components/Agent/AgentSelector.vue'
 import AgentCreator from '../components/Agent/AgentCreator.vue'
 import { getAgent, getAgents, getAgentStatuses, type Agent, type AgentStatus } from '../services/agentAPI'
@@ -155,6 +176,7 @@ const selectedAgentId = ref<number>(0)
 const selectedAgent = ref<Agent | null>(null)
 const showAgentCreator = ref(false)
 const editingAgent = ref<Agent | null>(null)
+const viewMode = ref<'terminal' | 'marketplace'>('terminal')
 
 // Agent list for header dropdown
 const agents = ref<Agent[]>([])
@@ -283,6 +305,17 @@ const handleInterrupt = () => {
 
 const handleExecuteCommand = (command: string) => {
   handleSendMessage(command)
+}
+
+const handleSkillsChanged = async () => {
+  // Reload agent to refresh installed_skills
+  if (selectedAgentId.value > 0) {
+    try {
+      selectedAgent.value = await getAgent(selectedAgentId.value)
+    } catch (error) {
+      console.error('Failed to reload agent:', error)
+    }
+  }
 }
 
 const handleRestartFromPanel = () => {

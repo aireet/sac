@@ -52,6 +52,7 @@ export interface CreateSkillRequest {
   icon: string
   category: string
   prompt: string
+  command_name?: string
   parameters?: SkillParameter[]
   is_public: boolean
 }
