@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"strconv"
 	"time"
 
 	"g.echo.tech/dev/sac/internal/container"
 	"g.echo.tech/dev/sac/internal/models"
+	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/uptrace/bun"
 )
@@ -35,14 +35,14 @@ func (h *Handler) GetSyncService() *SyncService {
 func (h *Handler) CreateSkill(c *gin.Context) {
 	var skill models.Skill
 	if err := c.ShouldBindJSON(&skill); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		response.BadRequest(c, "Invalid request body", err)
 		return
 	}
 
 	// Get user ID from context (should be set by auth middleware)
 	userID, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 
@@ -57,7 +57,7 @@ func (h *Handler) CreateSkill(c *gin.Context) {
 	}
 
 	if skill.CommandName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot derive a valid command name from skill name"})
+		response.BadRequest(c, "Cannot derive a valid command name from skill name")
 		return
 	}
 
@@ -68,28 +68,28 @@ func (h *Handler) CreateSkill(c *gin.Context) {
 		Where("command_name = ?", skill.CommandName).
 		Exists(ctx)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check command name"})
+		response.InternalError(c, "Failed to check command name", err)
 		return
 	}
 	if exists {
-		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Command name '/%s' is already taken", skill.CommandName)})
+		response.Conflict(c, fmt.Sprintf("Command name '/%s' is already taken", skill.CommandName))
 		return
 	}
 
 	_, err = h.db.NewInsert().Model(&skill).Exec(ctx)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create skill"})
+		response.InternalError(c, "Failed to create skill", err)
 		return
 	}
 
-	c.JSON(http.StatusCreated, skill)
+	response.Created(c, skill)
 }
 
 // GetSkills retrieves all skills for the current user
 func (h *Handler) GetSkills(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 
@@ -104,18 +104,18 @@ func (h *Handler) GetSkills(c *gin.Context) {
 		Scan(ctx)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve skills"})
+		response.InternalError(c, "Failed to retrieve skills", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, skills)
+	response.OK(c, skills)
 }
 
 // GetSkill retrieves a single skill by ID
 func (h *Handler) GetSkill(c *gin.Context) {
 	skillID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid skill ID"})
+		response.BadRequest(c, "Invalid skill ID", err)
 		return
 	}
 
@@ -128,24 +128,24 @@ func (h *Handler) GetSkill(c *gin.Context) {
 		Scan(ctx)
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Skill not found"})
+		response.NotFound(c, "Skill not found", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, skill)
+	response.OK(c, skill)
 }
 
 // UpdateSkill updates an existing skill
 func (h *Handler) UpdateSkill(c *gin.Context) {
 	skillID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid skill ID"})
+		response.BadRequest(c, "Invalid skill ID", err)
 		return
 	}
 
 	userID, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 
@@ -159,19 +159,19 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 		Scan(ctx)
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Skill not found"})
+		response.NotFound(c, "Skill not found", err)
 		return
 	}
 
 	if existingSkill.CreatedBy != userID.(int64) && !existingSkill.IsOfficial {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to update this skill"})
+		response.Forbidden(c, "You don't have permission to update this skill")
 		return
 	}
 
 	// Parse update data
 	var updateData models.Skill
 	if err := c.ShouldBindJSON(&updateData); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		response.BadRequest(c, "Invalid request body", err)
 		return
 	}
 
@@ -193,11 +193,11 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 			Where("command_name = ? AND id != ?", updateData.CommandName, skillID).
 			Exists(ctx)
 		if dupErr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check command name"})
+			response.InternalError(c, "Failed to check command name", dupErr)
 			return
 		}
 		if dup {
-			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Command name '/%s' is already taken", updateData.CommandName)})
+			response.Conflict(c, fmt.Sprintf("Command name '/%s' is already taken", updateData.CommandName))
 			return
 		}
 	}
@@ -209,7 +209,7 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 		Exec(ctx)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update skill"})
+		response.InternalError(c, "Failed to update skill", err)
 		return
 	}
 
@@ -220,8 +220,7 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 		Where("id = ?", skillID).
 		Scan(ctx)
 	if err != nil {
-		// Fallback to partial data if re-read fails
-		c.JSON(http.StatusOK, updateData)
+		response.InternalError(c, "Failed to reload skill after update", err)
 		return
 	}
 
@@ -252,20 +251,20 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 		}
 	}()
 
-	c.JSON(http.StatusOK, updatedSkill)
+	response.OK(c, updatedSkill)
 }
 
 // DeleteSkill deletes a skill
 func (h *Handler) DeleteSkill(c *gin.Context) {
 	skillID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid skill ID"})
+		response.BadRequest(c, "Invalid skill ID", err)
 		return
 	}
 
 	userID, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 
@@ -279,17 +278,17 @@ func (h *Handler) DeleteSkill(c *gin.Context) {
 		Scan(ctx)
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Skill not found"})
+		response.NotFound(c, "Skill not found", err)
 		return
 	}
 
 	if skill.CreatedBy != userID.(int64) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to delete this skill"})
+		response.Forbidden(c, "You don't have permission to delete this skill")
 		return
 	}
 
 	if skill.IsOfficial {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot delete official skills"})
+		response.Forbidden(c, "Cannot delete official skills")
 		return
 	}
 
@@ -306,7 +305,7 @@ func (h *Handler) DeleteSkill(c *gin.Context) {
 		Exec(ctx)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete skill"})
+		response.InternalError(c, "Failed to delete skill", err)
 		return
 	}
 
@@ -328,20 +327,20 @@ func (h *Handler) DeleteSkill(c *gin.Context) {
 		}()
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Skill deleted successfully"})
+	response.Success(c, "Skill deleted successfully")
 }
 
 // ForkSkill creates a copy of a public skill
 func (h *Handler) ForkSkill(c *gin.Context) {
 	skillID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid skill ID"})
+		response.BadRequest(c, "Invalid skill ID", err)
 		return
 	}
 
 	userID, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 
@@ -355,12 +354,12 @@ func (h *Handler) ForkSkill(c *gin.Context) {
 		Scan(ctx)
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Skill not found"})
+		response.NotFound(c, "Skill not found", err)
 		return
 	}
 
 	if !originalSkill.IsPublic && !originalSkill.IsOfficial {
-		c.JSON(http.StatusForbidden, gin.H{"error": "This skill is not public"})
+		response.Forbidden(c, "This skill is not public")
 		return
 	}
 
@@ -375,7 +374,7 @@ func (h *Handler) ForkSkill(c *gin.Context) {
 			Where("command_name = ?", cmdName).
 			Exists(ctx)
 		if exErr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check command name"})
+			response.InternalError(c, "Failed to check command name", exErr)
 			return
 		}
 		if !exists {
@@ -402,11 +401,11 @@ func (h *Handler) ForkSkill(c *gin.Context) {
 
 	_, err = h.db.NewInsert().Model(&forkedSkill).Exec(ctx)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fork skill"})
+		response.InternalError(c, "Failed to fork skill", err)
 		return
 	}
 
-	c.JSON(http.StatusCreated, forkedSkill)
+	response.Created(c, forkedSkill)
 }
 
 // GetPublicSkills retrieves all public skills
@@ -422,11 +421,11 @@ func (h *Handler) GetPublicSkills(c *gin.Context) {
 		Scan(ctx)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve public skills"})
+		response.InternalError(c, "Failed to retrieve public skills", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, skills)
+	response.OK(c, skills)
 }
 
 // RegisterRoutes registers skill routes

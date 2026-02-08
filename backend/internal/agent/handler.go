@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"strconv"
 	"time"
 
 	"g.echo.tech/dev/sac/internal/container"
 	"g.echo.tech/dev/sac/internal/models"
 	"g.echo.tech/dev/sac/internal/skill"
+	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/uptrace/bun"
 )
@@ -64,14 +64,14 @@ func (h *Handler) GetAgents(c *gin.Context) {
 		Scan(c.Request.Context())
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch agents"})
+		response.InternalError(c, "Failed to fetch agents", err)
 		return
 	}
 
 	if agents == nil {
 		agents = []models.Agent{}
 	}
-	c.JSON(http.StatusOK, agents)
+	response.OK(c, agents)
 }
 
 // GetAgent returns a specific agent by ID
@@ -79,7 +79,7 @@ func (h *Handler) GetAgent(c *gin.Context) {
 	userID := c.GetInt64("userID")
 	agentID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid agent ID"})
+		response.BadRequest(c, "Invalid agent ID", err)
 		return
 	}
 
@@ -92,11 +92,11 @@ func (h *Handler) GetAgent(c *gin.Context) {
 		Scan(c.Request.Context())
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Agent not found"})
+		response.NotFound(c, "Agent not found", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, agent)
+	response.OK(c, agent)
 }
 
 // CreateAgent creates a new agent
@@ -110,27 +110,24 @@ func (h *Handler) CreateAgent(c *gin.Context) {
 		Count(c.Request.Context())
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check agent count"})
+		response.InternalError(c, "Failed to check agent count", err)
 		return
 	}
 
 	if count >= MaxAgentsPerUser {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Maximum agents limit reached",
-			"message": "You can only create up to 3 agents",
-		})
+		response.BadRequest(c, "Maximum agents limit reached, you can only create up to 3 agents")
 		return
 	}
 
 	var req struct {
-		Name        string                 `json:"name" binding:"required"`
-		Description string                 `json:"description"`
-		Icon        string                 `json:"icon"`
-		Config      map[string]interface{} `json:"config"`
+		Name        string         `json:"name" binding:"required"`
+		Description string         `json:"description"`
+		Icon        string         `json:"icon"`
+		Config      map[string]any `json:"config"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		response.BadRequest(c, "Invalid request body", err)
 		return
 	}
 
@@ -147,11 +144,11 @@ func (h *Handler) CreateAgent(c *gin.Context) {
 		Exec(c.Request.Context())
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create agent"})
+		response.InternalError(c, "Failed to create agent", err)
 		return
 	}
 
-	c.JSON(http.StatusCreated, agent)
+	response.Created(c, agent)
 }
 
 // UpdateAgent updates an existing agent
@@ -159,19 +156,19 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 	userID := c.GetInt64("userID")
 	agentID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid agent ID"})
+		response.BadRequest(c, "Invalid agent ID", err)
 		return
 	}
 
 	var req struct {
-		Name        string                 `json:"name"`
-		Description string                 `json:"description"`
-		Icon        string                 `json:"icon"`
-		Config      map[string]interface{} `json:"config"`
+		Name        string         `json:"name"`
+		Description string         `json:"description"`
+		Icon        string         `json:"icon"`
+		Config      map[string]any `json:"config"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		response.BadRequest(c, "Invalid request body", err)
 		return
 	}
 
@@ -183,7 +180,7 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 		Scan(c.Request.Context())
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Agent not found"})
+		response.NotFound(c, "Agent not found", err)
 		return
 	}
 
@@ -198,7 +195,7 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 		Exec(c.Request.Context())
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update agent"})
+		response.InternalError(c, "Failed to update agent", err)
 		return
 	}
 
@@ -230,11 +227,11 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 		Scan(c.Request.Context())
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch updated agent"})
+		response.InternalError(c, "Failed to fetch updated agent", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, existing)
+	response.OK(c, existing)
 }
 
 // DeleteAgent deletes an agent and cleans up its K8s StatefulSet
@@ -242,7 +239,7 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 	userID := c.GetInt64("userID")
 	agentID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid agent ID"})
+		response.BadRequest(c, "Invalid agent ID", err)
 		return
 	}
 
@@ -256,13 +253,13 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 		Exec(ctx)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete agent"})
+		response.InternalError(c, "Failed to delete agent", err)
 		return
 	}
 
 	rowsAffected, _ := res.RowsAffected()
 	if rowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Agent not found"})
+		response.NotFound(c, "Agent not found")
 		return
 	}
 
@@ -284,7 +281,7 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 		// Not fatal — DB record is already deleted
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Agent deleted successfully"})
+	response.Success(c, "Agent deleted successfully")
 }
 
 // RestartAgent deletes the StatefulSet pod so K8s recreates it
@@ -292,7 +289,7 @@ func (h *Handler) RestartAgent(c *gin.Context) {
 	userID := c.GetInt64("userID")
 	agentID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid agent ID"})
+		response.BadRequest(c, "Invalid agent ID", err)
 		return
 	}
 
@@ -303,7 +300,7 @@ func (h *Handler) RestartAgent(c *gin.Context) {
 		Where("id = ? AND created_by = ?", agentID, userID).
 		Scan(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Agent not found"})
+		response.NotFound(c, "Agent not found", err)
 		return
 	}
 
@@ -330,12 +327,12 @@ func (h *Handler) RestartAgent(c *gin.Context) {
 	err = h.containerManager.DeletePodByName(ctx, podName)
 	if err != nil {
 		log.Printf("Failed to delete pod %s: %v", podName, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to restart agent pod"})
+		response.InternalError(c, "Failed to restart agent pod", err)
 		return
 	}
 
 	log.Printf("Restarted agent %d pod %s for user %s", agentID, podName, userIDStr)
-	c.JSON(http.StatusOK, gin.H{"message": "Agent is restarting"})
+	response.Success(c, "Agent is restarting")
 }
 
 // InstallSkill installs a skill to an agent
@@ -343,7 +340,7 @@ func (h *Handler) InstallSkill(c *gin.Context) {
 	userID := c.GetInt64("userID")
 	agentID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid agent ID"})
+		response.BadRequest(c, "Invalid agent ID", err)
 		return
 	}
 
@@ -352,7 +349,7 @@ func (h *Handler) InstallSkill(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		response.BadRequest(c, "Invalid request body", err)
 		return
 	}
 
@@ -364,19 +361,19 @@ func (h *Handler) InstallSkill(c *gin.Context) {
 		Scan(c.Request.Context())
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Agent not found"})
+		response.NotFound(c, "Agent not found", err)
 		return
 	}
 
 	// Verify skill exists
-	var skill models.Skill
+	var sk models.Skill
 	err = h.db.NewSelect().
-		Model(&skill).
+		Model(&sk).
 		Where("id = ?", req.SkillID).
 		Scan(c.Request.Context())
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Skill not found"})
+		response.NotFound(c, "Skill not found", err)
 		return
 	}
 
@@ -403,7 +400,7 @@ func (h *Handler) InstallSkill(c *gin.Context) {
 		Exec(c.Request.Context())
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to install skill"})
+		response.InternalError(c, "Failed to install skill", err)
 		return
 	}
 
@@ -411,12 +408,12 @@ func (h *Handler) InstallSkill(c *gin.Context) {
 	go func() {
 		bgCtx := context.Background()
 		userIDStr := fmt.Sprintf("%d", userID)
-		if err := h.syncService.SyncSkillToAgent(bgCtx, userIDStr, agentID, &skill); err != nil {
-			log.Printf("Warning: failed to sync skill /%s to agent %d: %v", skill.CommandName, agentID, err)
+		if err := h.syncService.SyncSkillToAgent(bgCtx, userIDStr, agentID, &sk); err != nil {
+			log.Printf("Warning: failed to sync skill /%s to agent %d: %v", sk.CommandName, agentID, err)
 		}
 	}()
 
-	c.JSON(http.StatusOK, gin.H{"message": "Skill installed successfully"})
+	response.Success(c, "Skill installed successfully")
 }
 
 // GetAgentStatuses returns the K8s pod status for all agents of the current user
@@ -433,7 +430,7 @@ func (h *Handler) GetAgentStatuses(c *gin.Context) {
 		Scan(c.Request.Context(), &agentIDs)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch agents"})
+		response.InternalError(c, "Failed to fetch agents", err)
 		return
 	}
 
@@ -461,7 +458,7 @@ func (h *Handler) GetAgentStatuses(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, statuses)
+	response.OK(c, statuses)
 }
 
 // UninstallSkill removes a skill from an agent
@@ -469,13 +466,13 @@ func (h *Handler) UninstallSkill(c *gin.Context) {
 	userID := c.GetInt64("userID")
 	agentID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid agent ID"})
+		response.BadRequest(c, "Invalid agent ID", err)
 		return
 	}
 
 	skillID, err := strconv.ParseInt(c.Param("skillId"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid skill ID"})
+		response.BadRequest(c, "Invalid skill ID", err)
 		return
 	}
 
@@ -487,7 +484,7 @@ func (h *Handler) UninstallSkill(c *gin.Context) {
 		Scan(c.Request.Context())
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Agent not found"})
+		response.NotFound(c, "Agent not found", err)
 		return
 	}
 
@@ -502,7 +499,7 @@ func (h *Handler) UninstallSkill(c *gin.Context) {
 		Exec(c.Request.Context())
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to uninstall skill"})
+		response.InternalError(c, "Failed to uninstall skill", err)
 		return
 	}
 
@@ -517,7 +514,7 @@ func (h *Handler) UninstallSkill(c *gin.Context) {
 		}()
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Skill uninstalled successfully"})
+	response.Success(c, "Skill uninstalled successfully")
 }
 
 // SyncSkills manually triggers a full sync of all installed skills to the agent pod.
@@ -525,7 +522,7 @@ func (h *Handler) SyncSkills(c *gin.Context) {
 	userID := c.GetInt64("userID")
 	agentID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid agent ID"})
+		response.BadRequest(c, "Invalid agent ID", err)
 		return
 	}
 
@@ -537,16 +534,16 @@ func (h *Handler) SyncSkills(c *gin.Context) {
 		Scan(c.Request.Context())
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Agent not found"})
+		response.NotFound(c, "Agent not found", err)
 		return
 	}
 
 	userIDStr := fmt.Sprintf("%d", userID)
 	if err := h.syncService.SyncAllSkillsToAgent(c.Request.Context(), userIDStr, agentID); err != nil {
 		log.Printf("Failed to sync skills for agent %d: %v", agentID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to sync skills"})
+		response.InternalError(c, "Failed to sync skills", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Skills synced successfully"})
+	response.Success(c, "Skills synced successfully")
 }

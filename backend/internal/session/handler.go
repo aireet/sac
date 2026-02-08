@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"time"
 
 	"g.echo.tech/dev/sac/internal/container"
 	"g.echo.tech/dev/sac/internal/models"
 	"g.echo.tech/dev/sac/internal/skill"
+	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -44,7 +44,7 @@ type CreateSessionResponse struct {
 func (h *Handler) CreateSession(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		response.Unauthorized(c, "Unauthorized")
 		return
 	}
 
@@ -62,7 +62,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 
 	// Require agentID
 	if req.AgentID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id is required"})
+		response.BadRequest(c, "agent_id is required")
 		return
 	}
 
@@ -95,7 +95,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 
 	if err != nil {
 		log.Printf("Failed to load agent %d: %v", req.AgentID, err)
-		c.JSON(http.StatusNotFound, gin.H{"error": "Agent not found"})
+		response.NotFound(c, "Agent not found", err)
 		return
 	}
 
@@ -109,7 +109,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		// Create StatefulSet with headless service
 		if err := h.containerManager.CreateStatefulSet(ctx, userIDStr, req.AgentID, agent.Config); err != nil {
 			log.Printf("Failed to create StatefulSet: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create StatefulSet"})
+			response.InternalError(c, "Failed to create StatefulSet", err)
 			return
 		}
 
@@ -128,7 +128,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	podIP, err := h.containerManager.GetStatefulSetPodIP(ctx, userIDStr, req.AgentID)
 	if err != nil {
 		log.Printf("Failed to get Pod IP: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Pod IP, pod may not be ready"})
+		response.InternalError(c, "Failed to get Pod IP, pod may not be ready", err)
 		return
 	}
 	log.Printf("Pod IP: %s", podIP)
@@ -156,11 +156,11 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	_, err = h.db.NewInsert().Model(session).Exec(ctx)
 	if err != nil {
 		log.Printf("Failed to save session to database: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save session"})
+		response.InternalError(c, "Failed to save session", err)
 		return
 	}
 
-	c.JSON(http.StatusCreated, CreateSessionResponse{
+	response.Created(c, CreateSessionResponse{
 		SessionID: sessionID,
 		Status:    models.SessionStatusRunning,
 		PodName:   stsName,
@@ -173,7 +173,7 @@ func (h *Handler) GetSession(c *gin.Context) {
 	sessionID := c.Param("sessionId")
 	userID, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		response.Unauthorized(c, "Unauthorized")
 		return
 	}
 
@@ -187,18 +187,18 @@ func (h *Handler) GetSession(c *gin.Context) {
 
 	if err != nil {
 		log.Printf("Session not found: %v", err)
-		c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
+		response.NotFound(c, "Session not found", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, session)
+	response.OK(c, session)
 }
 
 // ListSessions lists all sessions for the current user
 func (h *Handler) ListSessions(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		response.Unauthorized(c, "Unauthorized")
 		return
 	}
 
@@ -213,11 +213,11 @@ func (h *Handler) ListSessions(c *gin.Context) {
 
 	if err != nil {
 		log.Printf("Failed to list sessions: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list sessions"})
+		response.InternalError(c, "Failed to list sessions", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, sessions)
+	response.OK(c, sessions)
 }
 
 // DeleteSession soft-deletes a session (marks as deleted).
@@ -226,7 +226,7 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 	sessionID := c.Param("sessionId")
 	userID, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		response.Unauthorized(c, "Unauthorized")
 		return
 	}
 
@@ -241,7 +241,7 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 		Scan(ctx)
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
+		response.NotFound(c, "Session not found", err)
 		return
 	}
 
@@ -255,11 +255,11 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 
 	if err != nil {
 		log.Printf("Failed to update session status: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete session"})
+		response.InternalError(c, "Failed to delete session", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Session deleted successfully"})
+	response.Success(c, "Session deleted successfully")
 }
 
 // RegisterRoutes registers session routes

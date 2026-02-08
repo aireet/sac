@@ -123,6 +123,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { createAgent, updateAgent, type Agent } from '../../services/agentAPI'
+import { extractApiError } from '../../utils/error'
 
 const props = defineProps<{
   show: boolean
@@ -269,9 +270,8 @@ const handleSubmit = async () => {
 
     showModal.value = false
     emit('success')
-  } catch (error: any) {
-    const errorMsg = error.response?.data?.message || error.response?.data?.error || 'Failed to save agent'
-    message.error(errorMsg)
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to save agent'))
     console.error(error)
   } finally {
     submitting.value = false

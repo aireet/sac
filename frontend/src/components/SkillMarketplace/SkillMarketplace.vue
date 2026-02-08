@@ -315,6 +315,7 @@ import {
   type SkillParameter,
 } from '../../services/skillAPI'
 import { installSkill, uninstallSkill, type Agent } from '../../services/agentAPI'
+import { extractApiError } from '../../utils/error'
 
 const props = defineProps<{
   agentId: number
@@ -421,7 +422,7 @@ async function loadSkills() {
   try {
     allSkills.value = await getSkills()
   } catch (error) {
-    message.error('Failed to load skills')
+    message.error(extractApiError(error, 'Failed to load skills'))
     console.error(error)
   } finally {
     loading.value = false
@@ -443,7 +444,7 @@ async function handleInstall(skill: Skill) {
     message.success('Skill installed successfully')
     emit('skillsChanged')
   } catch (error) {
-    message.error('Failed to install skill')
+    message.error(extractApiError(error, 'Failed to install skill'))
     console.error(error)
   } finally {
     installingId.value = null
@@ -458,7 +459,7 @@ async function handleUninstall(skill: Skill) {
     message.success('Skill uninstalled')
     emit('skillsChanged')
   } catch (error) {
-    message.error('Failed to uninstall skill')
+    message.error(extractApiError(error, 'Failed to uninstall skill'))
     console.error(error)
   } finally {
     installingId.value = null
@@ -471,7 +472,7 @@ async function handleDelete(skill: Skill) {
     message.success('Skill deleted')
     loadSkills()
   } catch (error) {
-    message.error('Failed to delete skill')
+    message.error(extractApiError(error, 'Failed to delete skill'))
     console.error(error)
   }
 }
@@ -481,9 +482,8 @@ async function handleFork(skill: Skill) {
     await forkSkill(skill.id)
     message.success('Skill forked to My Skills')
     loadSkills()
-  } catch (error: any) {
-    const msg = error?.response?.data?.error || 'Failed to fork skill'
-    message.error(msg)
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to fork skill'))
     console.error(error)
   }
 }
@@ -526,9 +526,8 @@ async function handleSubmit() {
     }
     showEditor.value = false
     loadSkills()
-  } catch (error: any) {
-    const msg = error?.response?.data?.error || 'Failed to save skill'
-    message.error(msg)
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to save skill'))
     console.error(error)
   } finally {
     saving.value = false

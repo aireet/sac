@@ -189,6 +189,7 @@ import {
 import { RefreshOutline, CloseOutline } from '@vicons/ionicons5'
 import { type Skill } from '../../services/skillAPI'
 import { restartAgent, uninstallSkill, type Agent, type AgentStatus } from '../../services/agentAPI'
+import { extractApiError } from '../../utils/error'
 
 const props = defineProps<{
   agentId: number
@@ -239,7 +240,7 @@ const handleRestart = async () => {
     message.success('Agent pod is restarting')
     emit('restart')
   } catch (error) {
-    message.error('Failed to restart agent pod')
+    message.error(extractApiError(error, 'Failed to restart agent pod'))
     console.error(error)
   } finally {
     restarting.value = false
@@ -265,7 +266,7 @@ const handleUninstall = async (skillId: number) => {
     message.success('Skill uninstalled')
     emit('skillsChanged')
   } catch (error) {
-    message.error('Failed to uninstall skill')
+    message.error(extractApiError(error, 'Failed to uninstall skill'))
     console.error(error)
   }
 }

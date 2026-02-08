@@ -115,6 +115,7 @@ import {
 } from 'naive-ui'
 import { Add, CreateOutline, TrashOutline } from '@vicons/ionicons5'
 import { getAgents, deleteAgent, type Agent, type AgentStatus } from '../../services/agentAPI'
+import { extractApiError } from '../../utils/error'
 
 const props = defineProps<{
   selectedAgentId?: number
@@ -160,7 +161,7 @@ const loadAgents = async () => {
   try {
     agents.value = await getAgents()
   } catch (error) {
-    message.error('Failed to load agents')
+    message.error(extractApiError(error, 'Failed to load agents'))
     console.error(error)
   } finally {
     loading.value = false
@@ -182,7 +183,7 @@ const handleDelete = async (id: number) => {
       emit('select', 0)
     }
   } catch (error) {
-    message.error('Failed to delete agent')
+    message.error(extractApiError(error, 'Failed to delete agent'))
     console.error(error)
   }
 }

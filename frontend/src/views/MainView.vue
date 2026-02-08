@@ -195,6 +195,7 @@ import AgentSelector from '../components/Agent/AgentSelector.vue'
 import AgentCreator from '../components/Agent/AgentCreator.vue'
 import { getAgent, getAgents, getAgentStatuses, type Agent, type AgentStatus } from '../services/agentAPI'
 import { createSession, deleteSession, waitForSessionReady } from '../services/sessionAPI'
+import { extractApiError } from '../utils/error'
 
 // Configuration - these should come from environment or auth context
 const userId = ref('1')
@@ -307,7 +308,7 @@ const createSessionForAgent = async (agentId: number) => {
   } catch (error) {
     console.error('Failed to create session:', error)
     loadingMsg.type = 'error'
-    loadingMsg.content = `Failed to create session: ${error}`
+    loadingMsg.content = extractApiError(error, 'Failed to create session')
     setTimeout(() => loadingMsg.destroy(), 3000)
   }
 }
