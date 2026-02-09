@@ -11,40 +11,40 @@
         </div>
       </n-space>
 
-      <n-descriptions label-placement="left" :column="2" bordered size="small">
+      <n-descriptions label-placement="left" :column="1" bordered size="small" :label-style="{ width: '60px', whiteSpace: 'nowrap' }">
         <n-descriptions-item label="Status">
           <n-tag :type="statusTagType" size="small" round>
             {{ statusLabel }}
           </n-tag>
+          <n-text depth="3" style="margin-left: 8px; font-size: 12px">
+            {{ podStatus?.restart_count ?? 0 }} restarts
+          </n-text>
         </n-descriptions-item>
-        <n-descriptions-item label="Restarts">
-          {{ podStatus?.restart_count ?? '-' }}
+        <n-descriptions-item label="CPU">
+          {{ podStatus?.cpu_request || '-' }} / {{ podStatus?.cpu_limit || '-' }}
         </n-descriptions-item>
-        <n-descriptions-item label="CPU Request">
-          {{ podStatus?.cpu_request || '-' }}
+        <n-descriptions-item label="Mem">
+          {{ podStatus?.memory_request || '-' }} / {{ podStatus?.memory_limit || '-' }}
         </n-descriptions-item>
-        <n-descriptions-item label="CPU Limit">
-          {{ podStatus?.cpu_limit || '-' }}
-        </n-descriptions-item>
-        <n-descriptions-item label="Mem Request">
-          {{ podStatus?.memory_request || '-' }}
-        </n-descriptions-item>
-        <n-descriptions-item label="Mem Limit">
-          {{ podStatus?.memory_limit || '-' }}
+        <n-descriptions-item label="LLM">
+          <n-text code style="font-size: 12px; word-break: break-all">
+            {{ agent?.config?.anthropic_base_url || 'Anthropic (default)' }}
+          </n-text>
         </n-descriptions-item>
       </n-descriptions>
 
       <n-space style="margin-top: 12px" :size="8">
-        <n-button
-          size="small"
-          :loading="restarting"
-          @click="handleRestart"
-        >
-          <template #icon>
-            <n-icon><RefreshOutline /></n-icon>
+        <n-popconfirm @positive-click="handleRestart">
+          <template #trigger>
+            <n-button size="small" :loading="restarting">
+              <template #icon>
+                <n-icon><RefreshOutline /></n-icon>
+              </template>
+              Restart Pod
+            </n-button>
           </template>
-          Restart Pod
-        </n-button>
+          Restarting will terminate the current session and all unsaved conversation will be lost. Continue?
+        </n-popconfirm>
         <n-button
           size="small"
           @click="openHistory"

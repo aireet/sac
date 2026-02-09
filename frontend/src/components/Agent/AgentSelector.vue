@@ -88,6 +88,9 @@
               <n-text depth="3" style="font-size: 13px">
                 {{ agent.description || 'No description' }}
               </n-text>
+              <n-text v-if="agent.config?.anthropic_base_url" depth="3" style="font-size: 12px; font-family: monospace">
+                {{ agent.config.anthropic_base_url }}
+              </n-text>
               <n-text depth="3" style="font-size: 12px">
                 {{ agent.installed_skills?.length || 0 }} skills installed
               </n-text>

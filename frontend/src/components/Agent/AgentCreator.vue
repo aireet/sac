@@ -45,17 +45,25 @@
       <n-divider>Anthropic Configuration</n-divider>
 
       <n-form-item label="Provider Preset">
-        <n-space :size="8">
-          <n-button
-            v-for="preset in providerPresets"
-            :key="preset.name"
-            size="small"
-            :type="activePreset === preset.name ? 'primary' : 'default'"
-            secondary
-            @click="applyPreset(preset)"
-          >
-            {{ preset.name }}
-          </n-button>
+        <n-space vertical :size="8" style="width: 100%">
+          <n-space :size="8">
+            <n-button
+              v-for="preset in providerPresets"
+              :key="preset.name"
+              size="small"
+              :type="activePreset === preset.name ? 'primary' : 'default'"
+              secondary
+              @click="applyPreset(preset)"
+            >
+              {{ preset.name }}
+            </n-button>
+          </n-space>
+          <n-alert v-if="activePresetInfo" type="info" :show-icon="true" style="margin-top: 4px">
+            {{ activePresetInfo.doc_hint }}
+            <n-a :href="activePresetInfo.doc_url" target="_blank" style="margin-left: 4px">
+              View Documentation
+            </n-a>
+          </n-alert>
         </n-space>
       </n-form-item>
 
@@ -110,7 +118,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, h, watch } from 'vue'
+import { ref, computed, h, watch } from 'vue'
 import {
   NModal,
   NForm,
@@ -120,6 +128,8 @@ import {
   NButton,
   NSpace,
   NDivider,
+  NAlert,
+  NA,
   useMessage,
 } from 'naive-ui'
 import { createAgent, updateAgent, type Agent } from '../../services/agentAPI'
@@ -163,6 +173,8 @@ const providerPresets = [
     haiku: 'anthropic/claude-haiku-4.5',
     sonnet: 'anthropic/claude-sonnet-4.5',
     opus: 'anthropic/claude-opus-4.6',
+    doc_url: 'https://openrouter.ai',
+    doc_hint: 'Sign up at OpenRouter, go to Keys page to create an API key.',
   },
   {
     name: 'GLM',
@@ -171,6 +183,8 @@ const providerPresets = [
     haiku: 'glm-4.7',
     sonnet: 'glm-4.7',
     opus: 'glm-4.7',
+    doc_url: 'https://docs.bigmodel.cn/cn/coding-plan/tool/claude',
+    doc_hint: 'Login to ZhiPu AI open platform, create an API key from console.',
   },
   {
     name: 'Qwen',
@@ -179,8 +193,14 @@ const providerPresets = [
     haiku: 'qwen3-coder-plus',
     sonnet: 'qwen3-coder-plus',
     opus: 'qwen3-coder-plus',
+    doc_url: 'https://help.aliyun.com/zh/model-studio/claude-code',
+    doc_hint: 'Login to Alibaba Cloud console, go to Model Studio to get your API key.',
   },
 ]
+
+const activePresetInfo = computed(() =>
+  providerPresets.find(p => p.name === activePreset.value)
+)
 
 const applyPreset = (preset: typeof providerPresets[0]) => {
   activePreset.value = preset.name
