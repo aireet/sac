@@ -28,7 +28,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Claude Code CLI via npm
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm config set registry https://registry.npmmirror.com && npm install -g @anthropic-ai/claude-code
 
 # Install ttyd
 RUN wget https://github.com/tsl0922/ttyd/releases/download/1.7.4/ttyd.x86_64 -O /usr/local/bin/ttyd \

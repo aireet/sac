@@ -4,7 +4,7 @@ FROM swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/node:22-alpine A
 WORKDIR /build
 
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+RUN npm config set registry https://registry.npmmirror.com && npm ci
 
 COPY frontend/ .
 RUN npm run build
