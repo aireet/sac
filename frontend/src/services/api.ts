@@ -8,12 +8,12 @@ const getApiBaseUrl = () => {
   const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:'
   const host = window.location.hostname
   const port = window.location.port
-  // Production (standard ports): use same-origin path-based routing via Istio
-  if (!port || port === '80' || port === '443') {
-    return `${protocol}//${host}/api`
+  // Development: localhost with separate backend port
+  if (host === 'localhost' || host === '127.0.0.1') {
+    return `${protocol}//${host}:8080/api`
   }
-  // Development: use separate port
-  return `${protocol}//${host}:8080/api`
+  // Production / Gateway: same-origin path-based routing (works with any port)
+  return `${protocol}//${window.location.host}/api`
 }
 
 const api = axios.create({
@@ -58,11 +58,10 @@ export const getWsBaseUrl = () => {
   }
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const host = window.location.hostname
-  const port = window.location.port
-  // Production (standard ports): use same-origin via Istio
-  if (!port || port === '80' || port === '443') {
-    return `${protocol}//${host}`
+  // Development: localhost with separate ws-proxy port
+  if (host === 'localhost' || host === '127.0.0.1') {
+    return `${protocol}//${host}:8081`
   }
-  // Development: use separate port
-  return `${protocol}//${host}:8081`
+  // Production / Gateway: same-origin routing (works with any port)
+  return `${protocol}//${window.location.host}`
 }

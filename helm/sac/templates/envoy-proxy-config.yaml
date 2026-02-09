@@ -1,0 +1,25 @@
+{{- if .Values.envoyGateway.enabled }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: sac-proxy-config
+  namespace: {{ .Release.Namespace }}
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        container:
+          image: {{ .Values.envoyGateway.proxyImage }}
+      envoyService:
+        type: {{ .Values.envoyGateway.serviceType | default "NodePort" }}
+        {{- if .Values.envoyGateway.nodePort }}
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              ports:
+                - port: 80
+                  nodePort: {{ .Values.envoyGateway.nodePort }}
+        {{- end }}
+{{- end }}

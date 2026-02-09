@@ -112,13 +112,12 @@ const getWebSocketUrl = (): string => {
   // Auto-detect WebSocket URL based on current host
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const host = window.location.hostname
-  const port = window.location.port
-  // Production (standard ports): use same-origin via Istio
-  if (!port || port === '80' || port === '443') {
-    return `${protocol}//${host}`
+  // Development: localhost with separate ws-proxy port
+  if (host === 'localhost' || host === '127.0.0.1') {
+    return `${protocol}//${host}:8081`
   }
-  // Development: use separate port
-  return `${protocol}//${host}:8081`
+  // Production / Gateway: same-origin routing (works with any port)
+  return `${protocol}//${window.location.host}`
 }
 
 const cleanup = () => {
