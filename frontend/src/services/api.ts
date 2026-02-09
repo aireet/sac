@@ -7,7 +7,6 @@ const getApiBaseUrl = () => {
   }
   const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:'
   const host = window.location.hostname
-  const port = window.location.port
   // Development: localhost with separate backend port
   if (host === 'localhost' || host === '127.0.0.1') {
     return `${protocol}//${host}:8080/api`
