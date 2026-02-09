@@ -101,3 +101,59 @@ export const getAgentStatuses = async (): Promise<AgentStatus[]> => {
   const response = await api.get<AgentStatus[]>('/agent-statuses')
   return response.data
 }
+
+// Conversation history
+export interface ConversationMessage {
+  id: number
+  user_id: number
+  agent_id: number
+  session_id: string
+  role: string
+  content: string
+  message_uuid: string
+  timestamp: string
+}
+
+export interface ConversationQuery {
+  agent_id: number
+  session_id?: string
+  limit?: number
+  before?: string
+  after?: string
+}
+
+export interface SessionInfo {
+  session_id: string
+  first_at: string
+  last_at: string
+  count: number
+}
+
+export const getConversations = async (params: ConversationQuery): Promise<{ conversations: ConversationMessage[]; count: number; has_more: boolean }> => {
+  const response = await api.get('/conversations', { params })
+  return response.data
+}
+
+export const getConversationSessions = async (agentId: number): Promise<SessionInfo[]> => {
+  const response = await api.get('/conversations/sessions', { params: { agent_id: agentId } })
+  return response.data.sessions
+}
+
+export const exportConversationsCSV = async (agentId: number, sessionId?: string): Promise<void> => {
+  const params: Record<string, any> = { agent_id: agentId }
+  if (sessionId) params.session_id = sessionId
+  const response = await api.get('/conversations/export', {
+    params,
+    responseType: 'blob',
+  })
+  const url = window.URL.createObjectURL(new Blob([response.data]))
+  const link = document.createElement('a')
+  link.href = url
+  const disposition = response.headers['content-disposition']
+  const filename = disposition?.match(/filename=(.+)/)?.[1] || 'conversations.csv'
+  link.setAttribute('download', filename)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}

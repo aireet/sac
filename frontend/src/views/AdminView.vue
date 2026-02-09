@@ -182,6 +182,69 @@
               </n-space>
             </n-modal>
           </n-tab-pane>
+
+          <!-- Conversations Tab -->
+          <n-tab-pane name="conversations" tab="Conversations">
+            <n-card style="margin-bottom: 16px">
+              <n-space :size="12" align="center" :wrap="true">
+                <n-select
+                  v-model:value="convFilterUser"
+                  :options="userOptions"
+                  placeholder="All Users"
+                  clearable
+                  style="width: 180px"
+                  size="small"
+                  @update:value="onUserFilterChange"
+                />
+                <n-select
+                  v-model:value="convFilterAgent"
+                  :options="agentOptions"
+                  placeholder="All Agents"
+                  clearable
+                  style="width: 180px"
+                  size="small"
+                />
+                <n-input
+                  v-model:value="convFilterSession"
+                  placeholder="Session ID"
+                  clearable
+                  size="small"
+                  style="width: 200px"
+                />
+                <n-date-picker
+                  v-model:value="convFilterTimeRange"
+                  type="datetimerange"
+                  clearable
+                  size="small"
+                  style="width: 360px"
+                  start-placeholder="Start Time"
+                  end-placeholder="End Time"
+                />
+                <n-button type="primary" size="small" @click="searchConversations">
+                  Search
+                </n-button>
+                <n-button size="small" @click="exportCSV" :loading="exportingCSV">
+                  Export CSV
+                </n-button>
+              </n-space>
+            </n-card>
+
+            <n-spin :show="loadingConversations">
+              <n-data-table
+                :columns="conversationColumns"
+                :data="conversations"
+                :bordered="false"
+                :single-line="false"
+                :scroll-x="900"
+              />
+              <n-space justify="center" style="margin-top: 16px" v-if="conversations.length > 0 && hasMoreConversations">
+                <n-button @click="loadMoreConversations" :loading="loadingConversations">
+                  Load More
+                </n-button>
+              </n-space>
+              <n-empty v-if="!loadingConversations && conversations.length === 0" description="No conversations found." />
+            </n-spin>
+          </n-tab-pane>
         </n-tabs>
       </n-layout-content>
     </n-layout>
@@ -211,6 +274,7 @@ import {
   NDivider,
   NTag,
   NPopconfirm,
+  NDatePicker,
   darkTheme,
   useMessage,
   type DataTableColumns,
@@ -227,10 +291,13 @@ import {
   deleteUserAgent,
   restartUserAgent,
   updateAgentResources,
+  getConversations,
+  exportConversationsCSV,
   type SystemSetting,
   type AdminUser,
   type UserSetting,
   type AdminAgent,
+  type ConversationRecord,
 } from '../services/adminAPI'
 import { extractApiError } from '../utils/error'
 
@@ -614,6 +681,139 @@ async function saveAgentResources() {
     savingResources.value = false
   }
 }
+
+// --- Conversations ---
+const conversations = ref<ConversationRecord[]>([])
+const loadingConversations = ref(false)
+const hasMoreConversations = ref(false)
+const exportingCSV = ref(false)
+const convFilterUser = ref<number | null>(null)
+const convFilterAgent = ref<number | null>(null)
+const convFilterSession = ref('')
+const convFilterTimeRange = ref<[number, number] | null>(null)
+
+const userOptions = computed(() =>
+  users.value.map(u => ({ label: u.username, value: u.id }))
+)
+
+const agentOptions = ref<{ label: string; value: number }[]>([])
+
+async function onUserFilterChange(userId: number | null) {
+  convFilterAgent.value = null
+  if (userId) {
+    try {
+      const agents = await getUserAgents(userId)
+      agentOptions.value = agents.map(a => ({ label: a.name, value: a.id }))
+    } catch {
+      agentOptions.value = []
+    }
+  } else {
+    agentOptions.value = []
+  }
+}
+
+const PAGE_SIZE = 50
+
+function buildConvFilterParams(): Record<string, any> {
+  const params: any = {}
+  if (convFilterUser.value) params.user_id = convFilterUser.value
+  if (convFilterAgent.value) params.agent_id = convFilterAgent.value
+  if (convFilterSession.value.trim()) params.session_id = convFilterSession.value.trim()
+  if (convFilterTimeRange.value) {
+    params.start = new Date(convFilterTimeRange.value[0]).toISOString()
+    params.end = new Date(convFilterTimeRange.value[1]).toISOString()
+  }
+  return params
+}
+
+async function searchConversations() {
+  loadingConversations.value = true
+  conversations.value = []
+  try {
+    const params = { ...buildConvFilterParams(), limit: PAGE_SIZE }
+    const result = await getConversations(params)
+    conversations.value = result.conversations
+    hasMoreConversations.value = result.count >= PAGE_SIZE
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to load conversations'))
+  } finally {
+    loadingConversations.value = false
+  }
+}
+
+async function loadMoreConversations() {
+  if (conversations.value.length === 0) return
+  loadingConversations.value = true
+  try {
+    const last = conversations.value[conversations.value.length - 1]!
+    const params = { ...buildConvFilterParams(), limit: PAGE_SIZE, before: last.timestamp }
+    const result = await getConversations(params)
+    conversations.value.push(...result.conversations)
+    hasMoreConversations.value = result.count >= PAGE_SIZE
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to load more'))
+  } finally {
+    loadingConversations.value = false
+  }
+}
+
+async function exportCSV() {
+  exportingCSV.value = true
+  try {
+    await exportConversationsCSV(buildConvFilterParams())
+    message.success('CSV exported')
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to export CSV'))
+  } finally {
+    exportingCSV.value = false
+  }
+}
+
+function truncateContent(text: string, maxLen = 120): string {
+  if (!text || text.length <= maxLen) return text
+  return text.slice(0, maxLen) + '...'
+}
+
+const conversationColumns = computed<DataTableColumns<ConversationRecord>>(() => [
+  {
+    title: 'Time',
+    key: 'timestamp',
+    width: 170,
+    render(row) {
+      return new Date(row.timestamp).toLocaleString()
+    },
+  },
+  { title: 'User', key: 'username', width: 100 },
+  { title: 'Agent', key: 'agent_name', width: 100 },
+  {
+    title: 'Session',
+    key: 'session_id',
+    width: 120,
+    ellipsis: { tooltip: true },
+    render(row) {
+      return row.session_id.slice(0, 12) + '...'
+    },
+  },
+  {
+    title: 'Role',
+    key: 'role',
+    width: 80,
+    render(row) {
+      return h(NTag, {
+        type: row.role === 'user' ? 'info' : row.role === 'assistant' ? 'success' : 'default',
+        size: 'small',
+      }, { default: () => row.role })
+    },
+  },
+  {
+    title: 'Content',
+    key: 'content',
+    ellipsis: { tooltip: true },
+    render(row) {
+      return truncateContent(row.content)
+    },
+  },
+])
 
 onMounted(() => {
   loadSettings()

@@ -33,17 +33,25 @@ type Manager struct {
 
 // NewManager creates a new container manager
 func NewManager(kubeconfigPath, namespace, dockerRegistry, dockerImage string) (*Manager, error) {
-	// Use default kubeconfig path if not provided
-	if kubeconfigPath == "" {
-		if home := homedir.HomeDir(); home != "" {
-			kubeconfigPath = filepath.Join(home, ".kube", "config")
-		}
-	}
+	var config *rest.Config
+	var err error
 
-	// Build config from kubeconfig file
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	// Try in-cluster config first (when running inside K8s)
+	config, err = rest.InClusterConfig()
 	if err != nil {
-		return nil, fmt.Errorf("failed to build config: %w", err)
+		// Fall back to kubeconfig file (local development)
+		if kubeconfigPath == "" {
+			if home := homedir.HomeDir(); home != "" {
+				kubeconfigPath = filepath.Join(home, ".kube", "config")
+			}
+		}
+		config, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build config: %w", err)
+		}
+		log.Printf("Using kubeconfig: %s", kubeconfigPath)
+	} else {
+		log.Println("Using in-cluster Kubernetes config")
 	}
 
 	// Create clientset
@@ -313,6 +321,136 @@ type ResourceConfig struct {
 	MemoryLimit   string
 }
 
+// hooksConfigMapName returns the name of the shared ConfigMap for Claude Code hooks.
+const hooksConfigMapName = "sac-claude-hooks"
+
+// hooksSettingsJSON is the Claude Code settings.json content that registers the stop hook.
+const hooksSettingsJSON = `{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/hooks/stop-hook.sh"
+          }
+        ]
+      }
+    ]
+  }
+}`
+
+// stopHookScript is the shell script mounted into pods at /hooks/stop-hook.sh.
+// It reads the Claude Code transcript, extracts new messages, and POSTs them to the API Gateway.
+const stopHookScript = `#!/bin/bash
+set -euo pipefail
+
+# Auto-install jq if not present (for images that don't include it)
+if ! command -v jq &>/dev/null; then
+  apt-get update -qq && apt-get install -y -qq jq >/dev/null 2>&1 || true
+fi
+if ! command -v jq &>/dev/null; then
+  exit 0
+fi
+
+API_URL="${SAC_API_URL:-http://api-gateway.sac.svc.cluster.local:8080}"
+USER_ID="${USER_ID:-}"
+AGENT_ID="${AGENT_ID:-}"
+
+if [ -z "$USER_ID" ] || [ -z "$AGENT_ID" ]; then
+  exit 0
+fi
+
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
+TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty')
+
+if [ -z "$SESSION_ID" ] || [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; then
+  exit 0
+fi
+
+SYNC_FILE="/tmp/.last_sync_line_${SESSION_ID}"
+LAST_LINE=0
+if [ -f "$SYNC_FILE" ]; then
+  LAST_LINE=$(cat "$SYNC_FILE")
+fi
+
+TOTAL_LINES=$(wc -l < "$TRANSCRIPT_PATH")
+
+if [ "$TOTAL_LINES" -le "$LAST_LINE" ]; then
+  exit 0
+fi
+
+MESSAGES=$(tail -n +"$((LAST_LINE + 1))" "$TRANSCRIPT_PATH" | \
+  jq -c 'select(.type == "user" or .type == "assistant") | {
+    role: .type,
+    content: (if (.message // empty) then
+                (if (.message | type) == "string" then .message
+                 elif (.message | type) == "array" then [.message[] | select(.type == "text") | .text] | join("\n")
+                 else (.message | tostring)
+                 end)
+              elif (.content // empty) then
+                (if (.content | type) == "string" then .content
+                 elif (.content | type) == "array" then [.content[] | select(.type == "text") | .text] | join("\n")
+                 else (.content | tostring)
+                 end)
+              else ""
+              end),
+    uuid: (.uuid // .id // ""),
+    timestamp: (.timestamp // now | todate)
+  } | select(.content != "")' 2>/dev/null | jq -s '.')
+
+if [ -z "$MESSAGES" ] || [ "$MESSAGES" = "[]" ] || [ "$MESSAGES" = "null" ]; then
+  echo "$TOTAL_LINES" > "$SYNC_FILE"
+  exit 0
+fi
+
+PAYLOAD=$(jq -n \
+  --arg uid "$USER_ID" \
+  --arg aid "$AGENT_ID" \
+  --arg sid "$SESSION_ID" \
+  --argjson msgs "$MESSAGES" \
+  '{user_id: $uid, agent_id: $aid, session_id: $sid, messages: $msgs}')
+
+curl -s -X POST \
+  "${API_URL}/api/internal/conversations/events" \
+  -H "Content-Type: application/json" \
+  -d "$PAYLOAD" \
+  --max-time 10 \
+  > /dev/null 2>&1 || true
+
+echo "$TOTAL_LINES" > "$SYNC_FILE"
+`
+
+// ensureHooksConfigMap creates or updates the shared hooks ConfigMap.
+func (m *Manager) ensureHooksConfigMap(ctx context.Context) error {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      hooksConfigMapName,
+			Namespace: m.namespace,
+		},
+		Data: map[string]string{
+			"settings.json": hooksSettingsJSON,
+			"stop-hook.sh":  stopHookScript,
+		},
+	}
+
+	_, err := m.clientset.CoreV1().ConfigMaps(m.namespace).Create(ctx, cm, metav1.CreateOptions{})
+	if err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			// Update existing ConfigMap to ensure latest content
+			_, err = m.clientset.CoreV1().ConfigMaps(m.namespace).Update(ctx, cm, metav1.UpdateOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to update hooks configmap: %w", err)
+			}
+		} else {
+			return fmt.Errorf("failed to create hooks configmap: %w", err)
+		}
+	}
+	return nil
+}
+
 // CreateStatefulSet creates a per-agent StatefulSet with a headless service.
 // The headless service is required for StatefulSet DNS to work.
 // Pod DNS will be: claude-code-{userID}-{agentID}-0.claude-code-{userID}-{agentID}.{namespace}.svc.cluster.local
@@ -321,27 +459,56 @@ func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID 
 	imageFullPath := fmt.Sprintf("%s/%s", m.dockerRegistry, m.dockerImage)
 	envVars := m.buildAgentEnvVars(userID, agentID, agentConfig)
 
-	// Use provided resource config or defaults
+	// Add SAC_API_URL env var for hook scripts
+	envVars = append(envVars, corev1.EnvVar{
+		Name:  "SAC_API_URL",
+		Value: "http://api-gateway.sac.svc.cluster.local:8080",
+	})
+
+	// Use provided resource config or defaults (trim whitespace to avoid parse errors)
 	cpuReq, cpuLim, memReq, memLim := "2", "2", "4Gi", "4Gi"
 	if rc != nil {
-		if rc.CPURequest != "" {
-			cpuReq = rc.CPURequest
+		if v := strings.TrimSpace(rc.CPURequest); v != "" {
+			cpuReq = v
 		}
-		if rc.CPULimit != "" {
-			cpuLim = rc.CPULimit
+		if v := strings.TrimSpace(rc.CPULimit); v != "" {
+			cpuLim = v
 		}
-		if rc.MemoryRequest != "" {
-			memReq = rc.MemoryRequest
+		if v := strings.TrimSpace(rc.MemoryRequest); v != "" {
+			memReq = v
 		}
-		if rc.MemoryLimit != "" {
-			memLim = rc.MemoryLimit
+		if v := strings.TrimSpace(rc.MemoryLimit); v != "" {
+			memLim = v
 		}
+	}
+
+	// Parse resource quantities (non-panicking)
+	parsedCPUReq, err := resource.ParseQuantity(cpuReq)
+	if err != nil {
+		return fmt.Errorf("invalid cpu_request %q: %w", cpuReq, err)
+	}
+	parsedCPULim, err2 := resource.ParseQuantity(cpuLim)
+	if err2 != nil {
+		return fmt.Errorf("invalid cpu_limit %q: %w", cpuLim, err2)
+	}
+	parsedMemReq, err3 := resource.ParseQuantity(memReq)
+	if err3 != nil {
+		return fmt.Errorf("invalid memory_request %q: %w", memReq, err3)
+	}
+	parsedMemLim, err4 := resource.ParseQuantity(memLim)
+	if err4 != nil {
+		return fmt.Errorf("invalid memory_limit %q: %w", memLim, err4)
 	}
 
 	labels := map[string]string{
 		"app":      "claude-code",
 		"user-id":  userID,
 		"agent-id": fmt.Sprintf("%d", agentID),
+	}
+
+	// Step 0: Ensure hooks ConfigMap exists
+	if err := m.ensureHooksConfigMap(ctx); err != nil {
+		return fmt.Errorf("failed to ensure hooks configmap: %w", err)
 	}
 
 	// Step 1: Create headless service (ClusterIP: None) — required for StatefulSet
@@ -364,19 +531,20 @@ func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID 
 		},
 	}
 
-	_, err := m.clientset.CoreV1().Services(m.namespace).Create(ctx, headlessSvc, metav1.CreateOptions{})
-	if err != nil {
-		if apierrors.IsAlreadyExists(err) {
+	_, svcErr := m.clientset.CoreV1().Services(m.namespace).Create(ctx, headlessSvc, metav1.CreateOptions{})
+	if svcErr != nil {
+		if apierrors.IsAlreadyExists(svcErr) {
 			log.Printf("Headless Service %s already exists, reusing", name)
 		} else {
-			return fmt.Errorf("failed to create headless service: %w", err)
+			return fmt.Errorf("failed to create headless service: %w", svcErr)
 		}
 	} else {
 		log.Printf("Headless Service %s created successfully", name)
 	}
 
-	// Step 2: Create StatefulSet
+	// Step 2: Create StatefulSet with hooks volume mounts
 	replicas := int32(1)
+	defaultMode := int32(0755)
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -408,18 +576,27 @@ func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID 
 							Env: envVars,
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse(cpuReq),
-									corev1.ResourceMemory: resource.MustParse(memReq),
+									corev1.ResourceCPU:    parsedCPUReq,
+									corev1.ResourceMemory: parsedMemReq,
 								},
 								Limits: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse(cpuLim),
-									corev1.ResourceMemory: resource.MustParse(memLim),
+									corev1.ResourceCPU:    parsedCPULim,
+									corev1.ResourceMemory: parsedMemLim,
 								},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "workspace",
 									MountPath: "/workspace",
+								},
+								{
+									Name:      "claude-settings",
+									MountPath: "/root/.claude/settings.json",
+									SubPath:   "settings.json",
+								},
+								{
+									Name:      "hook-scripts",
+									MountPath: "/hooks",
 								},
 							},
 						},
@@ -429,6 +606,33 @@ func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID 
 							Name: "workspace",
 							VolumeSource: corev1.VolumeSource{
 								EmptyDir: &corev1.EmptyDirVolumeSource{},
+							},
+						},
+						{
+							Name: "claude-settings",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: hooksConfigMapName,
+									},
+									Items: []corev1.KeyToPath{
+										{Key: "settings.json", Path: "settings.json"},
+									},
+								},
+							},
+						},
+						{
+							Name: "hook-scripts",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: hooksConfigMapName,
+									},
+									DefaultMode: &defaultMode,
+									Items: []corev1.KeyToPath{
+										{Key: "stop-hook.sh", Path: "stop-hook.sh"},
+									},
+								},
 							},
 						},
 					},

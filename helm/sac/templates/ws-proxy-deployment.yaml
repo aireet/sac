@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ws-proxy
+  labels:
+    {{- include "sac.labels" . | nindent 4 }}
+    app: ws-proxy
+spec:
+  replicas: {{ .Values.wsProxy.replicaCount }}
+  selector:
+    matchLabels:
+      app: ws-proxy
+  template:
+    metadata:
+      labels:
+        app: ws-proxy
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+        - name: ws-proxy
+          image: {{ include "sac.image" (dict "registry" .Values.global.registry "name" .Values.wsProxy.image.name "tag" .Values.wsProxy.image.tag) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.wsProxy.port }}
+              name: ws
+          env:
+            - name: WS_PROXY_PORT
+              value: {{ .Values.wsProxy.port | quote }}
+            - name: DB_HOST
+              value: {{ .Values.database.host | quote }}
+            - name: DB_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: DB_USER
+              value: {{ .Values.database.user | quote }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sac-secret
+                  key: db-password
+            - name: DB_NAME
+              value: {{ .Values.database.name | quote }}
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: sac-secret
+                  key: jwt-secret
+            - name: K8S_NAMESPACE
+              value: {{ .Values.apiGateway.env.K8S_NAMESPACE | quote }}
+          resources:
+            {{- toYaml .Values.wsProxy.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.wsProxy.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.wsProxy.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 5

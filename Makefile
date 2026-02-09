@@ -1,4 +1,7 @@
-.PHONY: dev stop build build-api build-ws kill-port frontend backend telepresence status
+.PHONY: dev stop build build-api build-ws kill-port frontend backend telepresence status \
+       docker-build docker-push docker-build-api docker-build-ws docker-build-fe docker-build-cc \
+       docker-push-api docker-push-ws docker-push-fe docker-push-cc \
+       helm-deploy helm-upgrade helm-dry-run helm-uninstall
 
 # Ports
 API_PORT  := 8080
@@ -8,6 +11,12 @@ VITE_PORT := 5173
 # Dirs
 BACKEND  := backend
 FRONTEND := frontend
+
+# Docker
+REGISTRY   ?= docker-register-registry-vpc.cn-shanghai.cr.aliyuncs.com/prod/sac
+VERSION    := $(shell cat .version 2>/dev/null || echo "0.0.4")
+KUBECONFIG ?= ../kubeconfig.yaml
+NAMESPACE  ?= sac
 
 # --- Main targets ---
 
@@ -83,6 +92,111 @@ migrate-up:
 
 migrate-seed:
 	@cd $(BACKEND) && go run ./cmd/migrate -action=seed
+
+# ============================================================
+# Docker Build & Push
+# ============================================================
+
+## Bump patch version in .version file (0.0.4 -> 0.0.5)
+version-bump:
+	@CURRENT=$$(cat .version); \
+	MAJOR=$$(echo $$CURRENT | cut -d. -f1); \
+	MINOR=$$(echo $$CURRENT | cut -d. -f2); \
+	PATCH=$$(echo $$CURRENT | cut -d. -f3); \
+	NEW_PATCH=$$((PATCH + 1)); \
+	NEW_VER="$$MAJOR.$$MINOR.$$NEW_PATCH"; \
+	echo "$$NEW_VER" > .version; \
+	echo "==> Version bumped: $$CURRENT -> $$NEW_VER"
+
+## Show current version
+version:
+	@echo "Current version: $(VERSION)"
+
+## Build all Docker images (auto bumps version)
+docker-build: version-bump docker-build-api docker-build-ws docker-build-fe docker-build-cc
+	@echo "==> All images built with tag: $$(cat .version)"
+
+## Push all Docker images
+docker-push: docker-push-api docker-push-ws docker-push-fe docker-push-cc
+	@echo "==> All images pushed with tag: $$(cat .version)"
+
+docker-build-api:
+	@echo "==> Building API Gateway image ($$(cat .version))"
+	@docker build -f docker/api-gateway/Dockerfile \
+		-t $(REGISTRY)/api-gateway:$$(cat .version) .
+
+docker-build-ws:
+	@echo "==> Building WS Proxy image ($$(cat .version))"
+	@docker build -f docker/ws-proxy/Dockerfile \
+		-t $(REGISTRY)/ws-proxy:$$(cat .version) .
+
+docker-build-fe:
+	@echo "==> Building Frontend image ($$(cat .version))"
+	@docker build -f docker/frontend/Dockerfile \
+		-t $(REGISTRY)/frontend:$$(cat .version) .
+
+docker-build-cc:
+	@echo "==> Building Claude Code image ($$(cat .version))"
+	@docker build -f docker/claude-code/Dockerfile \
+		-t $(REGISTRY)/cc:$$(cat .version) docker/claude-code
+
+docker-push-api:
+	@echo "==> Pushing API Gateway image ($$(cat .version))"
+	@docker push $(REGISTRY)/api-gateway:$$(cat .version)
+
+docker-push-ws:
+	@echo "==> Pushing WS Proxy image ($$(cat .version))"
+	@docker push $(REGISTRY)/ws-proxy:$$(cat .version)
+
+docker-push-fe:
+	@echo "==> Pushing Frontend image ($$(cat .version))"
+	@docker push $(REGISTRY)/frontend:$$(cat .version)
+
+docker-push-cc:
+	@echo "==> Pushing Claude Code image ($$(cat .version))"
+	@docker push $(REGISTRY)/cc:$$(cat .version)
+
+## Build + Push all images in one step (auto bumps version)
+docker-all: docker-build docker-push
+
+# ============================================================
+# Helm Deploy
+# ============================================================
+
+## Deploy with Helm (first install)
+helm-deploy:
+	@echo "==> Deploying SAC with Helm (tag: $$(cat .version))"
+	@KUBECONFIG=$(KUBECONFIG) helm install sac helm/sac \
+		--namespace $(NAMESPACE) --create-namespace \
+		--set global.registry=$(REGISTRY) \
+		--set apiGateway.image.tag=$$(cat .version) \
+		--set wsProxy.image.tag=$$(cat .version) \
+		--set frontend.image.tag=$$(cat .version)
+
+## Upgrade existing Helm release
+helm-upgrade:
+	@echo "==> Upgrading SAC with Helm (tag: $$(cat .version))"
+	@KUBECONFIG=$(KUBECONFIG) helm upgrade sac helm/sac \
+		--namespace $(NAMESPACE) \
+		--set global.registry=$(REGISTRY) \
+		--set apiGateway.image.tag=$$(cat .version) \
+		--set wsProxy.image.tag=$$(cat .version) \
+		--set frontend.image.tag=$$(cat .version)
+
+## Dry-run to preview Helm templates
+helm-dry-run:
+	@KUBECONFIG=$(KUBECONFIG) helm install sac helm/sac \
+		--namespace $(NAMESPACE) --create-namespace \
+		--dry-run --debug
+
+## Uninstall Helm release
+helm-uninstall:
+	@echo "==> Uninstalling SAC Helm release"
+	@KUBECONFIG=$(KUBECONFIG) helm uninstall sac --namespace $(NAMESPACE)
+
+# ============================================================
+# Dev Targets
+# ============================================================
 
 ## Restart a single service (usage: make restart SVC=api-gateway|ws-proxy|frontend)
 restart:

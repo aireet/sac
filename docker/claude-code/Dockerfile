@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y \
     postgresql-client \
     mysql-client \
     redis-tools \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 22 LTS

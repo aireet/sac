@@ -1,0 +1,86 @@
+# SAC Platform Helm Values
+
+global:
+  registry: docker-register-registry-vpc.cn-shanghai.cr.aliyuncs.com/dev
+  namespace: sac
+  imagePullPolicy: Always
+
+# --- API Gateway ---
+apiGateway:
+  replicaCount: 2
+  image:
+    name: sac-api-gateway
+    tag: latest
+  port: 8080
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  env:
+    DB_NAME: sandbox
+    K8S_NAMESPACE: sac
+    DOCKER_REGISTRY: docker-register-registry-vpc.cn-shanghai.cr.aliyuncs.com
+    DOCKER_IMAGE: prod/sac/cc:0.0.3
+
+# --- WebSocket Proxy ---
+wsProxy:
+  replicaCount: 2
+  image:
+    name: sac-ws-proxy
+    tag: latest
+  port: 8081
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+# --- Frontend ---
+frontend:
+  replicaCount: 2
+  image:
+    name: sac-frontend
+    tag: latest
+  port: 80
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# --- Database ---
+database:
+  host: pgm-uf60863vpy60vl6s.pg.rds.aliyuncs.com
+  port: "5432"
+  user: sandbox
+  password: 4SOZfo6t6Oyj9A==
+  name: sandbox
+
+# --- Auth ---
+auth:
+  jwtSecret: sac-dev-jwt-secret-change-in-production
+
+# --- Istio ---
+istio:
+  enabled: true
+  gateway:
+    hosts:
+      - "*"
+    tls:
+      enabled: true
+      credentialName: sac-tls-secret
+
+# --- RBAC ---
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  name: sac

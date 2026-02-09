@@ -45,6 +45,15 @@
           </template>
           Restart Pod
         </n-button>
+        <n-button
+          size="small"
+          @click="openHistory"
+        >
+          <template #icon>
+            <n-icon><ChatbubblesOutline /></n-icon>
+          </template>
+          View History
+        </n-button>
       </n-space>
     </n-card>
 
@@ -105,6 +114,88 @@
         </n-card>
       </n-space>
     </n-card>
+
+    <!-- Conversation History Modal -->
+    <n-modal
+      v-model:show="showHistoryModal"
+      preset="card"
+      title="Conversation History"
+      style="width: 800px; max-height: 80vh"
+      :segmented="{ content: true, footer: true }"
+    >
+      <template #header-extra>
+        <n-button size="small" quaternary @click="handleExportCSV" :loading="exporting">
+          Export CSV
+        </n-button>
+      </template>
+
+      <n-space :size="8" align="center" style="margin-bottom: 12px">
+        <n-select
+          v-model:value="historySessionFilter"
+          placeholder="All Sessions"
+          clearable
+          size="small"
+          style="width: 320px"
+          :options="sessionOptions"
+          @update:value="onSessionFilterChange"
+        />
+      </n-space>
+
+      <div class="history-list">
+        <n-spin :show="historyLoading">
+          <n-empty v-if="!historyLoading && historyMessages.length === 0" description="No conversations yet" />
+          <div v-else class="message-list">
+            <div
+              v-for="msg in historyMessages"
+              :key="msg.id"
+              class="message-item"
+              :class="msg.role"
+            >
+              <div class="message-header">
+                <n-tag :type="msg.role === 'user' ? 'info' : 'success'" size="small" round>
+                  {{ msg.role }}
+                </n-tag>
+                <n-text depth="3" style="font-size: 11px; margin-left: 8px">
+                  {{ formatTime(msg.timestamp) }}
+                </n-text>
+                <n-text v-if="!historySessionFilter" depth="3" style="font-size: 11px; margin-left: 8px; font-family: monospace">
+                  {{ msg.session_id.substring(0, 8) }}
+                </n-text>
+              </div>
+              <div class="message-content">
+                <n-text style="white-space: pre-wrap; word-break: break-word; font-size: 13px">{{ msg.content }}</n-text>
+              </div>
+            </div>
+          </div>
+        </n-spin>
+      </div>
+
+      <template #footer>
+        <n-space justify="space-between" align="center">
+          <n-text depth="3" style="font-size: 12px">
+            {{ historyMessages.length }} messages
+          </n-text>
+          <n-space :size="8">
+            <n-button
+              size="small"
+              :disabled="!canGoPrev"
+              :loading="historyLoading"
+              @click="goPrev"
+            >
+              Newer
+            </n-button>
+            <n-button
+              size="small"
+              :disabled="!canGoNext"
+              :loading="historyLoading"
+              @click="goNext"
+            >
+              Older
+            </n-button>
+          </n-space>
+        </n-space>
+      </template>
+    </n-modal>
 
     <!-- Parameter Input Modal -->
     <n-modal
@@ -184,11 +275,22 @@ import {
   NDivider,
   NEmpty,
   NPopconfirm,
+  NSpin,
   useMessage,
 } from 'naive-ui'
-import { RefreshOutline, CloseOutline } from '@vicons/ionicons5'
+import { RefreshOutline, CloseOutline, ChatbubblesOutline } from '@vicons/ionicons5'
 import { type Skill } from '../../services/skillAPI'
-import { restartAgent, uninstallSkill, type Agent, type AgentStatus } from '../../services/agentAPI'
+import {
+  restartAgent,
+  uninstallSkill,
+  getConversations,
+  getConversationSessions,
+  exportConversationsCSV,
+  type Agent,
+  type AgentStatus,
+  type ConversationMessage,
+  type SessionInfo,
+} from '../../services/agentAPI'
 import { extractApiError } from '../../utils/error'
 
 const props = defineProps<{
@@ -244,6 +346,117 @@ const handleRestart = async () => {
     console.error(error)
   } finally {
     restarting.value = false
+  }
+}
+
+// --- Conversation History Section ---
+const PAGE_SIZE = 20
+const showHistoryModal = ref(false)
+const historyMessages = ref<ConversationMessage[]>([])
+const historyLoading = ref(false)
+const historySessionFilter = ref<string | null>(null)
+const exporting = ref(false)
+const sessions = ref<SessionInfo[]>([])
+// pagination cursors
+const canGoNext = ref(false) // has older messages
+const canGoPrev = ref(false) // has newer messages
+const isFirstLoad = ref(true)
+
+const sessionOptions = computed(() =>
+  sessions.value.map(s => ({
+    label: `${s.session_id.substring(0, 10)}... (${s.count} msgs)`,
+    value: s.session_id,
+  }))
+)
+
+const formatTime = (ts: string) => new Date(ts).toLocaleString()
+
+const openHistory = async () => {
+  showHistoryModal.value = true
+  historyMessages.value = []
+  historySessionFilter.value = null
+  isFirstLoad.value = true
+  canGoPrev.value = false
+  // load sessions list + first page in parallel
+  await Promise.all([loadSessions(), loadPage({})])
+}
+
+const loadSessions = async () => {
+  try {
+    sessions.value = await getConversationSessions(props.agentId)
+  } catch (error) {
+    console.error('Failed to load sessions:', error)
+  }
+}
+
+const onSessionFilterChange = () => {
+  isFirstLoad.value = true
+  canGoPrev.value = false
+  loadPage({})
+}
+
+const loadPage = async (cursor: { before?: string; after?: string }) => {
+  historyLoading.value = true
+  try {
+    const params: any = { agent_id: props.agentId, limit: PAGE_SIZE }
+    if (historySessionFilter.value) {
+      params.session_id = historySessionFilter.value
+    }
+    if (cursor.before) params.before = cursor.before
+    if (cursor.after) params.after = cursor.after
+
+    const data = await getConversations(params)
+    const conversations = data.conversations || []
+
+    historyMessages.value = conversations
+    canGoNext.value = data.has_more && !cursor.after
+    // When navigating with "after", has_more means there are newer messages
+    if (cursor.after) {
+      canGoPrev.value = data.has_more
+      canGoNext.value = true // we came from an older page, so there must be older messages
+    } else if (cursor.before) {
+      canGoPrev.value = true // we came from a newer page
+      canGoNext.value = data.has_more
+    } else {
+      // initial load: newest page
+      canGoPrev.value = false
+      canGoNext.value = data.has_more
+    }
+    isFirstLoad.value = false
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to load conversation history'))
+    console.error(error)
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+const goNext = () => {
+  // Older messages: use the earliest timestamp on current page as "before" cursor
+  if (historyMessages.value.length > 0) {
+    const oldest = historyMessages.value[0]!.timestamp
+    loadPage({ before: oldest })
+  }
+}
+
+const goPrev = () => {
+  // Newer messages: use the latest timestamp on current page as "after" cursor
+  if (historyMessages.value.length > 0) {
+    const newest = historyMessages.value[historyMessages.value.length - 1]!.timestamp
+    loadPage({ after: newest })
+  }
+}
+
+const handleExportCSV = async () => {
+  exporting.value = true
+  try {
+    await exportConversationsCSV(props.agentId, historySessionFilter.value || undefined)
+    message.success('CSV exported')
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to export CSV'))
+    console.error(error)
+  } finally {
+    exporting.value = false
   }
 }
 
@@ -336,5 +549,42 @@ const sendCommand = (command: string) => {
 
 .skill-icon {
   font-size: 24px;
+}
+
+.history-list {
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.message-item {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border-left: 3px solid transparent;
+}
+
+.message-item.user {
+  border-left-color: #2080f0;
+  background: rgba(32, 128, 240, 0.06);
+}
+
+.message-item.assistant {
+  border-left-color: #18a058;
+  background: rgba(24, 160, 88, 0.06);
+}
+
+.message-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.message-content {
+  padding-left: 4px;
 }
 </style>

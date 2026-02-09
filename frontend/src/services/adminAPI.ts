@@ -105,3 +105,48 @@ export async function updateAgentResources(userId: number, agentId: number, reso
 }): Promise<void> {
   await api.put(`/admin/users/${userId}/agents/${agentId}/resources`, resources)
 }
+
+// Conversations
+export interface ConversationRecord {
+  id: number
+  user_id: number
+  agent_id: number
+  session_id: string
+  role: string
+  content: string
+  timestamp: string
+  username: string
+  agent_name: string
+}
+
+export interface ConversationParams {
+  user_id?: number
+  agent_id?: number
+  session_id?: string
+  limit?: number
+  before?: string
+  start?: string
+  end?: string
+}
+
+export async function getConversations(params: ConversationParams): Promise<{ conversations: ConversationRecord[]; count: number }> {
+  const response = await api.get('/admin/conversations', { params })
+  return response.data
+}
+
+export async function exportConversationsCSV(params: { user_id?: number; agent_id?: number; session_id?: string; start?: string; end?: string }): Promise<void> {
+  const response = await api.get('/admin/conversations/export', {
+    params,
+    responseType: 'blob',
+  })
+  const url = window.URL.createObjectURL(new Blob([response.data]))
+  const link = document.createElement('a')
+  link.href = url
+  const disposition = response.headers['content-disposition']
+  const filename = disposition?.match(/filename=(.+)/)?.[1] || 'conversations.csv'
+  link.setAttribute('download', filename)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}

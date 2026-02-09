@@ -11,6 +11,7 @@ import (
 	"g.echo.tech/dev/sac/internal/auth"
 	"g.echo.tech/dev/sac/internal/container"
 	"g.echo.tech/dev/sac/internal/database"
+	"g.echo.tech/dev/sac/internal/history"
 	"g.echo.tech/dev/sac/internal/session"
 	"g.echo.tech/dev/sac/internal/skill"
 	"g.echo.tech/dev/sac/pkg/config"
@@ -64,6 +65,13 @@ func main() {
 		log.Fatalf("Failed to create container manager: %v", err)
 	}
 
+	// Shared history handler
+	historyHandler := history.NewHandler(database.DB)
+
+	// Internal API routes (no JWT, Pod-internal calls)
+	internalGroup := router.Group("/api/internal")
+	historyHandler.RegisterInternalRoutes(internalGroup)
+
 	// Public routes (no auth required)
 	publicGroup := router.Group("/api")
 	authHandler := auth.NewHandler(database.DB, jwtService)
@@ -75,6 +83,9 @@ func main() {
 	{
 		// Register auth /me route
 		authHandler.RegisterRoutes(nil, protectedGroup)
+
+		// Conversation history routes
+		historyHandler.RegisterRoutes(protectedGroup)
 
 		// Skill routes
 		skillHandler := skill.NewHandler(database.DB, containerMgr)

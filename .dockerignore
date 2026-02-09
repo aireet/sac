@@ -1,0 +1,22 @@
+.git
+*.md
+helm/
+k8s/
+scripts/
+docker/claude-code/
+
+# Backend artifacts
+backend/bin/
+backend/vendor/
+backend/tmp/
+
+# Frontend artifacts
+frontend/node_modules/
+frontend/dist/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.log

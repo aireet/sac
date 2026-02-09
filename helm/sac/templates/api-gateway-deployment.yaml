@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  labels:
+    {{- include "sac.labels" . | nindent 4 }}
+    app: api-gateway
+spec:
+  replicas: {{ .Values.apiGateway.replicaCount }}
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+        - name: api-gateway
+          image: {{ include "sac.image" (dict "registry" .Values.global.registry "name" .Values.apiGateway.image.name "tag" .Values.apiGateway.image.tag) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.apiGateway.port }}
+              name: http
+          env:
+            - name: API_GATEWAY_PORT
+              value: {{ .Values.apiGateway.port | quote }}
+            - name: DB_HOST
+              value: {{ .Values.database.host | quote }}
+            - name: DB_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: DB_USER
+              value: {{ .Values.database.user | quote }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sac-secret
+                  key: db-password
+            - name: DB_NAME
+              value: {{ .Values.database.name | quote }}
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: sac-secret
+                  key: jwt-secret
+            - name: K8S_NAMESPACE
+              value: {{ .Values.apiGateway.env.K8S_NAMESPACE | quote }}
+            - name: DOCKER_REGISTRY
+              value: {{ .Values.apiGateway.env.DOCKER_REGISTRY | quote }}
+            - name: DOCKER_IMAGE
+              value: {{ .Values.apiGateway.env.DOCKER_IMAGE | quote }}
+          resources:
+            {{- toYaml .Values.apiGateway.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.apiGateway.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.apiGateway.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 5

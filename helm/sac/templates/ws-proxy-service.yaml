@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ws-proxy
+  labels:
+    {{- include "sac.labels" . | nindent 4 }}
+    app: ws-proxy
+spec:
+  selector:
+    app: ws-proxy
+  ports:
+    - port: {{ .Values.wsProxy.port }}
+      targetPort: {{ .Values.wsProxy.port }}
+      protocol: TCP
+  type: ClusterIP

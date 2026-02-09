@@ -41,7 +41,7 @@ func Load() (*Config, error) {
 		WSProxyPort:    getEnv("WS_PROXY_PORT", "8081"),
 
 		// Database
-		DBHost:     getEnv("DB_HOST", "pgm-uf68x0dfyoth4u5g.pg.rds.aliyuncs.com"),
+		DBHost:     getEnv("DB_HOST", "pgm-uf60863vpy60vl6s.pg.rds.aliyuncs.com"),
 		DBPort:     getEnv("DB_PORT", "5432"),
 		DBUser:     getEnv("DB_USER", "sandbox"),
 		DBPassword: getEnv("DB_PASSWORD", "4SOZfo6t6Oyj9A=="),

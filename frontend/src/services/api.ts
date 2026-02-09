@@ -7,6 +7,12 @@ const getApiBaseUrl = () => {
   }
   const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:'
   const host = window.location.hostname
+  const port = window.location.port
+  // Production (standard ports): use same-origin path-based routing via Istio
+  if (!port || port === '80' || port === '443') {
+    return `${protocol}//${host}/api`
+  }
+  // Development: use separate port
   return `${protocol}//${host}:8080/api`
 }
 
@@ -52,5 +58,11 @@ export const getWsBaseUrl = () => {
   }
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const host = window.location.hostname
+  const port = window.location.port
+  // Production (standard ports): use same-origin via Istio
+  if (!port || port === '80' || port === '443') {
+    return `${protocol}//${host}`
+  }
+  // Development: use separate port
   return `${protocol}//${host}:8081`
 }
