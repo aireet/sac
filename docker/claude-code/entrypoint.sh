@@ -18,7 +18,9 @@ if [ -d /hooks ]; then
 fi
 
 # Configure Claude Code hooks (stop hook for conversation history sync)
-cat > /root/.claude/settings.json <<SETTINGS
+# Skip if settings.json already exists (e.g. mounted from K8s ConfigMap)
+if [ ! -f /root/.claude/settings.json ]; then
+  cat > /root/.claude/settings.json <<SETTINGS
 {
   "hooks": {
     "Stop": [
@@ -35,6 +37,7 @@ cat > /root/.claude/settings.json <<SETTINGS
   }
 }
 SETTINGS
+fi
 
 # Start ttyd with Claude Code CLI
 ttyd --writable -p 7681 claude
