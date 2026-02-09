@@ -366,9 +366,14 @@ func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID 
 
 	_, err := m.clientset.CoreV1().Services(m.namespace).Create(ctx, headlessSvc, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to create headless service: %w", err)
+		if apierrors.IsAlreadyExists(err) {
+			log.Printf("Headless Service %s already exists, reusing", name)
+		} else {
+			return fmt.Errorf("failed to create headless service: %w", err)
+		}
+	} else {
+		log.Printf("Headless Service %s created successfully", name)
 	}
-	log.Printf("Headless Service %s created successfully", name)
 
 	// Step 2: Create StatefulSet
 	replicas := int32(1)
@@ -455,24 +460,35 @@ func (m *Manager) GetStatefulSet(ctx context.Context, userID string, agentID int
 	return sts, nil
 }
 
-// DeleteStatefulSet deletes the StatefulSet and its headless service
+// DeleteStatefulSet deletes the StatefulSet, its headless service, and any orphan pods.
+// All steps tolerate NotFound so partial cleanups from previous attempts don't block deletion.
 func (m *Manager) DeleteStatefulSet(ctx context.Context, userID string, agentID int64) error {
 	name := m.statefulSetName(userID, agentID)
 
-	// Delete StatefulSet first
+	// Delete StatefulSet
 	err := m.clientset.AppsV1().StatefulSets(m.namespace).Delete(ctx, name, metav1.DeleteOptions{})
-	if err != nil {
+	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete statefulset: %w", err)
 	}
-	log.Printf("StatefulSet %s deleted successfully", name)
+	if err == nil {
+		log.Printf("StatefulSet %s deleted successfully", name)
+	}
 
 	// Delete headless service
 	err = m.clientset.CoreV1().Services(m.namespace).Delete(ctx, name, metav1.DeleteOptions{})
-	if err != nil {
+	if err != nil && !apierrors.IsNotFound(err) {
 		log.Printf("Warning: failed to delete headless service %s: %v", name, err)
-		// Not fatal — StatefulSet is already deleted
-	} else {
+	} else if err == nil {
 		log.Printf("Headless Service %s deleted successfully", name)
+	}
+
+	// Delete orphan pod (StatefulSet pod naming: {name}-0)
+	podName := fmt.Sprintf("%s-0", name)
+	err = m.clientset.CoreV1().Pods(m.namespace).Delete(ctx, podName, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		log.Printf("Warning: failed to delete pod %s: %v", podName, err)
+	} else if err == nil {
+		log.Printf("Pod %s deleted successfully", podName)
 	}
 
 	return nil
