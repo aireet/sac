@@ -109,13 +109,26 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	if err != nil {
 		log.Printf("StatefulSet not found, creating it...")
 
-		// Get resource limits from settings
+		// Get resource limits from settings (user/system defaults)
 		limits := h.settingsService.GetResourceLimits(ctx, userIDInt)
 		rc := &container.ResourceConfig{
 			CPURequest:    limits.CPURequest,
 			CPULimit:      limits.CPULimit,
 			MemoryRequest: limits.MemoryRequest,
 			MemoryLimit:   limits.MemoryLimit,
+		}
+		// Agent-level overrides take priority
+		if agent.CPURequest != nil {
+			rc.CPURequest = *agent.CPURequest
+		}
+		if agent.CPULimit != nil {
+			rc.CPULimit = *agent.CPULimit
+		}
+		if agent.MemoryRequest != nil {
+			rc.MemoryRequest = *agent.MemoryRequest
+		}
+		if agent.MemoryLimit != nil {
+			rc.MemoryLimit = *agent.MemoryLimit
 		}
 
 		// Create StatefulSet with headless service

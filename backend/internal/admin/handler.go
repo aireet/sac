@@ -225,8 +225,8 @@ func (h *Handler) GetUserAgents(c *gin.Context) {
 		Model(&agents).
 		Relation("InstalledSkills").
 		Relation("InstalledSkills.Skill").
-		Where("agent.created_by = ?", userID).
-		Order("agent.id ASC").
+		Where("ag.created_by = ?", userID).
+		Order("ag.id ASC").
 		Scan(ctx)
 	if err != nil {
 		response.InternalError(c, "Failed to fetch agents", err)
@@ -364,6 +364,83 @@ func (h *Handler) RestartUserAgent(c *gin.Context) {
 	response.Success(c, "Agent is restarting")
 }
 
+func (h *Handler) UpdateAgentResources(c *gin.Context) {
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid user ID", err)
+		return
+	}
+	agentID, err := strconv.ParseInt(c.Param("agentId"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid agent ID", err)
+		return
+	}
+
+	var req struct {
+		CPURequest    *string `json:"cpu_request"`
+		CPULimit      *string `json:"cpu_limit"`
+		MemoryRequest *string `json:"memory_request"`
+		MemoryLimit   *string `json:"memory_limit"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request body", err)
+		return
+	}
+
+	ctx := context.Background()
+
+	// Verify agent exists and belongs to this user
+	var agent models.Agent
+	err = h.db.NewSelect().Model(&agent).
+		Where("id = ? AND created_by = ?", agentID, userID).
+		Scan(ctx)
+	if err != nil {
+		response.NotFound(c, "Agent not found")
+		return
+	}
+
+	q := h.db.NewUpdate().Model((*models.Agent)(nil)).
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", agentID)
+
+	if req.CPURequest != nil {
+		if *req.CPURequest == "" {
+			q = q.Set("cpu_request = NULL")
+		} else {
+			q = q.Set("cpu_request = ?", *req.CPURequest)
+		}
+	}
+	if req.CPULimit != nil {
+		if *req.CPULimit == "" {
+			q = q.Set("cpu_limit = NULL")
+		} else {
+			q = q.Set("cpu_limit = ?", *req.CPULimit)
+		}
+	}
+	if req.MemoryRequest != nil {
+		if *req.MemoryRequest == "" {
+			q = q.Set("memory_request = NULL")
+		} else {
+			q = q.Set("memory_request = ?", *req.MemoryRequest)
+		}
+	}
+	if req.MemoryLimit != nil {
+		if *req.MemoryLimit == "" {
+			q = q.Set("memory_limit = NULL")
+		} else {
+			q = q.Set("memory_limit = ?", *req.MemoryLimit)
+		}
+	}
+
+	_, err = q.Exec(ctx)
+	if err != nil {
+		response.InternalError(c, "Failed to update agent resources", err)
+		return
+	}
+
+	response.Success(c, "Agent resources updated. Restart agent to apply.")
+}
+
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	admin := rg.Group("/admin")
 	admin.Use(AdminMiddleware())
@@ -378,5 +455,6 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		admin.GET("/users/:id/agents", h.GetUserAgents)
 		admin.DELETE("/users/:id/agents/:agentId", h.DeleteUserAgent)
 		admin.POST("/users/:id/agents/:agentId/restart", h.RestartUserAgent)
+		admin.PUT("/users/:id/agents/:agentId/resources", h.UpdateAgentResources)
 	}
 }

@@ -96,3 +96,12 @@ export async function deleteUserAgent(userId: number, agentId: number): Promise<
 export async function restartUserAgent(userId: number, agentId: number): Promise<void> {
   await api.post(`/admin/users/${userId}/agents/${agentId}/restart`)
 }
+
+export async function updateAgentResources(userId: number, agentId: number, resources: {
+  cpu_request?: string
+  cpu_limit?: string
+  memory_request?: string
+  memory_limit?: string
+}): Promise<void> {
+  await api.put(`/admin/users/${userId}/agents/${agentId}/resources`, resources)
+}

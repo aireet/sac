@@ -46,14 +46,18 @@ func (ac AgentConfig) Value() (driver.Value, error) {
 type Agent struct {
 	bun.BaseModel `bun:"table:agents,alias:ag"`
 
-	ID          int64       `bun:"id,pk,autoincrement" json:"id"`
-	Name        string      `bun:"name,notnull" json:"name"`
-	Description string      `bun:"description" json:"description"`
-	Icon        string      `bun:"icon" json:"icon"`
-	Config      AgentConfig `bun:"config,type:jsonb" json:"config,omitempty"`
-	CreatedBy   int64       `bun:"created_by,notnull" json:"created_by"`
-	CreatedAt   time.Time   `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt   time.Time   `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
+	ID            int64       `bun:"id,pk,autoincrement" json:"id"`
+	Name          string      `bun:"name,notnull" json:"name"`
+	Description   string      `bun:"description" json:"description"`
+	Icon          string      `bun:"icon" json:"icon"`
+	Config        AgentConfig `bun:"config,type:jsonb" json:"config,omitempty"`
+	CreatedBy     int64       `bun:"created_by,notnull" json:"created_by"`
+	CPURequest    *string     `bun:"cpu_request" json:"cpu_request"`
+	CPULimit      *string     `bun:"cpu_limit" json:"cpu_limit"`
+	MemoryRequest *string     `bun:"memory_request" json:"memory_request"`
+	MemoryLimit   *string     `bun:"memory_limit" json:"memory_limit"`
+	CreatedAt     time.Time   `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt     time.Time   `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 
 	// Relations
 	Creator         *User        `bun:"rel:belongs-to,join:created_by=id" json:"creator,omitempty"`

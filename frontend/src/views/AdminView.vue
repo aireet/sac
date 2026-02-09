@@ -142,10 +142,44 @@
                   :data="userAgents"
                   :bordered="false"
                   :single-line="false"
+                  :scroll-x="860"
                   v-if="userAgents.length > 0"
                 />
                 <n-empty v-else description="No agents found for this user." />
               </n-spin>
+            </n-modal>
+
+            <!-- Agent Resource Editor Modal -->
+            <n-modal
+              v-model:show="showResourceEditor"
+              preset="card"
+              :title="`Resources: ${selectedResourceAgent?.name || ''}`"
+              style="width: 480px; max-width: 90vw"
+            >
+              <n-space vertical :size="16">
+                <div>
+                  <n-text depth="3" style="display: block; margin-bottom: 4px">CPU Request</n-text>
+                  <n-input v-model:value="resourceForm.cpu_request" placeholder="e.g. 1 (use default)" />
+                </div>
+                <div>
+                  <n-text depth="3" style="display: block; margin-bottom: 4px">CPU Limit</n-text>
+                  <n-input v-model:value="resourceForm.cpu_limit" placeholder="e.g. 2 (use default)" />
+                </div>
+                <div>
+                  <n-text depth="3" style="display: block; margin-bottom: 4px">Memory Request</n-text>
+                  <n-input v-model:value="resourceForm.memory_request" placeholder="e.g. 2Gi (use default)" />
+                </div>
+                <div>
+                  <n-text depth="3" style="display: block; margin-bottom: 4px">Memory Limit</n-text>
+                  <n-input v-model:value="resourceForm.memory_limit" placeholder="e.g. 4Gi (use default)" />
+                </div>
+                <n-text depth="3" style="font-size: 12px">
+                  Leave empty to use user/system defaults. Changes take effect after restarting the agent.
+                </n-text>
+                <n-button type="primary" block :loading="savingResources" @click="saveAgentResources">
+                  Save
+                </n-button>
+              </n-space>
             </n-modal>
           </n-tab-pane>
         </n-tabs>
@@ -192,6 +226,7 @@ import {
   getUserAgents,
   deleteUserAgent,
   restartUserAgent,
+  updateAgentResources,
   type SystemSetting,
   type AdminUser,
   type UserSetting,
@@ -424,17 +459,16 @@ const statusColorMap: Record<string, 'success' | 'error' | 'warning' | 'default'
 }
 
 const agentColumns = computed<DataTableColumns<AdminAgent>>(() => [
-  { title: 'Name', key: 'name', width: 150 },
+  { title: 'Name', key: 'name', width: 120 },
   {
     title: 'Description',
     key: 'description',
-    width: 200,
     ellipsis: { tooltip: true },
   },
   {
     title: 'Status',
     key: 'pod_status',
-    width: 120,
+    width: 100,
     render(row) {
       return h(NTag, {
         type: statusColorMap[row.pod_status] || 'default',
@@ -445,7 +479,7 @@ const agentColumns = computed<DataTableColumns<AdminAgent>>(() => [
   {
     title: 'Resources',
     key: 'resources',
-    width: 180,
+    width: 160,
     render(row) {
       if (!row.cpu_request && !row.memory_request) return '-'
       return h('div', { style: 'font-size: 12px; line-height: 1.4' }, [
@@ -454,11 +488,11 @@ const agentColumns = computed<DataTableColumns<AdminAgent>>(() => [
       ])
     },
   },
-  { title: 'Restarts', key: 'restart_count', width: 80 },
+  { title: 'Restarts', key: 'restart_count', width: 70 },
   {
     title: 'Skills',
     key: 'skills',
-    width: 70,
+    width: 60,
     render(row) {
       return row.installed_skills ? row.installed_skills.length : 0
     },
@@ -466,10 +500,15 @@ const agentColumns = computed<DataTableColumns<AdminAgent>>(() => [
   {
     title: 'Actions',
     key: 'actions',
-    width: 160,
+    width: 210,
     render(row) {
       return h(NSpace, { size: 4 }, {
         default: () => [
+          h(NButton, {
+            size: 'small',
+            type: 'info',
+            onClick: () => openResourceEditor(row),
+          }, { default: () => 'Resources' }),
           h(NButton, {
             size: 'small',
             disabled: row.pod_status === 'NotDeployed',
@@ -529,6 +568,50 @@ async function handleRestartAgent(agent: AdminAgent) {
     await loadUserAgents()
   } catch (error) {
     message.error(extractApiError(error, 'Failed to restart agent'))
+  }
+}
+
+// --- Agent Resource Editor ---
+const showResourceEditor = ref(false)
+const selectedResourceAgent = ref<AdminAgent | null>(null)
+const resourceForm = ref({
+  cpu_request: '',
+  cpu_limit: '',
+  memory_request: '',
+  memory_limit: '',
+})
+const savingResources = ref(false)
+
+function openResourceEditor(agent: AdminAgent) {
+  selectedResourceAgent.value = agent
+  resourceForm.value = {
+    cpu_request: agent.cpu_request || '',
+    cpu_limit: agent.cpu_limit || '',
+    memory_request: agent.memory_request || '',
+    memory_limit: agent.memory_limit || '',
+  }
+  showResourceEditor.value = true
+}
+
+async function saveAgentResources() {
+  if (!selectedAgentUser.value || !selectedResourceAgent.value) return
+  savingResources.value = true
+  try {
+    const agent = selectedResourceAgent.value
+    // Send empty string to clear (backend sets NULL), non-empty to override
+    await updateAgentResources(selectedAgentUser.value.id, agent.id, {
+      cpu_request: resourceForm.value.cpu_request,
+      cpu_limit: resourceForm.value.cpu_limit,
+      memory_request: resourceForm.value.memory_request,
+      memory_limit: resourceForm.value.memory_limit,
+    })
+    message.success('Resources saved. Restart agent to apply.')
+    showResourceEditor.value = false
+    await loadUserAgents()
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to save resources'))
+  } finally {
+    savingResources.value = false
   }
 }
 
