@@ -12,12 +12,7 @@ mkdir -p /root/.claude
 # Accept Claude Code terms of service non-interactively
 touch /root/.claude/.accepted-tos
 
-# Ensure hook scripts are executable
-if [ -d /hooks ]; then
-  chmod +x /hooks/*.sh 2>/dev/null || true
-fi
-
-# Configure Claude Code hooks (stop hook for conversation history sync)
+# Configure Claude Code hooks (conversation history sync via Node.js)
 # Skip if settings.json already exists (e.g. mounted from K8s ConfigMap)
 if [ ! -f /root/.claude/settings.json ]; then
   cat > /root/.claude/settings.json <<SETTINGS
@@ -29,7 +24,20 @@ if [ ! -f /root/.claude/settings.json ]; then
         "hooks": [
           {
             "type": "command",
-            "command": "/hooks/stop-hook.sh"
+            "command": "node /hooks/conversation-sync.mjs",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /hooks/conversation-sync.mjs",
+            "async": true
           }
         ]
       }

@@ -324,7 +324,7 @@ type ResourceConfig struct {
 // hooksConfigMapName returns the name of the shared ConfigMap for Claude Code hooks.
 const hooksConfigMapName = "sac-claude-hooks"
 
-// hooksSettingsJSON is the Claude Code settings.json content that registers the stop hook.
+// hooksSettingsJSON is the Claude Code settings.json content that registers hooks.
 const hooksSettingsJSON = `{
   "hooks": {
     "Stop": [
@@ -333,7 +333,20 @@ const hooksSettingsJSON = `{
         "hooks": [
           {
             "type": "command",
-            "command": "/hooks/stop-hook.sh"
+            "command": "node /hooks/conversation-sync.mjs",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /hooks/conversation-sync.mjs",
+            "async": true
           }
         ]
       }
@@ -341,86 +354,127 @@ const hooksSettingsJSON = `{
   }
 }`
 
-// stopHookScript is the shell script mounted into pods at /hooks/stop-hook.sh.
-// It reads the Claude Code transcript, extracts new messages, and POSTs them to the API Gateway.
-const stopHookScript = `#!/bin/bash
-set -euo pipefail
+// conversationSyncScript is the Node.js script mounted into pods at /hooks/conversation-sync.mjs.
+// It runs on every Stop/SubagentStop event, reads new transcript lines, and POSTs them to the API Gateway.
+// Zero external dependencies — uses Node.js 22 built-ins only.
+const conversationSyncScript = `#!/usr/bin/env node
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
 
-# Auto-install jq if not present (for images that don't include it)
-if ! command -v jq &>/dev/null; then
-  apt-get update -qq && apt-get install -y -qq jq >/dev/null 2>&1 || true
-fi
-if ! command -v jq &>/dev/null; then
-  exit 0
-fi
+const API_URL = process.env.SAC_API_URL || 'http://api-gateway.sac.svc.cluster.local:8080';
+const USER_ID = process.env.USER_ID || '';
+const AGENT_ID = process.env.AGENT_ID || '';
 
-API_URL="${SAC_API_URL:-http://api-gateway.sac.svc.cluster.local:8080}"
-USER_ID="${USER_ID:-}"
-AGENT_ID="${AGENT_ID:-}"
+if (!USER_ID || !AGENT_ID) {
+  process.exit(0);
+}
 
-if [ -z "$USER_ID" ] || [ -z "$AGENT_ID" ]; then
-  exit 0
-fi
+const chunks = [];
+for await (const chunk of process.stdin) {
+  chunks.push(chunk);
+}
+const input = JSON.parse(Buffer.concat(chunks).toString());
 
-INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
-TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty')
+if (input.stop_hook_active) {
+  process.exit(0);
+}
 
-if [ -z "$SESSION_ID" ] || [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; then
-  exit 0
-fi
+const sessionId = input.session_id;
+const transcriptPath = input.transcript_path;
 
-SYNC_FILE="/tmp/.last_sync_line_${SESSION_ID}"
-LAST_LINE=0
-if [ -f "$SYNC_FILE" ]; then
-  LAST_LINE=$(cat "$SYNC_FILE")
-fi
+if (!sessionId || !transcriptPath || !existsSync(transcriptPath)) {
+  process.exit(0);
+}
 
-TOTAL_LINES=$(wc -l < "$TRANSCRIPT_PATH")
+const syncFile = ` + "`" + `/tmp/.last_sync_line_${sessionId}` + "`" + `;
+let lastLine = 0;
+if (existsSync(syncFile)) {
+  lastLine = parseInt(readFileSync(syncFile, 'utf-8').trim(), 10) || 0;
+}
 
-if [ "$TOTAL_LINES" -le "$LAST_LINE" ]; then
-  exit 0
-fi
+const messages = [];
+let lineNum = 0;
 
-MESSAGES=$(tail -n +"$((LAST_LINE + 1))" "$TRANSCRIPT_PATH" | \
-  jq -c 'select(.type == "user" or .type == "assistant") | {
-    role: .type,
-    content: (if (.message // empty) then
-                (if (.message | type) == "string" then .message
-                 elif (.message | type) == "array" then [.message[] | select(.type == "text") | .text] | join("\n")
-                 else (.message | tostring)
-                 end)
-              elif (.content // empty) then
-                (if (.content | type) == "string" then .content
-                 elif (.content | type) == "array" then [.content[] | select(.type == "text") | .text] | join("\n")
-                 else (.content | tostring)
-                 end)
-              else ""
-              end),
-    uuid: (.uuid // .id // ""),
-    timestamp: (.timestamp // now | todate)
-  } | select(.content != "")' 2>/dev/null | jq -s '.')
+const rl = createInterface({
+  input: createReadStream(transcriptPath),
+  crlfDelay: Infinity,
+});
 
-if [ -z "$MESSAGES" ] || [ "$MESSAGES" = "[]" ] || [ "$MESSAGES" = "null" ]; then
-  echo "$TOTAL_LINES" > "$SYNC_FILE"
-  exit 0
-fi
+for await (const line of rl) {
+  lineNum++;
+  if (lineNum <= lastLine) continue;
+  if (!line.trim()) continue;
 
-PAYLOAD=$(jq -n \
-  --arg uid "$USER_ID" \
-  --arg aid "$AGENT_ID" \
-  --arg sid "$SESSION_ID" \
-  --argjson msgs "$MESSAGES" \
-  '{user_id: $uid, agent_id: $aid, session_id: $sid, messages: $msgs}')
+  let entry;
+  try {
+    entry = JSON.parse(line);
+  } catch {
+    continue;
+  }
 
-curl -s -X POST \
-  "${API_URL}/api/internal/conversations/events" \
-  -H "Content-Type: application/json" \
-  -d "$PAYLOAD" \
-  --max-time 10 \
-  > /dev/null 2>&1 || true
+  if (entry.type !== 'user' && entry.type !== 'assistant') continue;
 
-echo "$TOTAL_LINES" > "$SYNC_FILE"
+  const content = extractContent(entry);
+  if (!content) continue;
+
+  messages.push({
+    role: entry.type,
+    content,
+    uuid: entry.uuid || entry.id || '',
+    timestamp: entry.timestamp || new Date().toISOString(),
+  });
+}
+
+const totalLines = lineNum;
+writeFileSync(syncFile, String(totalLines));
+
+if (messages.length === 0) {
+  process.exit(0);
+}
+
+const payload = {
+  user_id: USER_ID,
+  agent_id: AGENT_ID,
+  session_id: sessionId,
+  messages,
+};
+
+try {
+  const resp = await fetch(` + "`" + `${API_URL}/api/internal/conversations/events` + "`" + `, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!resp.ok) {
+    console.error(` + "`" + `[conversation-sync] API responded ${resp.status}: ${await resp.text()}` + "`" + `);
+  }
+} catch (err) {
+  console.error(` + "`" + `[conversation-sync] POST failed: ${err.message}` + "`" + `);
+}
+
+function extractContent(entry) {
+  const msg = entry.message;
+  if (msg == null) return '';
+  if (typeof msg === 'string') return msg;
+  if (Array.isArray(msg)) return joinTextBlocks(msg);
+  if (typeof msg === 'object') {
+    const c = msg.content;
+    if (c == null) return '';
+    if (typeof c === 'string') return c;
+    if (Array.isArray(c)) return joinTextBlocks(c);
+    return String(c);
+  }
+  return String(msg);
+}
+
+function joinTextBlocks(arr) {
+  return arr
+    .filter((b) => b.type === 'text' && b.text)
+    .map((b) => b.text)
+    .join('\\n');
+}
 `
 
 // ensureHooksConfigMap creates or updates the shared hooks ConfigMap.
@@ -431,8 +485,8 @@ func (m *Manager) ensureHooksConfigMap(ctx context.Context) error {
 			Namespace: m.namespace,
 		},
 		Data: map[string]string{
-			"settings.json": hooksSettingsJSON,
-			"stop-hook.sh":  stopHookScript,
+			"settings.json":         hooksSettingsJSON,
+			"conversation-sync.mjs": conversationSyncScript,
 		},
 	}
 
@@ -630,7 +684,7 @@ func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID 
 									},
 									DefaultMode: &defaultMode,
 									Items: []corev1.KeyToPath{
-										{Key: "stop-hook.sh", Path: "stop-hook.sh"},
+										{Key: "conversation-sync.mjs", Path: "conversation-sync.mjs"},
 									},
 								},
 							},
