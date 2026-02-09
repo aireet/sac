@@ -10,7 +10,7 @@ COPY frontend/ .
 RUN npm run build
 
 # Runtime stage
-FROM swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/nginx:1.27-alpine
+FROM swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/rancher/mirrored-library-nginx:1.27.2-alpine
 
 COPY --from=builder /build/dist /usr/share/nginx/html
 COPY docker/frontend/nginx.conf /etc/nginx/conf.d/default.conf
