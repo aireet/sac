@@ -5,12 +5,5 @@ Components:
   - WS Proxy:     {{ .Values.wsProxy.replicaCount }} replicas on port {{ .Values.wsProxy.port }}
   - Frontend:     {{ .Values.frontend.replicaCount }} replicas on port {{ .Values.frontend.port }}
 
-{{- if .Values.istio.enabled }}
-
-Istio routing:
-  /api/*  -> api-gateway:{{ .Values.apiGateway.port }}
-  /ws/*   -> ws-proxy:{{ .Values.wsProxy.port }}
-  /*      -> frontend:{{ .Values.frontend.port }}
-{{- end }}
 
 Database: {{ .Values.database.host }}:{{ .Values.database.port }}/{{ .Values.database.name }}
