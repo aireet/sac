@@ -6,7 +6,9 @@ import (
 	"os/signal"
 	"syscall"
 
+	"g.echo.tech/dev/sac/internal/admin"
 	"g.echo.tech/dev/sac/internal/agent"
+	"g.echo.tech/dev/sac/internal/auth"
 	"g.echo.tech/dev/sac/internal/container"
 	"g.echo.tech/dev/sac/internal/database"
 	"g.echo.tech/dev/sac/internal/session"
@@ -46,44 +48,52 @@ func main() {
 		c.Next()
 	})
 
-	// Mock auth middleware (for development)
-	router.Use(func(c *gin.Context) {
-		// In production, validate JWT token here
-		// For now, use a mock user ID
-		c.Set("userID", int64(1))
-		c.Next()
-	})
-
-	// Health check
+	// Health check (public)
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
 			"status": "healthy",
 		})
 	})
 
-	// Create shared container manager
+	// Create shared services
+	jwtService := auth.NewJWTService(cfg.JWTSecret)
+	settingsService := admin.NewSettingsService(database.DB)
+
 	containerMgr, err := container.NewManager(cfg.KubeconfigPath, cfg.Namespace, cfg.DockerRegistry, cfg.DockerImage)
 	if err != nil {
 		log.Fatalf("Failed to create container manager: %v", err)
 	}
 
-	// Register API routes
-	apiGroup := router.Group("/api")
+	// Public routes (no auth required)
+	publicGroup := router.Group("/api")
+	authHandler := auth.NewHandler(database.DB, jwtService)
+	authHandler.RegisterRoutes(publicGroup, nil) // register public routes only
+
+	// Protected routes (JWT auth required)
+	protectedGroup := router.Group("/api")
+	protectedGroup.Use(auth.AuthMiddleware(jwtService))
 	{
-		// Skill routes (creates its own SyncService internally)
+		// Register auth /me route
+		authHandler.RegisterRoutes(nil, protectedGroup)
+
+		// Skill routes
 		skillHandler := skill.NewHandler(database.DB, containerMgr)
-		skillHandler.RegisterRoutes(apiGroup)
+		skillHandler.RegisterRoutes(protectedGroup)
 
 		// Shared sync service for agent & session handlers
 		syncService := skillHandler.GetSyncService()
 
 		// Session routes
-		sessionHandler := session.NewHandler(database.DB, containerMgr, syncService)
-		sessionHandler.RegisterRoutes(apiGroup)
+		sessionHandler := session.NewHandler(database.DB, containerMgr, syncService, settingsService)
+		sessionHandler.RegisterRoutes(protectedGroup)
 
 		// Agent routes
-		agentHandler := agent.NewHandler(database.DB, containerMgr, syncService)
-		agentHandler.RegisterRoutes(apiGroup)
+		agentHandler := agent.NewHandler(database.DB, containerMgr, syncService, settingsService)
+		agentHandler.RegisterRoutes(protectedGroup)
+
+		// Admin routes (requires admin role, checked inside RegisterRoutes)
+		adminHandler := admin.NewHandler(database.DB, containerMgr)
+		adminHandler.RegisterRoutes(protectedGroup)
 	}
 
 	// Start server (listen on all interfaces for remote debugging)

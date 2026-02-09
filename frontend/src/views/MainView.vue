@@ -8,7 +8,7 @@
           <span class="subtitle">Sandbox Agent Cluster</span>
         </div>
 
-        <!-- Agent Quick Switcher -->
+        <!-- Agent Quick Switcher + User Actions -->
         <div class="agent-switcher">
           <n-space align="center" :size="12">
             <n-text depth="3" style="font-size: 13px">Current Agent:</n-text>
@@ -85,6 +85,28 @@
                 Terminal Mode
               </n-tooltip>
             </n-button-group>
+            <n-divider vertical />
+            <n-button
+              v-if="authStore.isAdmin"
+              size="small"
+              quaternary
+              @click="$router.push('/admin')"
+            >
+              <template #icon>
+                <n-icon><SettingsOutline /></n-icon>
+              </template>
+              Admin
+            </n-button>
+            <n-text depth="3" style="font-size: 13px">{{ authStore.user?.username }}</n-text>
+            <n-button
+              size="small"
+              quaternary
+              @click="handleLogout"
+            >
+              <template #icon>
+                <n-icon><LogOutOutline /></n-icon>
+              </template>
+            </n-button>
           </n-space>
         </div>
       </n-layout-header>
@@ -130,7 +152,6 @@
             <div class="terminal-area">
               <Terminal
                 ref="terminalRef"
-                :user-id="userId"
                 :session-id="sessionId"
                 :ws-url="wsUrl"
                 :agent-id="selectedAgentId"
@@ -166,6 +187,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   NConfigProvider,
   NLayout,
@@ -186,7 +208,7 @@ import {
   darkTheme,
   useMessage,
 } from 'naive-ui'
-import { Add, StorefrontOutline, TerminalOutline, ChatbubblesOutline } from '@vicons/ionicons5'
+import { Add, StorefrontOutline, TerminalOutline, ChatbubblesOutline, SettingsOutline, LogOutOutline } from '@vicons/ionicons5'
 import Terminal from '../components/Terminal/Terminal.vue'
 import ChatInput from '../components/ChatInput/ChatInput.vue'
 import SkillPanel from '../components/SkillPanel/SkillPanel.vue'
@@ -196,11 +218,13 @@ import AgentCreator from '../components/Agent/AgentCreator.vue'
 import { getAgent, getAgents, getAgentStatuses, type Agent, type AgentStatus } from '../services/agentAPI'
 import { createSession, deleteSession, waitForSessionReady } from '../services/sessionAPI'
 import { extractApiError } from '../utils/error'
+import { useAuthStore } from '../stores/auth'
+import { getWsBaseUrl } from '../services/api'
 
-// Configuration - these should come from environment or auth context
-const userId = ref('1')
+const router = useRouter()
+const authStore = useAuthStore()
 const sessionId = ref('')
-const wsUrl = ref(import.meta.env.VITE_WS_URL || `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.hostname}:8081`)
+const wsUrl = ref(getWsBaseUrl())
 const message = useMessage()
 
 const terminalRef = ref()
@@ -212,7 +236,7 @@ const selectedAgent = ref<Agent | null>(null)
 const showAgentCreator = ref(false)
 const editingAgent = ref<Agent | null>(null)
 const viewMode = ref<'terminal' | 'marketplace'>('terminal')
-const inputMode = ref<'chat' | 'terminal'>('chat')
+const inputMode = ref<'chat' | 'terminal'>('terminal')
 
 // Agent list for header dropdown
 const agents = ref<Agent[]>([])
@@ -370,6 +394,11 @@ const handleRestartFromPanel = () => {
       clearInterval(fastTimer)
     }
   }, 2000)
+}
+
+const handleLogout = () => {
+  authStore.logout()
+  router.push('/login')
 }
 
 // Load agents list for header dropdown

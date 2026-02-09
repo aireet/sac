@@ -11,15 +11,16 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import '@xterm/xterm/css/xterm.css'
+import { useAuthStore } from '../../stores/auth'
 
 const props = defineProps<{
-  userId: string
   sessionId: string
   wsUrl?: string
   agentId?: number
   interactiveMode?: boolean
 }>()
 
+const authStore = useAuthStore()
 const terminalContainer = ref<HTMLElement>()
 let terminal: Terminal | null = null
 let fitAddon: FitAddon | null = null
@@ -139,11 +140,19 @@ const connectWebSocket = () => {
   intentionalClose = false
 
   const baseUrl = getWebSocketUrl()
-  let url = `${baseUrl}/ws/${props.userId}/${props.sessionId}`
+  let url = `${baseUrl}/ws/${props.sessionId}`
 
-  // Add agent_id query parameter if provided
+  // Add token and agent_id query parameters
+  const params = new URLSearchParams()
+  if (authStore.token) {
+    params.set('token', authStore.token)
+  }
   if (props.agentId && props.agentId > 0) {
-    url += `?agent_id=${props.agentId}`
+    params.set('agent_id', String(props.agentId))
+  }
+  const qs = params.toString()
+  if (qs) {
+    url += `?${qs}`
   }
 
   console.log('Connecting to WebSocket:', url)

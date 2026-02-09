@@ -163,7 +163,14 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 		return
 	}
 
-	if existingSkill.CreatedBy != userID.(int64) && !existingSkill.IsOfficial {
+	// Ownership check: owner can edit their own skill; admin can edit official skills
+	role, _ := c.Get("role")
+	isAdmin := role == "admin"
+	if existingSkill.IsOfficial && !isAdmin {
+		response.Forbidden(c, "Only admins can edit official skills")
+		return
+	}
+	if !existingSkill.IsOfficial && existingSkill.CreatedBy != userID.(int64) {
 		response.Forbidden(c, "You don't have permission to update this skill")
 		return
 	}

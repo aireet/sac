@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"g.echo.tech/dev/sac/internal/admin"
 	"g.echo.tech/dev/sac/internal/container"
 	"g.echo.tech/dev/sac/internal/models"
 	"g.echo.tech/dev/sac/internal/skill"
@@ -19,13 +20,15 @@ type Handler struct {
 	db               *bun.DB
 	containerManager *container.Manager
 	syncService      *skill.SyncService
+	settingsService  *admin.SettingsService
 }
 
-func NewHandler(db *bun.DB, containerManager *container.Manager, syncService *skill.SyncService) *Handler {
+func NewHandler(db *bun.DB, containerManager *container.Manager, syncService *skill.SyncService, settingsService *admin.SettingsService) *Handler {
 	return &Handler{
 		db:               db,
 		containerManager: containerManager,
 		syncService:      syncService,
+		settingsService:  settingsService,
 	}
 }
 
@@ -106,8 +109,17 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	if err != nil {
 		log.Printf("StatefulSet not found, creating it...")
 
+		// Get resource limits from settings
+		limits := h.settingsService.GetResourceLimits(ctx, userIDInt)
+		rc := &container.ResourceConfig{
+			CPURequest:    limits.CPURequest,
+			CPULimit:      limits.CPULimit,
+			MemoryRequest: limits.MemoryRequest,
+			MemoryLimit:   limits.MemoryLimit,
+		}
+
 		// Create StatefulSet with headless service
-		if err := h.containerManager.CreateStatefulSet(ctx, userIDStr, req.AgentID, agent.Config); err != nil {
+		if err := h.containerManager.CreateStatefulSet(ctx, userIDStr, req.AgentID, agent.Config, rc); err != nil {
 			log.Printf("Failed to create StatefulSet: %v", err)
 			response.InternalError(c, "Failed to create StatefulSet", err)
 			return

@@ -26,6 +26,9 @@ type Config struct {
 	// Docker Registry
 	DockerRegistry string
 	DockerImage    string
+
+	// Auth
+	JWTSecret string
 }
 
 func Load() (*Config, error) {
@@ -51,6 +54,9 @@ func Load() (*Config, error) {
 		// Docker Registry
 		DockerRegistry: getEnv("DOCKER_REGISTRY", "docker-register-registry-vpc.cn-shanghai.cr.aliyuncs.com"),
 		DockerImage:    getEnv("DOCKER_IMAGE", "prod/sac/cc:0.0.3"),
+
+		// Auth
+		JWTSecret: getEnv("JWT_SECRET", "sac-dev-jwt-secret-change-in-production"),
 	}, nil
 }
 

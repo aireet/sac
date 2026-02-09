@@ -305,13 +305,38 @@ func (m *Manager) buildAgentEnvVars(userID string, agentID int64, agentConfig ma
 	return envVars
 }
 
+// ResourceConfig holds CPU/memory resource settings for pod creation.
+type ResourceConfig struct {
+	CPURequest    string
+	CPULimit      string
+	MemoryRequest string
+	MemoryLimit   string
+}
+
 // CreateStatefulSet creates a per-agent StatefulSet with a headless service.
 // The headless service is required for StatefulSet DNS to work.
 // Pod DNS will be: claude-code-{userID}-{agentID}-0.claude-code-{userID}-{agentID}.{namespace}.svc.cluster.local
-func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID int64, agentConfig map[string]interface{}) error {
+func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID int64, agentConfig map[string]interface{}, rc *ResourceConfig) error {
 	name := m.statefulSetName(userID, agentID)
 	imageFullPath := fmt.Sprintf("%s/%s", m.dockerRegistry, m.dockerImage)
 	envVars := m.buildAgentEnvVars(userID, agentID, agentConfig)
+
+	// Use provided resource config or defaults
+	cpuReq, cpuLim, memReq, memLim := "2", "2", "4Gi", "4Gi"
+	if rc != nil {
+		if rc.CPURequest != "" {
+			cpuReq = rc.CPURequest
+		}
+		if rc.CPULimit != "" {
+			cpuLim = rc.CPULimit
+		}
+		if rc.MemoryRequest != "" {
+			memReq = rc.MemoryRequest
+		}
+		if rc.MemoryLimit != "" {
+			memLim = rc.MemoryLimit
+		}
+	}
 
 	labels := map[string]string{
 		"app":      "claude-code",
@@ -378,12 +403,12 @@ func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID 
 							Env: envVars,
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("2"),
-									corev1.ResourceMemory: resource.MustParse("4Gi"),
+									corev1.ResourceCPU:    resource.MustParse(cpuReq),
+									corev1.ResourceMemory: resource.MustParse(memReq),
 								},
 								Limits: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("2"),
-									corev1.ResourceMemory: resource.MustParse("4Gi"),
+									corev1.ResourceCPU:    resource.MustParse(cpuLim),
+									corev1.ResourceMemory: resource.MustParse(memLim),
 								},
 							},
 							VolumeMounts: []corev1.VolumeMount{

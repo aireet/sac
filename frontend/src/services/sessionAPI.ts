@@ -1,15 +1,4 @@
-import axios from 'axios'
-
-const getApiBaseUrl = () => {
-  if (import.meta.env.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL
-  }
-  const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:'
-  const host = window.location.hostname
-  return `${protocol}//${host}:8080/api`
-}
-
-const API_URL = getApiBaseUrl()
+import api from './api'
 
 export interface Session {
   id: number
@@ -44,7 +33,7 @@ export async function createSession(agentId?: number): Promise<CreateSessionResp
     payload.agent_id = agentId
   }
 
-  const response = await axios.post<CreateSessionResponse>(`${API_URL}/sessions`, payload)
+  const response = await api.post<CreateSessionResponse>('/sessions', payload)
   return response.data
 }
 
@@ -52,7 +41,7 @@ export async function createSession(agentId?: number): Promise<CreateSessionResp
  * Get session by ID
  */
 export async function getSession(sessionId: string): Promise<Session> {
-  const response = await axios.get<Session>(`${API_URL}/sessions/${sessionId}`)
+  const response = await api.get<Session>(`/sessions/${sessionId}`)
   return response.data
 }
 
@@ -60,7 +49,7 @@ export async function getSession(sessionId: string): Promise<Session> {
  * List all sessions for current user
  */
 export async function listSessions(): Promise<Session[]> {
-  const response = await axios.get<Session[]>(`${API_URL}/sessions`)
+  const response = await api.get<Session[]>('/sessions')
   return response.data
 }
 
@@ -68,7 +57,7 @@ export async function listSessions(): Promise<Session[]> {
  * Delete a session
  */
 export async function deleteSession(sessionId: string): Promise<void> {
-  await axios.delete(`${API_URL}/sessions/${sessionId}`)
+  await api.delete(`/sessions/${sessionId}`)
 }
 
 /**

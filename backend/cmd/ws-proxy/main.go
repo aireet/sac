@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"g.echo.tech/dev/sac/internal/auth"
 	"g.echo.tech/dev/sac/internal/database"
 	"g.echo.tech/dev/sac/internal/websocket"
 	"g.echo.tech/dev/sac/pkg/config"
@@ -28,12 +29,15 @@ func main() {
 	// Create Gin router
 	router := gin.Default()
 
+	// Create JWT service for WebSocket auth
+	jwtService := auth.NewJWTService(cfg.JWTSecret)
+
 	// Create WebSocket proxy handler
-	proxyHandler := websocket.NewProxyHandler(database.DB)
+	proxyHandler := websocket.NewProxyHandler(database.DB, jwtService)
 
 	// Register routes
 	router.GET("/health", proxyHandler.HealthCheck)
-	router.GET("/ws/:userId/:sessionId", proxyHandler.HandleWebSocket)
+	router.GET("/ws/:sessionId", proxyHandler.HandleWebSocket)
 
 	// Start server (listen on all interfaces for remote debugging)
 	addr := "0.0.0.0:" + cfg.WSProxyPort

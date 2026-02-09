@@ -1,20 +1,4 @@
-import axios from 'axios'
-
-const getApiBaseUrl = () => {
-  if (import.meta.env.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL
-  }
-  const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:'
-  const host = window.location.hostname
-  return `${protocol}//${host}:8080/api`
-}
-
-const api = axios.create({
-  baseURL: getApiBaseUrl(),
-  headers: {
-    'Content-Type': 'application/json',
-  },
-})
+import api from './api'
 
 export interface Agent {
   id: number

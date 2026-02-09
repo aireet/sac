@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"g.echo.tech/dev/sac/internal/admin"
 	"g.echo.tech/dev/sac/internal/container"
 	"g.echo.tech/dev/sac/internal/models"
 	"g.echo.tech/dev/sac/internal/skill"
@@ -15,19 +16,19 @@ import (
 	"github.com/uptrace/bun"
 )
 
-const MaxAgentsPerUser = 3
-
 type Handler struct {
 	db               *bun.DB
 	containerManager *container.Manager
 	syncService      *skill.SyncService
+	settingsService  *admin.SettingsService
 }
 
-func NewHandler(db *bun.DB, containerManager *container.Manager, syncService *skill.SyncService) *Handler {
+func NewHandler(db *bun.DB, containerManager *container.Manager, syncService *skill.SyncService, settingsService *admin.SettingsService) *Handler {
 	return &Handler{
 		db:               db,
 		containerManager: containerManager,
 		syncService:      syncService,
+		settingsService:  settingsService,
 	}
 }
 
@@ -114,8 +115,9 @@ func (h *Handler) CreateAgent(c *gin.Context) {
 		return
 	}
 
-	if count >= MaxAgentsPerUser {
-		response.BadRequest(c, "Maximum agents limit reached, you can only create up to 3 agents")
+	maxAgents, _ := h.settingsService.GetMaxAgents(c.Request.Context(), userID)
+	if count >= maxAgents {
+		response.BadRequest(c, fmt.Sprintf("Maximum agents limit reached, you can only create up to %d agents", maxAgents))
 		return
 	}
 

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"g.echo.tech/dev/sac/internal/auth"
 	"g.echo.tech/dev/sac/internal/database"
 	"g.echo.tech/dev/sac/internal/models"
 	"github.com/gin-gonic/gin"
@@ -24,12 +25,14 @@ var upgrader = websocket.Upgrader{
 }
 
 type ProxyHandler struct {
-	db *bun.DB
+	db         *bun.DB
+	jwtService *auth.JWTService
 }
 
-func NewProxyHandler(db *bun.DB) *ProxyHandler {
+func NewProxyHandler(db *bun.DB, jwtService *auth.JWTService) *ProxyHandler {
 	return &ProxyHandler{
-		db: db,
+		db:         db,
+		jwtService: jwtService,
 	}
 }
 
@@ -47,12 +50,26 @@ func getConfigKeys(config map[string]interface{}) []string {
 
 // HandleWebSocket handles WebSocket proxy connections
 func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
-	userID := c.Param("userId")
 	sessionID := c.Param("sessionId")
+
+	// Authenticate via JWT token in query param
+	token := c.Query("token")
+	if token == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "token query parameter required"})
+		return
+	}
+
+	claims, err := h.jwtService.ValidateToken(token)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})
+		return
+	}
+
+	userID := fmt.Sprintf("%d", claims.UserID)
 	agentIDStr := c.Query("agent_id")
 
-	if userID == "" || sessionID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "userId and sessionId are required"})
+	if sessionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "sessionId is required"})
 		return
 	}
 

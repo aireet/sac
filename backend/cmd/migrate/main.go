@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 
+	"g.echo.tech/dev/sac/internal/auth"
 	"g.echo.tech/dev/sac/internal/database"
 	"g.echo.tech/dev/sac/internal/models"
 	"g.echo.tech/dev/sac/migrations"
@@ -89,31 +90,29 @@ func main() {
 func seedData(ctx context.Context) {
 	log.Println("Seeding database...")
 
-	// Create test user
-	user := &models.User{
-		Username:    "admin",
-		Email:       "admin@example.com",
-		DisplayName: "Admin User",
+	// Hash default admin password
+	hashedPassword, err := auth.HashPassword("admin123")
+	if err != nil {
+		log.Fatalf("Failed to hash password: %v", err)
 	}
 
-	_, err := database.DB.NewInsert().
+	// Create admin user with password
+	user := &models.User{
+		Username:     "admin",
+		Email:        "admin@example.com",
+		DisplayName:  "Admin User",
+		PasswordHash: hashedPassword,
+		Role:         "admin",
+	}
+
+	_, err = database.DB.NewInsert().
 		Model(user).
-		On("CONFLICT (username) DO NOTHING").
+		On("CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role").
 		Exec(ctx)
 	if err != nil {
 		log.Fatalf("Failed to create user: %v", err)
 	}
-	log.Println("Created test user")
+	log.Println("Created/updated admin user (password: admin123)")
 
-	// Get user ID
-	err = database.DB.NewSelect().
-		Model(user).
-		Where("username = ?", "admin").
-		Scan(ctx)
-	if err != nil {
-		log.Fatalf("Failed to get user: %v", err)
-	}
-
-	// Skills are now managed via Skill Marketplace - no pre-seeded skills
 	log.Println("Database seeding completed!")
 }

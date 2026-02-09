@@ -1,24 +1,4 @@
-import axios from 'axios'
-
-// Auto-detect API URL based on current host
-const getApiBaseUrl = () => {
-  if (import.meta.env.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL
-  }
-  // Use current host with port 8080
-  const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:'
-  const host = window.location.hostname
-  return `${protocol}//${host}:8080/api`
-}
-
-const API_BASE_URL = getApiBaseUrl()
-
-const apiClient = axios.create({
-  baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-})
+import api from './api'
 
 export interface SkillParameter {
   name: string
@@ -58,39 +38,39 @@ export interface CreateSkillRequest {
 }
 
 export async function getSkills(): Promise<Skill[]> {
-  const response = await apiClient.get('/skills')
+  const response = await api.get('/skills')
   return response.data
 }
 
 export async function getSkill(id: number): Promise<Skill> {
-  const response = await apiClient.get(`/skills/${id}`)
+  const response = await api.get(`/skills/${id}`)
   return response.data
 }
 
 export async function createSkill(skill: CreateSkillRequest): Promise<Skill> {
-  const response = await apiClient.post('/skills', skill)
+  const response = await api.post('/skills', skill)
   return response.data
 }
 
 export async function updateSkill(id: number, skill: Partial<CreateSkillRequest>): Promise<Skill> {
-  const response = await apiClient.put(`/skills/${id}`, skill)
+  const response = await api.put(`/skills/${id}`, skill)
   return response.data
 }
 
 export async function deleteSkill(id: number): Promise<void> {
-  await apiClient.delete(`/skills/${id}`)
+  await api.delete(`/skills/${id}`)
 }
 
 export async function forkSkill(id: number): Promise<Skill> {
-  const response = await apiClient.post(`/skills/${id}/fork`)
+  const response = await api.post(`/skills/${id}/fork`)
   return response.data
 }
 
 export async function getPublicSkills(): Promise<Skill[]> {
-  const response = await apiClient.get('/skills/public')
+  const response = await api.get('/skills/public')
   return response.data
 }
 
 export async function syncAgentSkills(agentId: number): Promise<void> {
-  await apiClient.post(`/agents/${agentId}/sync-skills`)
+  await api.post(`/agents/${agentId}/sync-skills`)
 }

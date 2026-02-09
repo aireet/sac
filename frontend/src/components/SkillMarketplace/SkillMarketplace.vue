@@ -314,8 +314,9 @@ import {
   type Skill,
   type SkillParameter,
 } from '../../services/skillAPI'
-import { installSkill, uninstallSkill, type Agent } from '../../services/agentAPI'
+import { installSkill, type Agent } from '../../services/agentAPI'
 import { extractApiError } from '../../utils/error'
+import { useAuthStore } from '../../stores/auth'
 
 const props = defineProps<{
   agentId: number
@@ -329,6 +330,7 @@ const emit = defineEmits<{
 }>()
 
 const message = useMessage()
+const authStore = useAuthStore()
 
 // --- State ---
 const loading = ref(false)
@@ -400,7 +402,7 @@ function isInstalled(skillId: number) {
 }
 
 function isOwned(skill: Skill) {
-  return !skill.is_official && skill.created_by === 1 // TODO: Use actual user ID
+  return !skill.is_official && skill.created_by === authStore.userId
 }
 
 function emptyForm() {
@@ -445,21 +447,6 @@ async function handleInstall(skill: Skill) {
     emit('skillsChanged')
   } catch (error) {
     message.error(extractApiError(error, 'Failed to install skill'))
-    console.error(error)
-  } finally {
-    installingId.value = null
-  }
-}
-
-async function handleUninstall(skill: Skill) {
-  if (!props.agentId) return
-  installingId.value = skill.id
-  try {
-    await uninstallSkill(props.agentId, skill.id)
-    message.success('Skill uninstalled')
-    emit('skillsChanged')
-  } catch (error) {
-    message.error(extractApiError(error, 'Failed to uninstall skill'))
     console.error(error)
   } finally {
     installingId.value = null

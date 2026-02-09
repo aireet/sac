@@ -1,0 +1,98 @@
+import api from './api'
+
+export interface SystemSetting {
+  id: number
+  key: string
+  value: any
+  description: string
+  created_at: string
+  updated_at: string
+}
+
+export interface UserSetting {
+  id: number
+  user_id: number
+  key: string
+  value: any
+  created_at: string
+  updated_at: string
+}
+
+export interface AdminUser {
+  id: number
+  username: string
+  email: string
+  display_name: string
+  role: string
+  agent_count: number
+  created_at: string
+  updated_at: string
+}
+
+// System settings
+export async function getSystemSettings(): Promise<SystemSetting[]> {
+  const response = await api.get('/admin/settings')
+  return response.data
+}
+
+export async function updateSystemSetting(key: string, value: any): Promise<SystemSetting> {
+  const response = await api.put(`/admin/settings/${key}`, { value })
+  return response.data
+}
+
+// Users
+export async function getUsers(): Promise<AdminUser[]> {
+  const response = await api.get('/admin/users')
+  return response.data
+}
+
+export async function updateUserRole(userId: number, role: string): Promise<void> {
+  await api.put(`/admin/users/${userId}/role`, { role })
+}
+
+// User settings overrides
+export async function getUserSettings(userId: number): Promise<UserSetting[]> {
+  const response = await api.get(`/admin/users/${userId}/settings`)
+  return response.data
+}
+
+export async function updateUserSetting(userId: number, key: string, value: any): Promise<UserSetting> {
+  const response = await api.put(`/admin/users/${userId}/settings/${key}`, { value })
+  return response.data
+}
+
+export async function deleteUserSetting(userId: number, key: string): Promise<void> {
+  await api.delete(`/admin/users/${userId}/settings/${key}`)
+}
+
+// User agents
+export interface AdminAgent {
+  id: number
+  name: string
+  description: string
+  icon: string
+  config: Record<string, any>
+  created_by: number
+  created_at: string
+  updated_at: string
+  installed_skills: any[]
+  pod_status: string
+  restart_count: number
+  cpu_request: string
+  cpu_limit: string
+  memory_request: string
+  memory_limit: string
+}
+
+export async function getUserAgents(userId: number): Promise<AdminAgent[]> {
+  const response = await api.get(`/admin/users/${userId}/agents`)
+  return response.data
+}
+
+export async function deleteUserAgent(userId: number, agentId: number): Promise<void> {
+  await api.delete(`/admin/users/${userId}/agents/${agentId}`)
+}
+
+export async function restartUserAgent(userId: number, agentId: number): Promise<void> {
+  await api.post(`/admin/users/${userId}/agents/${agentId}/restart`)
+}
