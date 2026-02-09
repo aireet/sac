@@ -38,10 +38,6 @@ RUN wget https://github.com/tsl0922/ttyd/releases/download/1.7.4/ttyd.x86_64 -O 
 RUN mkdir -p /workspace
 WORKDIR /workspace
 
-# Copy hooks
-COPY hooks/ /hooks/
-RUN chmod +x /hooks/*.sh
-
 # Copy entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

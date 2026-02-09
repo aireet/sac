@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sac-claude-hooks
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sac.labels" . | nindent 4 }}
+data:
+  settings.json: |
+    {{- .Files.Get "files/settings.json" | nindent 4 }}
+  conversation-sync.mjs: |
+    {{- .Files.Get "files/conversation-sync.mjs" | nindent 4 }}
