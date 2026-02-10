@@ -302,6 +302,8 @@ func (m *Manager) buildAgentEnvVars(userID string, agentID int64, agentConfig ma
 		"anthropic_haiku_model":  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
 		"anthropic_opus_model":   "ANTHROPIC_DEFAULT_OPUS_MODEL",
 		"anthropic_sonnet_model": "ANTHROPIC_DEFAULT_SONNET_MODEL",
+		"http_proxy":             "HTTP_PROXY",
+		"https_proxy":            "HTTPS_PROXY",
 	}
 
 	for jsonKey, envKey := range configMap {

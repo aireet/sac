@@ -104,6 +104,23 @@
         />
       </n-form-item>
 
+      <n-collapse :default-expanded-names="[]" style="margin-top: 8px">
+        <n-collapse-item title="Advanced Options" name="advanced">
+          <n-form-item label="HTTP Proxy" path="http_proxy">
+            <n-input
+              v-model:value="formData.http_proxy"
+              placeholder="http://proxy.example.com:8080"
+            />
+          </n-form-item>
+          <n-form-item label="HTTPS Proxy" path="https_proxy">
+            <n-input
+              v-model:value="formData.https_proxy"
+              placeholder="http://proxy.example.com:8080"
+            />
+          </n-form-item>
+        </n-collapse-item>
+      </n-collapse>
+
     </n-form>
 
     <template #footer>
@@ -130,6 +147,8 @@ import {
   NDivider,
   NAlert,
   NA,
+  NCollapse,
+  NCollapseItem,
   useMessage,
 } from 'naive-ui'
 import { createAgent, updateAgent, type Agent } from '../../services/agentAPI'
@@ -161,6 +180,8 @@ const formData = ref({
   anthropic_haiku_model: 'claude-haiku-4.5',
   anthropic_opus_model: 'claude-opus-4.5',
   anthropic_sonnet_model: 'claude-sonnet-4.5',
+  http_proxy: '',
+  https_proxy: '',
 })
 
 const activePreset = ref('')
@@ -278,6 +299,8 @@ const resetForm = () => {
     anthropic_haiku_model: 'claude-haiku-4.5',
     anthropic_opus_model: 'claude-opus-4.5',
     anthropic_sonnet_model: 'claude-sonnet-4.5',
+    http_proxy: '',
+    https_proxy: '',
   }
   isEditing.value = false
 }
@@ -297,6 +320,8 @@ const handleSubmit = async () => {
         anthropic_haiku_model: formData.value.anthropic_haiku_model,
         anthropic_opus_model: formData.value.anthropic_opus_model,
         anthropic_sonnet_model: formData.value.anthropic_sonnet_model,
+        http_proxy: formData.value.http_proxy,
+        https_proxy: formData.value.https_proxy,
       },
     }
 
@@ -335,6 +360,8 @@ watch(() => props.agent, (agent) => {
       anthropic_haiku_model: agent.config?.anthropic_haiku_model || 'claude-haiku-4.5',
       anthropic_opus_model: agent.config?.anthropic_opus_model || 'claude-opus-4.5',
       anthropic_sonnet_model: agent.config?.anthropic_sonnet_model || 'claude-sonnet-4.5',
+      http_proxy: agent.config?.http_proxy || '',
+      https_proxy: agent.config?.https_proxy || '',
     }
   } else {
     resetForm()
