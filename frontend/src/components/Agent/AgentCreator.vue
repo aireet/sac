@@ -167,6 +167,16 @@ const activePreset = ref('')
 
 const providerPresets = [
   {
+    name: 'Anthropic',
+    token: '',
+    base_url: 'https://api.anthropic.com',
+    haiku: 'claude-haiku-4-5-20251001',
+    sonnet: 'claude-sonnet-4-5-20250929',
+    opus: 'claude-opus-4-6',
+    doc_url: 'https://console.anthropic.com/settings/keys',
+    doc_hint: 'Sign up at Anthropic console, go to API Keys to create a key.',
+  },
+  {
     name: 'OpenRouter',
     token: '',
     base_url: 'https://openrouter.ai/api/v1',
@@ -195,6 +205,16 @@ const providerPresets = [
     opus: 'qwen3-coder-plus',
     doc_url: 'https://help.aliyun.com/zh/model-studio/claude-code',
     doc_hint: 'Login to Alibaba Cloud console, go to Model Studio to get your API key.',
+  },
+  {
+    name: 'Nebula',
+    token: '',
+    base_url: 'https://llm.ai-nebula.com',
+    haiku: 'claude-haiku-4-6',
+    sonnet: 'claude-sonnet-4-6',
+    opus: 'claude-opus-4-6',
+    doc_url: 'https://llm.ai-nebula.com',
+    doc_hint: 'Sign up at AI Nebula to get your API key.',
   },
 ]
 
