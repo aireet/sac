@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-An open-source platform providing isolated Claude Code environments per user-agent in Kubernetes. Vue 3 + Go + PostgreSQL/TimescaleDB + K8s StatefulSets + Envoy Gateway.
+An open-source platform that makes Claude Code accessible to everyone — not just developers. It lowers the barrier to using Claude Code for non-technical users, enables teams to share and install expertly crafted skills, and collaboratively build a knowledge base for solving real-world problems. Each user's agent runs in an isolated K8s environment accessible via web browser.
 
 ## Tech Stack
 

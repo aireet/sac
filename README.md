@@ -5,17 +5,17 @@
   <a href="docs/i18n/README.zh.md">🇨🇳 中文</a>
 </p>
 
-SAC is an open-source platform that gives every user their own isolated [Claude Code](https://docs.anthropic.com/en/docs/claude-code) environment running in Kubernetes. It provides a web-based terminal with agent management, a skill marketplace, workspace file storage, and conversation history — all behind a clean Vue 3 dashboard.
+SAC is an open-source platform that makes [Claude Code](https://docs.anthropic.com/en/docs/claude-code) accessible to everyone — not just developers. It runs each user's AI agent in an isolated Kubernetes environment, accessible through a simple web browser. Within your organization, team members can share and install expertly crafted skills, and collaboratively build a knowledge base that solves real-world problems.
 
 ## Why SAC?
 
-Claude Code is a powerful CLI tool, but deploying it for teams is non-trivial. SAC solves this by:
+Claude Code is a revolutionary AI agent that can do almost anything, but using it requires terminal proficiency and local setup. SAC removes these barriers entirely:
 
-- **Isolating each agent** in its own K8s StatefulSet with stable DNS — no noisy neighbors
-- **Supporting multiple LLM providers** — Anthropic, OpenRouter, GLM (ZhiPu AI), Qwen, or any compatible API
-- **Making skills sharable** — create reusable slash commands and share them across your org
-- **Syncing conversation history** — hook-based capture stored in TimescaleDB with full export
-- **Managing workspace files** — OSS-backed per-agent private storage plus shared public files
+- **Zero-barrier access** — anyone in your org can use Claude Code through a web browser, no CLI experience needed
+- **Skill sharing** — create reusable slash commands from your best ideas and share them across the team with one click
+- **Collaborative knowledge base** — build a shared workspace of prompts, templates, and reference materials that makes every agent smarter
+- **Multi-provider flexibility** — Anthropic, OpenRouter, GLM (ZhiPu AI), Qwen, Nebula, or any compatible API
+- **Secure isolation** — each agent runs in its own K8s StatefulSet with dedicated resources, no interference between users
 
 ## Architecture
 

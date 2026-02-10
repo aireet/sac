@@ -5,17 +5,17 @@
   <a href="README.zh.md">🇨🇳 中文</a>
 </p>
 
-SAC 是一个开源平台，为每个用户提供运行在 Kubernetes 中的独立 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 环境。它提供基于 Web 的终端、Agent 管理、技能市场、工作区文件存储和对话历史记录 —— 全部集成在一个简洁的 Vue 3 控制台中。
+SAC 是一个开源平台，让 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 触手可及 —— 不仅仅面向开发者。它为每个用户在 Kubernetes 中运行独立的 AI Agent 环境，只需一个浏览器即可使用。在组织内部，团队成员可以高效分享和安装精心打造的技能，共同构建一个能解决各种实际问题的知识库。
 
 ## 为什么选择 SAC？
 
-Claude Code 是一个强大的 CLI 工具，但为团队部署它并非易事。SAC 通过以下方式解决这个问题：
+Claude Code 是一个革命性的 AI Agent，它几乎能做一切，但使用它需要终端操作经验和本地环境搭建。SAC 彻底消除了这些门槛：
 
-- **隔离每个 Agent** — 每个 Agent 运行在独立的 K8s StatefulSet 中，拥有稳定的 DNS，互不干扰
-- **支持多种 LLM 提供商** — Anthropic、OpenRouter、GLM（智谱 AI）、通义千问，或任何兼容的 API
-- **技能可共享** — 创建可复用的斜杠命令，在组织内共享
-- **同步对话历史** — 基于 Hook 的采集，存储在 TimescaleDB 中，支持完整导出
-- **管理工作区文件** — 基于 OSS 的 Agent 级私有存储，加上共享的公共文件
+- **零门槛使用** — 组织内任何人都可以通过浏览器使用 Claude Code，无需命令行经验
+- **技能共享** — 将你精妙的想法创建为可复用的斜杠命令，一键分享给团队
+- **协作知识库** — 构建共享的提示词、模板和参考资料工作区，让每个 Agent 都更智能
+- **多供应商灵活切换** — Anthropic、OpenRouter、GLM（智谱 AI）、通义千问、Nebula，或任何兼容的 API
+- **安全隔离** — 每个 Agent 运行在独立的 K8s StatefulSet 中，资源独享，互不干扰
 
 ## 架构
 

@@ -5,7 +5,7 @@
         <div class="logo-wrapper">
           <img :src="sacLogo" alt="SAC" class="logo" />
         </div>
-        <p class="subtitle">Sandbox Agent Cluster</p>
+        <p class="subtitle">Claude Code for Everyone</p>
 
         <n-form ref="formRef" :model="form" :rules="rules" @submit.prevent="handleLogin">
           <n-form-item path="username" label="Username or Email">
