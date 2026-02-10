@@ -1,4 +1,11 @@
 # Build binaries
+backend/bin/
 backend/api-gateway
 backend/ws-proxy
 backend/migrate
+
+# Dependencies
+frontend/node_modules/
+
+# Environment
+.env
