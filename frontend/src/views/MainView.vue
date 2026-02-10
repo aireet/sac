@@ -4,7 +4,7 @@
       <!-- Top Header Bar -->
       <n-layout-header bordered style="height: 60px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between;">
         <div class="header-content">
-          <h1 class="logo">SAC</h1>
+          <img :src="sacLogo" alt="SAC" class="logo" />
           <span class="subtitle">Sandbox Agent Cluster</span>
         </div>
 
@@ -112,10 +112,11 @@
       </n-layout-header>
 
       <!-- Main Content Area -->
-      <n-layout has-sider style="height: calc(100vh - 60px)">
+      <n-layout has-sider class="main-body">
+        <!-- Left Sider -->
         <n-layout-sider
           bordered
-          :width="400"
+          :width="380"
           :collapsed-width="0"
           :show-trigger="'bar'"
           collapse-mode="width"
@@ -147,9 +148,69 @@
           </n-tabs>
         </n-layout-sider>
 
-        <n-layout-content content-class="main-content">
+        <!-- Center Content -->
+        <div class="center-content">
           <template v-if="viewMode === 'terminal'">
-            <div class="terminal-area">
+            <!-- File Editor Overlay (over terminal) -->
+            <div v-if="editorFile" class="editor-overlay">
+              <div class="editor-header">
+                <n-breadcrumb separator="/">
+                  <n-breadcrumb-item @click="closeEditor">
+                    <n-icon :size="14"><ArrowBackOutline /></n-icon>
+                    <span style="margin-left: 4px">Back</span>
+                  </n-breadcrumb-item>
+                  <n-breadcrumb-item v-for="(seg, i) in editorPathSegments" :key="i">
+                    {{ seg }}
+                  </n-breadcrumb-item>
+                </n-breadcrumb>
+                <n-space :size="8" align="center">
+                  <n-tag v-if="editorDirty" size="small" type="warning">Unsaved</n-tag>
+                  <n-button
+                    v-if="editorCategory === 'text'"
+                    size="small"
+                    type="primary"
+                    :disabled="!editorDirty"
+                    :loading="editorSaving"
+                    @click="handleEditorSave"
+                  >
+                    Save
+                  </n-button>
+                  <n-button size="small" quaternary @click="handleEditorDownload">
+                    <template #icon><n-icon :size="14"><DownloadOutline /></n-icon></template>
+                    Download
+                  </n-button>
+                  <n-button size="small" quaternary @click="closeEditor">Close</n-button>
+                </n-space>
+              </div>
+              <div class="editor-body">
+                <n-spin :show="editorLoading" style="height: 100%">
+                  <!-- Text editor -->
+                  <textarea
+                    v-if="editorCategory === 'text'"
+                    v-model="editorContent"
+                    class="editor-textarea"
+                    spellcheck="false"
+                  />
+                  <!-- Image preview -->
+                  <div v-else-if="editorCategory === 'image'" class="image-preview">
+                    <img :src="editorBlobUrl" :alt="editorFile.name" />
+                  </div>
+                  <!-- Binary fallback -->
+                  <div v-else class="binary-preview">
+                    <n-icon :size="64" depth="3"><DocumentOutline /></n-icon>
+                    <n-text style="font-size: 16px; margin-top: 12px">{{ editorFile.name }}</n-text>
+                    <n-text depth="3" style="margin-top: 4px">{{ formatBytes(editorFile.size) }}</n-text>
+                    <n-button style="margin-top: 16px" @click="handleEditorDownload">
+                      <template #icon><n-icon><DownloadOutline /></n-icon></template>
+                      Download File
+                    </n-button>
+                  </div>
+                </n-spin>
+              </div>
+            </div>
+
+            <!-- Terminal (hidden when editor is open) -->
+            <div v-show="!editorFile" class="terminal-area">
               <Terminal
                 ref="terminalRef"
                 :session-id="sessionId"
@@ -159,7 +220,7 @@
               />
             </div>
             <ChatInput
-              v-if="sessionId && inputMode === 'chat'"
+              v-if="sessionId && inputMode === 'chat' && !editorFile"
               @send="handleSendMessage"
               @interrupt="handleInterrupt"
             />
@@ -172,7 +233,19 @@
             @skills-changed="handleSkillsChanged"
             @close="viewMode = 'terminal'"
           />
-        </n-layout-content>
+        </div>
+
+        <!-- Right Workspace Panel -->
+        <template v-if="selectedAgentId && viewMode === 'terminal'">
+          <div
+            class="resize-handle"
+            :class="{ active: resizing }"
+            @mousedown="startResize"
+          />
+          <div class="right-panel" :style="{ width: rightPanelWidth + 'px' }">
+            <WorkspacePanel :agent-id="selectedAgentId" @open-file="handleOpenFile" />
+          </div>
+        </template>
       </n-layout>
     </n-layout>
 
@@ -193,7 +266,6 @@ import {
   NLayout,
   NLayoutHeader,
   NLayoutSider,
-  NLayoutContent,
   NTabs,
   NTabPane,
   NSpace,
@@ -205,21 +277,36 @@ import {
   NDivider,
   NEmpty,
   NTooltip,
+  NTag,
+  NBreadcrumb,
+  NBreadcrumbItem,
+  NSpin,
   darkTheme,
   useMessage,
 } from 'naive-ui'
-import { Add, StorefrontOutline, TerminalOutline, ChatbubblesOutline, SettingsOutline, LogOutOutline } from '@vicons/ionicons5'
+import {
+  Add, StorefrontOutline, TerminalOutline, ChatbubblesOutline, SettingsOutline, LogOutOutline,
+  ArrowBackOutline, DownloadOutline, DocumentOutline,
+} from '@vicons/ionicons5'
 import Terminal from '../components/Terminal/Terminal.vue'
 import ChatInput from '../components/ChatInput/ChatInput.vue'
 import SkillPanel from '../components/SkillPanel/SkillPanel.vue'
 import SkillMarketplace from '../components/SkillMarketplace/SkillMarketplace.vue'
 import AgentSelector from '../components/Agent/AgentSelector.vue'
 import AgentCreator from '../components/Agent/AgentCreator.vue'
+import WorkspacePanel from '../components/Workspace/WorkspacePanel.vue'
 import { getAgent, getAgents, getAgentStatuses, type Agent, type AgentStatus } from '../services/agentAPI'
 import { createSession, deleteSession, waitForSessionReady } from '../services/sessionAPI'
+import {
+  fetchFileBlob, fetchPublicFileBlob, downloadFile, downloadPublicFile,
+  uploadFile, uploadPublicFile,
+  type WorkspaceFile,
+} from '../services/workspaceAPI'
+import { getFileCategory, MAX_TEXT_PREVIEW_BYTES, MAX_IMAGE_PREVIEW_BYTES } from '../utils/fileTypes'
 import { extractApiError } from '../utils/error'
 import { useAuthStore } from '../stores/auth'
 import { getWsBaseUrl } from '../services/api'
+import sacLogo from '../assets/sac-logo.svg'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -237,6 +324,147 @@ const showAgentCreator = ref(false)
 const editingAgent = ref<Agent | null>(null)
 const viewMode = ref<'terminal' | 'marketplace'>('terminal')
 const inputMode = ref<'chat' | 'terminal'>('terminal')
+
+// Right panel resize
+const rightPanelWidth = ref(480)
+const resizing = ref(false)
+
+const startResize = (e: MouseEvent) => {
+  e.preventDefault()
+  resizing.value = true
+  const startX = e.clientX
+  const startWidth = rightPanelWidth.value
+
+  const onMouseMove = (ev: MouseEvent) => {
+    const delta = startX - ev.clientX
+    rightPanelWidth.value = Math.min(700, Math.max(300, startWidth + delta))
+  }
+  const onMouseUp = () => {
+    resizing.value = false
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+  }
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+}
+
+// --- File Editor (center overlay) ---
+const editorFile = ref<WorkspaceFile | null>(null)
+const editorSpaceTab = ref<'private' | 'public'>('private')
+const editorCategory = ref<'text' | 'image' | 'binary'>('binary')
+const editorContent = ref('')
+const editorOriginalContent = ref('')
+const editorBlobUrl = ref('')
+const editorLoading = ref(false)
+const editorSaving = ref(false)
+
+const editorDirty = computed(() => editorCategory.value === 'text' && editorContent.value !== editorOriginalContent.value)
+
+const editorPathSegments = computed(() => {
+  if (!editorFile.value) return []
+  return editorFile.value.path.replace(/^\//, '').split('/')
+})
+
+const handleOpenFile = async (file: WorkspaceFile, spaceTab: 'private' | 'public') => {
+  editorFile.value = file
+  editorSpaceTab.value = spaceTab
+  editorCategory.value = getFileCategory(file.name)
+  editorContent.value = ''
+  editorOriginalContent.value = ''
+  editorLoading.value = true
+
+  // Clean up previous blob URL
+  if (editorBlobUrl.value) {
+    URL.revokeObjectURL(editorBlobUrl.value)
+    editorBlobUrl.value = ''
+  }
+
+  try {
+    const blob = spaceTab === 'private'
+      ? await fetchFileBlob(selectedAgentId.value, file.path)
+      : await fetchPublicFileBlob(file.path)
+
+    if (editorCategory.value === 'text') {
+      if (file.size > MAX_TEXT_PREVIEW_BYTES) {
+        editorCategory.value = 'binary'
+        message.warning('File too large to edit in browser')
+      } else {
+        const text = await blob.text()
+        editorContent.value = text
+        editorOriginalContent.value = text
+      }
+    } else if (editorCategory.value === 'image') {
+      if (file.size > MAX_IMAGE_PREVIEW_BYTES) {
+        editorCategory.value = 'binary'
+        message.warning('Image too large to preview')
+      } else {
+        editorBlobUrl.value = URL.createObjectURL(blob)
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load file:', err)
+    message.error('Failed to load file')
+    editorFile.value = null
+  } finally {
+    editorLoading.value = false
+  }
+}
+
+const handleEditorSave = async () => {
+  if (!editorFile.value || !editorDirty.value) return
+  editorSaving.value = true
+  try {
+    const blob = new Blob([editorContent.value], { type: 'text/plain' })
+    const f = new File([blob], editorFile.value.name)
+    // Extract the directory path (parent of the file)
+    const parts = editorFile.value.path.split('/')
+    parts.pop() // remove filename
+    let dirPath = parts.join('/')
+    // Ensure trailing slash for non-root dirs (backend concatenates path + filename)
+    if (dirPath && !dirPath.endsWith('/')) dirPath += '/'
+    if (!dirPath) dirPath = '/'
+
+    if (editorSpaceTab.value === 'private') {
+      await uploadFile(selectedAgentId.value, f, dirPath)
+    } else {
+      await uploadPublicFile(f, dirPath)
+    }
+    editorOriginalContent.value = editorContent.value
+    message.success('File saved')
+  } catch (err) {
+    console.error('Save failed:', err)
+    message.error('Failed to save file')
+  } finally {
+    editorSaving.value = false
+  }
+}
+
+const handleEditorDownload = () => {
+  if (!editorFile.value) return
+  if (editorSpaceTab.value === 'private') {
+    downloadFile(selectedAgentId.value, editorFile.value.path)
+  } else {
+    downloadPublicFile(editorFile.value.path)
+  }
+}
+
+const closeEditor = () => {
+  editorFile.value = null
+  editorContent.value = ''
+  editorOriginalContent.value = ''
+  if (editorBlobUrl.value) {
+    URL.revokeObjectURL(editorBlobUrl.value)
+    editorBlobUrl.value = ''
+  }
+}
+
+const formatBytes = (bytes: number): string => {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+}
 
 // Agent list for header dropdown
 const agents = ref<Agent[]>([])
@@ -274,6 +502,7 @@ const handleAgentSelect = async (agentId: number) => {
   if (switchingAgent.value) return
 
   selectedAgentId.value = agentId
+  closeEditor()
 
   if (agentId > 0) {
     switchingAgent.value = true
@@ -438,19 +667,12 @@ onUnmounted(() => {
 <style scoped>
 .header-content {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
 }
 
 .logo {
-  font-size: 28px;
-  font-weight: 700;
-  margin: 0;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  letter-spacing: 2px;
+  height: 32px;
 }
 
 .subtitle {
@@ -473,10 +695,15 @@ onUnmounted(() => {
   font-size: 14px;
 }
 
-:deep(.main-content) {
+.main-body {
+  height: calc(100vh - 60px) !important;
+}
+
+.center-content {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  height: 100%;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -484,5 +711,101 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+.resize-handle {
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.resize-handle:hover,
+.resize-handle.active {
+  background: rgba(14, 165, 233, 0.3);
+}
+
+.right-panel {
+  flex-shrink: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.editor-overlay {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.editor-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-body :deep(.n-spin-container),
+.editor-body :deep(.n-spin-content) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-textarea {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  border: none;
+  outline: none;
+  background: #1a1a1a;
+  color: rgba(255, 255, 255, 0.87);
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 16px;
+  tab-size: 2;
+}
+
+.editor-textarea:focus {
+  outline: none;
+}
+
+.image-preview {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow: auto;
+}
+
+.image-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.binary-preview {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
 }
 </style>

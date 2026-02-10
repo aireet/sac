@@ -32,3 +32,20 @@ export function getFileCategory(fileName: string): FileCategory {
 
 export const MAX_TEXT_PREVIEW_BYTES = 5 * 1024 * 1024   // 5MB
 export const MAX_IMAGE_PREVIEW_BYTES = 20 * 1024 * 1024 // 20MB
+
+export function getFileIcon(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase() || ''
+  const iconMap: Record<string, string> = {
+    js: 'code', ts: 'code', py: 'code', go: 'code', vue: 'code',
+    jsx: 'code', tsx: 'code', rs: 'code', java: 'code', c: 'code',
+    cpp: 'code', h: 'code', rb: 'code', php: 'code', lua: 'code',
+    sh: 'code', bash: 'code',
+    json: 'settings', yaml: 'settings', yml: 'settings', toml: 'settings',
+    ini: 'settings', cfg: 'settings', conf: 'settings',
+    md: 'document-text', txt: 'document-text', csv: 'document-text',
+    log: 'document-text',
+    png: 'image', jpg: 'image', jpeg: 'image', svg: 'image',
+    gif: 'image', webp: 'image', bmp: 'image', ico: 'image',
+  }
+  return iconMap[ext] || 'document'
+}

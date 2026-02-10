@@ -2,7 +2,9 @@
   <n-config-provider :theme="darkTheme">
     <div class="auth-page">
       <div class="auth-card">
-        <h1 class="logo">SAC</h1>
+        <div class="logo-wrapper">
+          <img :src="sacLogo" alt="SAC" class="logo" />
+        </div>
         <p class="subtitle">Sandbox Agent Cluster</p>
 
         <n-form ref="formRef" :model="form" :rules="rules" @submit.prevent="handleLogin">
@@ -58,6 +60,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { useAuthStore } from '../stores/auth'
+import sacLogo from '../assets/sac-logo.svg'
 import { extractApiError } from '../utils/error'
 
 const router = useRouter()
@@ -108,16 +111,13 @@ const handleLogin = async () => {
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.logo {
-  font-size: 36px;
-  font-weight: 700;
+.logo-wrapper {
   text-align: center;
   margin: 0 0 4px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  letter-spacing: 3px;
+}
+
+.logo {
+  height: 40px;
 }
 
 .subtitle {

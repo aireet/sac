@@ -2,9 +2,9 @@
   <n-config-provider :theme="darkTheme">
     <n-layout style="height: 100vh">
       <n-layout-header bordered style="height: 60px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between;">
-        <div style="display: flex; align-items: baseline; gap: 12px">
-          <router-link to="/" style="text-decoration: none">
-            <h1 class="logo">SAC</h1>
+        <div style="display: flex; align-items: center; gap: 12px">
+          <router-link to="/" style="text-decoration: none; display: flex; align-items: center;">
+            <img :src="sacLogo" alt="SAC" class="logo" />
           </router-link>
           <span class="subtitle">Admin Panel</span>
         </div>
@@ -300,6 +300,7 @@ import {
   type ConversationRecord,
 } from '../services/adminAPI'
 import { extractApiError } from '../utils/error'
+import sacLogo from '../assets/sac-logo.svg'
 
 const message = useMessage()
 const activeTab = ref('settings')
@@ -823,14 +824,7 @@ onMounted(() => {
 
 <style scoped>
 .logo {
-  font-size: 28px;
-  font-weight: 700;
-  margin: 0;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  letter-spacing: 2px;
+  height: 32px;
 }
 
 .subtitle {
