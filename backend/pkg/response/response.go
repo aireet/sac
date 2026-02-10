@@ -40,6 +40,11 @@ func Conflict(c *gin.Context, msg string) {
 	Error(c, http.StatusConflict, msg)
 }
 
+// ServiceUnavailable sends a 503 error response.
+func ServiceUnavailable(c *gin.Context, msg string) {
+	Error(c, http.StatusServiceUnavailable, msg)
+}
+
 // InternalError sends a 500 error response with the underlying error detail.
 func InternalError(c *gin.Context, msg string, err error) {
 	Error(c, http.StatusInternalServerError, msg, err)

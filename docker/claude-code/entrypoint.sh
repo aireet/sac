@@ -6,8 +6,9 @@ echo "Starting Claude Code Sandbox..."
 echo "User ID: ${USER_ID}"
 echo "Session ID: ${SESSION_ID}"
 
-# Initialize Claude Code config directory
+# Initialize Claude Code config directory and workspace
 mkdir -p /root/.claude
+mkdir -p /workspace/private /workspace/public
 
 # Accept Claude Code terms of service non-interactively
 touch /root/.claude/.accepted-tos

@@ -115,6 +115,16 @@
       </n-space>
     </n-card>
 
+    <n-divider style="margin: 12px 0" />
+
+    <!-- Workspace Section -->
+    <n-card :bordered="false" size="small">
+      <template #header>
+        <n-text strong>Workspace</n-text>
+      </template>
+      <WorkspacePanel :agent-id="agentId" />
+    </n-card>
+
     <!-- Conversation History Modal -->
     <n-modal
       v-model:show="showHistoryModal"
@@ -292,6 +302,7 @@ import {
   type SessionInfo,
 } from '../../services/agentAPI'
 import { extractApiError } from '../../utils/error'
+import WorkspacePanel from '../Workspace/WorkspacePanel.vue'
 
 const props = defineProps<{
   agentId: number

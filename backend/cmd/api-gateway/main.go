@@ -14,6 +14,8 @@ import (
 	"g.echo.tech/dev/sac/internal/history"
 	"g.echo.tech/dev/sac/internal/session"
 	"g.echo.tech/dev/sac/internal/skill"
+	"g.echo.tech/dev/sac/internal/storage"
+	"g.echo.tech/dev/sac/internal/workspace"
 	"g.echo.tech/dev/sac/pkg/config"
 	"github.com/gin-gonic/gin"
 )
@@ -65,6 +67,10 @@ func main() {
 		log.Fatalf("Failed to create container manager: %v", err)
 	}
 
+	// OSS provider reads config from system_settings (admin-managed)
+	ossProvider := storage.NewOSSProvider(database.DB)
+	workspaceSyncSvc := workspace.NewSyncService(database.DB, ossProvider, containerMgr)
+
 	// Shared history handler
 	historyHandler := history.NewHandler(database.DB)
 
@@ -95,12 +101,16 @@ func main() {
 		syncService := skillHandler.GetSyncService()
 
 		// Session routes
-		sessionHandler := session.NewHandler(database.DB, containerMgr, syncService, settingsService)
+		sessionHandler := session.NewHandler(database.DB, containerMgr, syncService, settingsService, workspaceSyncSvc)
 		sessionHandler.RegisterRoutes(protectedGroup)
 
 		// Agent routes
 		agentHandler := agent.NewHandler(database.DB, containerMgr, syncService, settingsService)
 		agentHandler.RegisterRoutes(protectedGroup)
+
+		// Workspace routes (always registered; requireOSS middleware returns 503 if not configured)
+		workspaceHandler := workspace.NewHandler(database.DB, ossProvider, workspaceSyncSvc)
+		workspaceHandler.RegisterRoutes(protectedGroup)
 
 		// Admin routes (requires admin role, checked inside RegisterRoutes)
 		adminHandler := admin.NewHandler(database.DB, containerMgr)

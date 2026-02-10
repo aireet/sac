@@ -10,6 +10,7 @@ import (
 	"g.echo.tech/dev/sac/internal/container"
 	"g.echo.tech/dev/sac/internal/models"
 	"g.echo.tech/dev/sac/internal/skill"
+	"g.echo.tech/dev/sac/internal/workspace"
 	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -21,14 +22,16 @@ type Handler struct {
 	containerManager *container.Manager
 	syncService      *skill.SyncService
 	settingsService  *admin.SettingsService
+	workspaceSyncSvc *workspace.SyncService
 }
 
-func NewHandler(db *bun.DB, containerManager *container.Manager, syncService *skill.SyncService, settingsService *admin.SettingsService) *Handler {
+func NewHandler(db *bun.DB, containerManager *container.Manager, syncService *skill.SyncService, settingsService *admin.SettingsService, workspaceSyncSvc *workspace.SyncService) *Handler {
 	return &Handler{
 		db:               db,
 		containerManager: containerManager,
 		syncService:      syncService,
 		settingsService:  settingsService,
+		workspaceSyncSvc: workspaceSyncSvc,
 	}
 }
 
@@ -157,6 +160,14 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		return
 	}
 	log.Printf("Pod IP: %s", podIP)
+
+	// Sync workspace files from OSS to the pod (private + public + claude-commands)
+	if h.workspaceSyncSvc != nil {
+		if err := h.workspaceSyncSvc.SyncWorkspaceToPod(ctx, userIDStr, req.AgentID); err != nil {
+			log.Printf("Warning: failed to sync workspace: %v", err)
+			// Not fatal — session can still work without workspace files
+		}
+	}
 
 	// Sync all installed skills to the pod (ensures files exist after pod restart)
 	if err := h.syncService.SyncAllSkillsToAgent(ctx, userIDStr, req.AgentID); err != nil {
