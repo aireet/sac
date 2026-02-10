@@ -129,6 +129,67 @@
     <n-modal v-model:show="showNewFolder" preset="dialog" title="New Folder" :positive-text="'Create'" :negative-text="'Cancel'" @positive-click="handleCreateFolder">
       <n-input v-model:value="newFolderName" placeholder="Folder name" @keyup.enter="handleCreateFolder" />
     </n-modal>
+
+    <!-- File preview/edit modal -->
+    <n-modal v-model:show="showPreview" :on-after-leave="cleanupPreview" style="width: 720px; max-width: 90vw">
+      <n-card :title="previewFile?.name" closable @close="showPreview = false" :bordered="false" size="small">
+        <n-spin :show="previewLoading">
+          <div style="min-height: 100px">
+            <!-- Text editor -->
+            <template v-if="previewCategory === 'text'">
+              <n-input
+                v-model:value="previewContent"
+                type="textarea"
+                :autosize="{ minRows: 15, maxRows: 30 }"
+                :readonly="!canEdit"
+                style="font-family: monospace; font-size: 13px"
+              />
+              <n-space justify="end" style="margin-top: 12px" v-if="canEdit">
+                <n-button
+                  type="primary"
+                  size="small"
+                  :disabled="!isDirty || saving"
+                  :loading="saving"
+                  @click="handleSave"
+                >
+                  Save
+                </n-button>
+              </n-space>
+            </template>
+
+            <!-- Image preview -->
+            <template v-else-if="previewCategory === 'image'">
+              <div style="text-align: center">
+                <img
+                  :src="previewContent"
+                  :alt="previewFile?.name"
+                  style="max-width: 100%; max-height: 70vh; border-radius: 4px"
+                />
+              </div>
+            </template>
+
+            <!-- Binary info -->
+            <template v-else-if="previewCategory === 'binary'">
+              <div style="text-align: center; padding: 40px 0">
+                <n-icon size="48" depth="3"><DocumentOutline /></n-icon>
+                <div style="margin-top: 12px">
+                  <n-text>{{ previewFile?.name }}</n-text>
+                </div>
+                <div style="margin-top: 4px">
+                  <n-text depth="3">{{ formatBytes(previewFile?.size || 0) }}</n-text>
+                </div>
+                <div style="margin-top: 16px">
+                  <n-button size="small" @click="handleDownload(previewFile!)">
+                    <template #icon><n-icon><DownloadOutline /></n-icon></template>
+                    Download
+                  </n-button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </n-spin>
+      </n-card>
+    </n-modal>
   </div>
 </template>
 
@@ -136,7 +197,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import {
   NTabs, NTabPane, NSpace, NIcon, NText, NButton, NUpload, NSpin, NEmpty,
-  NBreadcrumb, NBreadcrumbItem, NProgress, NPopconfirm, NModal, NInput,
+  NBreadcrumb, NBreadcrumbItem, NProgress, NPopconfirm, NModal, NInput, NCard,
   useMessage, type UploadCustomRequestOptions,
 } from 'naive-ui'
 import {
@@ -147,8 +208,10 @@ import {
 import {
   listFiles, uploadFile, downloadFile, deleteFile, createDirectory, getQuota,
   listPublicFiles, uploadPublicFile, downloadPublicFile, deletePublicFile, createPublicDirectory,
+  fetchFileBlob, fetchPublicFileBlob,
   type WorkspaceFile, type WorkspaceQuota,
 } from '../../services/workspaceAPI'
+import { getFileCategory, MAX_TEXT_PREVIEW_BYTES, MAX_IMAGE_PREVIEW_BYTES, type FileCategory } from '../../utils/fileTypes'
 import { useAuthStore } from '../../stores/auth'
 
 const props = defineProps<{
@@ -167,7 +230,18 @@ const quota = ref<WorkspaceQuota | null>(null)
 const showNewFolder = ref(false)
 const newFolderName = ref('')
 
+// Preview/edit state
+const showPreview = ref(false)
+const previewFile = ref<WorkspaceFile | null>(null)
+const previewCategory = ref<FileCategory>('binary')
+const previewContent = ref<string>('')
+const originalContent = ref<string>('')
+const previewLoading = ref(false)
+const saving = ref(false)
+
 const isAdmin = computed(() => authStore.isAdmin)
+const canEdit = computed(() => spaceTab.value === 'private' || isAdmin.value)
+const isDirty = computed(() => previewContent.value !== originalContent.value)
 
 const quotaPercent = computed(() => {
   if (!quota.value || quota.value.max_bytes === 0) return 0
@@ -211,10 +285,86 @@ const loadQuota = async () => {
   }
 }
 
-const handleFileClick = (file: WorkspaceFile) => {
+const handleFileClick = async (file: WorkspaceFile) => {
   if (file.is_directory) {
     currentPath.value = file.path
+    return
   }
+
+  const category = getFileCategory(file.name)
+
+  // Size limits
+  if (category === 'text' && file.size > MAX_TEXT_PREVIEW_BYTES) {
+    message.warning('File too large to preview (max 5MB for text)')
+    return
+  }
+  if (category === 'image' && file.size > MAX_IMAGE_PREVIEW_BYTES) {
+    message.warning('File too large to preview (max 20MB for images)')
+    return
+  }
+
+  previewFile.value = file
+  previewCategory.value = category
+  previewContent.value = ''
+  originalContent.value = ''
+  showPreview.value = true
+
+  if (category === 'binary') return
+
+  previewLoading.value = true
+  try {
+    const blob = spaceTab.value === 'private'
+      ? await fetchFileBlob(props.agentId, file.path)
+      : await fetchPublicFileBlob(file.path)
+
+    if (category === 'text') {
+      const text = await blob.text()
+      previewContent.value = text
+      originalContent.value = text
+    } else {
+      previewContent.value = URL.createObjectURL(blob)
+    }
+  } catch (err) {
+    console.error('Failed to fetch file:', err)
+    message.error('Failed to load file')
+    showPreview.value = false
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+const handleSave = async () => {
+  if (!previewFile.value || !isDirty.value) return
+  saving.value = true
+  try {
+    const blob = new Blob([previewContent.value], { type: 'text/plain' })
+    const file = new File([blob], previewFile.value.name)
+    // Upload to the directory containing the file
+    const dir = previewFile.value.path.split('/').slice(0, -1).join('/') + '/'
+    if (spaceTab.value === 'private') {
+      await uploadFile(props.agentId, file, dir || '/')
+    } else {
+      await uploadPublicFile(file, dir || '/')
+    }
+    originalContent.value = previewContent.value
+    message.success('Saved')
+    loadFiles()
+    if (spaceTab.value === 'private') loadQuota()
+  } catch (err) {
+    console.error('Save failed:', err)
+    message.error('Failed to save file')
+  } finally {
+    saving.value = false
+  }
+}
+
+const cleanupPreview = () => {
+  if (previewCategory.value === 'image' && previewContent.value) {
+    URL.revokeObjectURL(previewContent.value)
+  }
+  previewFile.value = null
+  previewContent.value = ''
+  originalContent.value = ''
 }
 
 const handleUpload = async ({ file, onFinish, onError }: UploadCustomRequestOptions) => {

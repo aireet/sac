@@ -1,497 +1,363 @@
-# Claude Code Sandbox Platform
+# SAC - Sandbox Agent Cluster
 
-企业内部 Claude Code 沙箱平台，为非技术人员提供基于 xterm.js 的 Web 终端访问。
+<p align="center">
+  <a href="README.md">🇺🇸 English</a> •
+  <a href="docs/i18n/README.zh.md">🇨🇳 中文</a>
+</p>
 
-## 架构设计
+SAC is an open-source platform that gives every user their own isolated [Claude Code](https://docs.anthropic.com/en/docs/claude-code) environment running in Kubernetes. It provides a web-based terminal with agent management, a skill marketplace, workspace file storage, and conversation history — all behind a clean Vue 3 dashboard.
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────────────┐
-│                            Browser (运营人员操作界面)                                      │
-│                                                                                           │
-│  ┌──────────────────────────┐  ┌──────────────────────┐  ┌──────────────────────────┐  │
-│  │  xterm.js Terminal       │  │  Skill Panel         │  │  Skill Register          │  │
-│  │  - claude对话界面             │  │  (技能快捷列表)        │  │  (技能注册器)            │  │
-│  │  - 自然语言交互             │  │                      │  │                          │  │
-│  │  - 实时输出流              │  │  ┌───────────────┐   │  │  ┌────────────────────┐ │  │
-│  │  - 支持富文本/表格渲染   │  │  │ 数据查询      │   │    │  │ 官方 Skill         │ │  │
-│  └───────────┬──────────────┘  │  │ - 本周销售额  │     │  │  │ (研发提供)         │ │  │
-│              │                  │  │ - 用户增长    │    │  │  └────────────────────┘ │  │
-│              │                  │  │ - 订单统计    │   │  │  ┌────────────────────┐ │  │
-│              │                  │  └───────────────┘   │  │  │ 自定义 Skill       │ │  │
-│              │                  │  ┌───────────────┐   │  │  │ (运营创建)         │ │  │
-│              │                  │  │ 数据处理      │   │  │  │                    │ │  │
-│              │                  │  │ - 数据清洗    │   │  │  │ 📝 创建            │ │  │
-│              │                  │  │ - 格式转换    │   │  │  │ ✏️  编辑            │ │  │
-│              │                  │  │ - 导出报表    │   │  │  │ 🗑️  删除            │ │  │
-│              │                  │  └───────────────┘   │  │  │ 📤 分享            │ │  │
-│              │                  │  ┌───────────────┐   │  │  └────────────────────┘ │  │
-│              │                  │  │ 历史查询      │   │  └───────────┬──────────────┘  │
-│              │                  │  │ - 常用收藏    │   │              │                  │
-│              │                  │  │ - 一键重执行  │   │              │                  │
-│              │                  │  └───────────────┘   │              │                  │
-│              │                  └──────────┬───────────┘              │                  │
-│              │                             │                          │                  │
-│              │                             │        REST API          │                  │
-│              │                             │   (CRUD Skill 定义)      │                  │
-│              └─────────────────────────────┴──────────────────────────┘                  │
-│                                      共享同一个 WebSocket                                 │
-└────────────────────────────────────────────┼─────────────────────────────────────────────┘
-                                             │ WebSocket (ws://host/ws/userId/sessionId)
-                                             ↓
-┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│                              Istio Ingress Gateway                                      │
-│                                                                                         │
-│  /ws/:userId/:sessionId  →  WebSocket Proxy                                            │
-│  /api/*                  →  API Gateway                                                │
-│  /hooks/conversation     →  Hook Collector                                             │
-└─────────────────────────────────────────────────────────────────────────────────────────┘
-              ↓                                              ↓
-┌──────────────────────────────┐              ┌──────────────────────────────┐
-│   Go Backend Services        │              │   PostgreSQL/MongoDB         │
-│                              │              │   (对话日志存储)             │
-│  ├─ WebSocket Proxy          │              └──────────────────────────────┘
-│  │   (双向透明转发)          │
-│  ├─ Container Manager        │
-│  ├─ Hook Collector           │
-│  ├─ Skill Registry           │
-│  └─ Auth Service             │
-└───────────────┬──────────────┘
-                │ 查询 Pod IP & 转发 WebSocket
-                ↓
-┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│                              Kubernetes Cluster                                         │
-│                                                                                         │
-│  ┌───────────────────────────────────────────────────────────────────────────────┐     │
-│  │  User Pod: claude-code-user-001-session-abc                                   │     │
-│  │                                                                               │     │
-│  │  ┌─────────────────────────────────────────────────────────────────────────┐ │     │
-│  │  │  ttyd (Port 7681)                                                       │ │     │
-│  │  │  - 轻量级 WebSocket 服务器                                               │ │     │
-│  │  │  - 暴露 /ws endpoint                                                    │ │     │
-│  │  │  - 启动命令: bash 或 claude                                              │ │     │
-│  │  └────────────────────┬────────────────────────────────────────────────────┘ │     │
-│  │                       │ PTY (伪终端)                                          │     │
-│  │                       ↓                                                       │     │
-│  │  ┌─────────────────────────────────────────────────────────────────────────┐ │     │
-│  │  │  Bash Shell / Claude Code CLI                                           │ │     │
-│  │  │  - 接收命令并执行                                                        │ │     │
-│  │  │  - Custom Skills (/home/claude/.claude/...)                             │ │     │
-│  │  │  - Hooks (发送对话到后端)                                                │ │     │
-│  │  │  - Working Directory: /workspace                                        │ │     │
-│  │  └─────────────────────────────────────────────────────────────────────────┘ │     │
-│  │                                                                               │     │
-│  │  Resources: CPU 2 cores, Memory 4Gi, Storage 10Gi                            │     │
-│  └───────────────────────────────────────────────────────────────────────────────┘     │
-└─────────────────────────────────────────────────────────────────────────────────────────┘
-```
+## Why SAC?
 
-### 数据流详解
+Claude Code is a powerful CLI tool, but deploying it for teams is non-trivial. SAC solves this by:
 
-**1. 用户输入流程**
-```
-用户键盘输入 "ls -la" + Enter
-    ↓
-xterm.js 捕获 onData 事件
-    ↓
-WebSocket.send("ls -la\r")
-    ↓
-Go WebSocket Proxy (透明转发)
-    ↓
-ttyd 接收字符流 (容器内 :7681/ws)
-    ↓
-写入 PTY (伪终端)
-    ↓
-Bash/Claude 进程执行命令
-```
+- **Isolating each agent** in its own K8s StatefulSet with stable DNS — no noisy neighbors
+- **Supporting multiple LLM providers** — Anthropic, OpenRouter, GLM (ZhiPu AI), Qwen, or any compatible API
+- **Making skills sharable** — create reusable slash commands and share them across your org
+- **Syncing conversation history** — hook-based capture stored in TimescaleDB with full export
+- **Managing workspace files** — OSS-backed per-agent private storage plus shared public files
 
-**2. Skill Panel 交互流程**
-```
-用户点击 [本周销售额] 按钮
-    ↓
-JavaScript: ws.send("/query-sales --period=this-week\r")
-    ↓
-Go WebSocket Proxy (透明转发)
-    ↓
-ttyd 接收命令字符串
-    ↓
-写入 PTY
-    ↓
-Claude Code 执行 /query-sales skill
-    ↓
-输出结果 → PTY → ttyd → Go Proxy → xterm.js 显示
-```
-
-**3. Skill Register 工作流程**
-```
-运营用户在前端创建自定义 Skill
-    ↓
-前端: POST /api/skills (包含 skill 定义)
-    ↓
-Go Backend Skill Registry (存储到 PostgreSQL)
-    ↓
-异步同步到用户容器
-    ↓
-写入 /home/claude/.claude/skills/custom/my-skill.md
-    ↓
-Claude Code 热加载新 Skill
-    ↓
-前端 Skill Panel 自动刷新显示新按钮
-```
-
-**4. 关键特性**
-- xterm.js 和 Skill Panel 共享同一个 WebSocket 连接
-- ttyd 对命令来源无感知，统一处理所有字符流
-- 前端任何 UI 操作都可以通过发送命令字符串实现交互
-- 支持：按钮点击、快捷键、拖拽文件、右键菜单等
-- 运营可自助创建、编辑、分享自定义 Skill
-- Skill 定义支持参数化，可复用
-
-## 核心功能
-
-### 1. 对话采集（通过 Hooks）
-
-Claude Code 配置文件 `~/.claude/config.json`:
-```json
-{
-  "hooks": {
-    "on-user-message": "curl -X POST http://hook-collector-service:8080/hooks/conversation -H 'Content-Type: application/json' -d '{\"user_id\":\"$USER_ID\",\"session_id\":\"$SESSION_ID\",\"type\":\"user\",\"content\":\"$MESSAGE\",\"timestamp\":\"$TIMESTAMP\"}' &",
-    "on-assistant-message": "curl -X POST http://hook-collector-service:8080/hooks/conversation -H 'Content-Type: application/json' -d '{\"user_id\":\"$USER_ID\",\"session_id\":\"$SESSION_ID\",\"type\":\"assistant\",\"content\":\"$MESSAGE\",\"timestamp\":\"$TIMESTAMP\"}' &"
-  }
-}
-```
-
-### 2. 预设 Skills
-
-前端展示常用操作按钮，通过 WebSocket 发送命令到容器：
-
-```typescript
-// 实现原理
-const executeSkill = (command: string) => {
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(command + '\r');  // \r 是回车键
-  }
-};
-
-// 运营场景 Skills 示例
-skills = [
-  // 数据查询类
-  {
-    name: '本周销售额',
-    command: '/query-sales --period=this-week',
-    icon: '💰',
-    category: '数据查询'
-  },
-  {
-    name: '用户增长趋势',
-    command: '/query-user-growth --days=30',
-    icon: '📈',
-    category: '数据查询'
-  },
-  {
-    name: '订单统计',
-    command: '/query-orders --status=all',
-    icon: '📦',
-    category: '数据查询'
-  },
-
-  // 数据分析类
-  {
-    name: '渠道转化分析',
-    command: '/analyze-conversion',
-    icon: '🎯',
-    category: '数据分析'
-  },
-  {
-    name: '用户留存分析',
-    command: '/analyze-retention',
-    icon: '🔄',
-    category: '数据分析'
-  },
-
-  // 报表生成类
-  {
-    name: '生成周报',
-    command: '/report-weekly',
-    icon: '📊',
-    category: '报表生成'
-  },
-  {
-    name: '导出Excel',
-    command: '/export-excel',
-    icon: '📑',
-    category: '报表生成'
-  },
-];
-```
-
-**支持的交互方式**：
-- ✅ 按钮点击
-- ✅ 快捷键绑定 (Ctrl+1, Ctrl+2...)
-- ✅ 右键菜单
-- ✅ 带参数的命令 (`/query-sales --period=this-week`)
-- ✅ 命令队列 (批量执行多个命令)
-
-### 3. Skill Register (技能注册器)
-
-运营人员可以通过图形化界面自助创建、管理自定义 Skill，无需编写代码。
-
-#### 3.1 Skill 定义结构
-
-```typescript
-interface SkillDefinition {
-  id: string;                    // 唯一标识
-  name: string;                  // 显示名称
-  description: string;           // 功能描述
-  icon: string;                  // 图标
-  category: string;              // 分类（数据查询/数据分析/报表生成）
-  prompt: string;                // 发送给 Claude 的提示词
-  parameters?: SkillParameter[]; // 可选参数
-  isOfficial: boolean;           // 是否官方 Skill
-  createdBy: string;             // 创建者
-  isPublic: boolean;             // 是否公开分享
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface SkillParameter {
-  name: string;                  // 参数名
-  label: string;                 // 显示标签
-  type: 'text' | 'select' | 'date' | 'number';
-  required: boolean;
-  defaultValue?: string;
-  options?: string[];            // select 类型的选项
-}
-```
-
-#### 3.2 创建自定义 Skill 示例
-
-**场景**: 运营想要查询特定时间段的退款订单
-
-```javascript
-// 在前端 Skill Register 界面填写表单
-{
-  name: '退款订单查询',
-  description: '查询指定时间段内的退款订单，包含订单金额、退款原因等信息',
-  icon: '💸',
-  category: '数据查询',
-  prompt: `请帮我查询 {{startDate}} 到 {{endDate}} 之间的所有退款订单。
-
-要求：
-1. 连接数据库查询 refund_orders 表
-2. 统计总退款金额和订单数量
-3. 按退款原因分类汇总
-4. 以表格形式展示结果
-5. 如果退款金额超过10万，请特别标注`,
-  parameters: [
-    {
-      name: 'startDate',
-      label: '开始日期',
-      type: 'date',
-      required: true
-    },
-    {
-      name: 'endDate',
-      label: '结束日期',
-      type: 'date',
-      required: true
-    }
-  ],
-  isPublic: true  // 分享给其他运营同学使用
-}
-```
-
-#### 3.3 Skill 执行流程
+## Architecture
 
 ```
-1. 用户在 Skill Panel 点击 [退款订单查询]
-   ↓
-2. 弹出参数输入表单（选择日期范围）
-   ↓
-3. 前端将参数填充到 prompt 模板
-   prompt = prompt.replace('{{startDate}}', '2024-01-01')
-                  .replace('{{endDate}}', '2024-01-31')
-   ↓
-4. 通过 WebSocket 发送完整 prompt 给 Claude
-   ws.send(`${filledPrompt}\r`)
-   ↓
-5. Claude 执行数据库查询并返回结果
-   ↓
-6. 结果在 Terminal 中实时显示
+Browser ──HTTP──▶ Envoy Gateway ──▶ API Gateway (Go, :8080)
+                                  ──▶ WS Proxy (Go, :8081)
+                                  ──▶ Frontend (Vue 3, :80)
+                                       │
+WS Proxy ──WebSocket──▶ ttyd (:7681) in K8s Pod
+                                       │
+API Gateway ──K8s API──▶ StatefulSet per user/agent
+            ──OSS SDK──▶ Alibaba Cloud OSS (workspace files)
+            ──SQL─────▶ PostgreSQL + TimescaleDB
 ```
 
-#### 3.4 Skill 管理 API
-
-```typescript
-// 前端调用后端 API 管理 Skill
-GET    /api/skills              // 获取所有 Skill（官方 + 自定义）
-GET    /api/skills/:id          // 获取单个 Skill
-POST   /api/skills              // 创建新 Skill
-PUT    /api/skills/:id          // 更新 Skill
-DELETE /api/skills/:id          // 删除 Skill
-POST   /api/skills/:id/fork     // 复制并修改他人的 Skill
-GET    /api/skills/public       // 获取所有公开分享的 Skill
-```
-
-#### 3.5 Skill 同步机制
+Each user-agent pair runs as a dedicated StatefulSet:
 
 ```
-后端 Skill Registry 变更
-    ↓
-触发 K8s ConfigMap 更新
-    ↓
-通过 Kubernetes API 同步到用户 Pod
-    ↓
-写入 /home/claude/.claude/skills/custom/
-    ↓
-Claude Code 自动加载新 Skill (inotify 监听文件变化)
-    ↓
-WebSocket 推送事件到前端
-    ↓
-前端 Skill Panel 自动刷新
+claude-code-{userID}-{agentID}-0
+  └── ttyd → claude (CLI)
+      ├── /workspace/private    ← synced from OSS (per-agent)
+      ├── /workspace/public     ← synced from OSS (shared)
+      └── /root/.claude/commands ← skill .md files
 ```
 
-#### 3.6 权限控制
+## Features
 
-- **官方 Skill**: 仅研发/产品可创建，所有用户只读
-- **个人 Skill**: 用户可 CRUD 自己创建的 Skill
-- **公开 Skill**: 创建者可选择公开分享，其他用户可查看和 Fork
-- **团队 Skill**: 按部门/团队划分，团队成员可见
+### Agent Management
+- Create up to N agents per user (configurable), each with independent LLM configuration
+- Built-in presets for OpenRouter, GLM, Qwen, and custom providers
+- Per-agent resource limits (CPU/memory), configurable by admin
+- One-click pod restart, real-time status monitoring
 
-### 4. 容器生命周期管理
+### Web Terminal
+- Full PTY access via [xterm.js](https://xtermjs.org/) with WebGL rendering
+- Two interaction modes: **terminal** (raw keystrokes) and **chat** (message-based input)
+- Binary WebSocket proxy with ttyd protocol translation
+- Auto-reconnect, resize support, Unicode/CJK wide-character rendering
 
-- 用户首次登录：创建专属 Pod
-- 闲置 2 小时：自动暂停（保留数据）
-- 闲置 7 天：销毁容器
+### Skill Marketplace
+- Create, fork, and share reusable slash commands
+- Parameterized skills with dynamic form inputs (text, number, date, select)
+- Skills sync to pods as `.md` files in `/root/.claude/commands/`
+- One-click execution from the sidebar
 
-## 技术栈
+### Workspace Files
+- Per-agent private storage backed by Alibaba Cloud OSS
+- Shared public workspace (admin-managed)
+- Upload, download, create directories, delete
+- In-browser preview: text (editable), images, binary info
+- Quota enforcement (1GB / 1000 files per agent by default)
+- Auto-sync to pod on session creation
 
-- **前端**: React + xterm.js + xterm-addon-fit + WebSocket API
-- **后端**: Go + Gin + gorilla/websocket + kubernetes/client-go
-- **容器终端**: ttyd (轻量级 WebSocket 终端服务器)
-- **容器基础**: Ubuntu 22.04 + Claude Code CLI + Bash
-- **基础设施**: Kubernetes + Istio + PostgreSQL/MongoDB
+### Conversation History
+- Hook-based capture via `conversation-sync.mjs` running inside each pod
+- Stored in TimescaleDB hypertable for efficient time-series queries
+- Cursor-based pagination, session filtering, CSV export
+- Admin can search and export across all users
 
-### 核心技术选型说明
+### Admin Panel
+- System-wide settings (agent limits, resource defaults)
+- User management with role-based access (user/admin)
+- Per-user setting overrides
+- Agent lifecycle management (restart, delete, resource adjustment)
+- Cross-user conversation search and export
 
-**ttyd**:
-- gotty 的现代替代品，C 语言编写，性能优越
-- 原生支持 xterm.js，完美兼容 WebSocket 协议
-- 提供 PTY (伪终端) 管理，无需自己实现
-- 支持终端尺寸调整、认证、TLS 等企业级特性
+## Tech Stack
 
-## 目录结构
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Vue 3, TypeScript, Naive UI, xterm.js, Pinia, Vite |
+| Backend | Go, Gin, Bun ORM, gorilla/websocket |
+| Database | PostgreSQL 17 + TimescaleDB |
+| Storage | Alibaba Cloud OSS (or S3-compatible) |
+| Container | Kubernetes, StatefulSet per agent, ttyd |
+| Ingress | Envoy Gateway v1.6 |
+| Deploy | Helm 3, Docker multi-stage builds |
+
+## Quick Start
+
+### Prerequisites
+
+- Kubernetes cluster with Gateway API CRDs
+- PostgreSQL 17+ with TimescaleDB extension
+- Alibaba Cloud OSS bucket (or S3-compatible storage)
+- Docker registry access
+- Helm 3
+
+### 1. Build Images
+
+```bash
+make docker-build    # builds all 4 images (auto-bumps version)
+make docker-push     # pushes to registry
+```
+
+This builds:
+- `api-gateway` — REST API server
+- `ws-proxy` — WebSocket terminal proxy
+- `frontend` — Vue 3 SPA served by nginx
+- `cc` — Claude Code container with ttyd
+
+### 2. Configure
+
+Edit `helm/sac/values.yaml`:
+
+```yaml
+global:
+  registry: your-registry.example.com/sac
+
+database:
+  host: your-postgres-host
+  port: 5432
+  user: sandbox
+  password: your-password
+  name: sandbox
+
+auth:
+  jwtSecret: your-jwt-secret
+
+envoyGateway:
+  host: sac.your-domain.com
+```
+
+OSS settings are configured at runtime via the admin panel (System Settings).
+
+### 3. Deploy
+
+```bash
+# First install
+make helm-deploy
+
+# Or upgrade existing release
+make helm-upgrade
+```
+
+### 4. Initialize Database
+
+```bash
+# Run migrations
+make migrate-up
+
+# Seed admin user (admin / admin123)
+make migrate-seed
+```
+
+### 5. Access
+
+Open `http://sac.your-domain.com` in your browser. Log in with `admin` / `admin123`, then:
+
+1. Configure OSS in Admin → System Settings
+2. Create your first agent (configure LLM provider)
+3. Start a session — a dedicated pod will be created
+4. Use the terminal or chat mode to interact with Claude Code
+
+## Local Development
+
+SAC uses [Telepresence](https://www.telepresence.io/) to connect your local machine to the K8s cluster network, so local services can reach pod IPs directly.
+
+```bash
+# One command to start everything
+make dev
+
+# Or step by step:
+make telepresence          # connect to K8s network
+make build                 # compile Go binaries
+make restart SVC=api       # restart API Gateway
+make restart SVC=ws        # restart WS Proxy
+make restart SVC=fe        # restart frontend dev server
+
+# Utilities
+make status                # show service status
+make logs SVC=api          # tail API Gateway logs
+make stop                  # stop all services
+```
+
+Services:
+| Service | Port | Log |
+|---------|------|-----|
+| API Gateway | 8080 | `/tmp/sac-api-gateway.log` |
+| WS Proxy | 8081 | `/tmp/sac-ws-proxy.log` |
+| Frontend (Vite) | 5173 | `/tmp/sac-frontend.log` |
+
+## Project Structure
 
 ```
-claude-code-sandbox/
-├── backend/                 # Go 后端
+sac/
+├── backend/
 │   ├── cmd/
-│   │   ├── api/            # API Gateway
-│   │   ├── ws-proxy/       # WebSocket 代理
-│   │   └── hook-collector/ # Hook 采集服务
+│   │   ├── api-gateway/          # HTTP API server
+│   │   ├── ws-proxy/             # WebSocket terminal proxy
+│   │   └── migrate/              # Database migration CLI
 │   ├── internal/
-│   │   ├── container/      # K8s 容器管理
-│   │   ├── session/        # 会话管理
-│   │   ├── auth/           # 认证授权
-│   │   ├── skill/          # Skill 注册与管理
-│   │   └── storage/        # 数据存储
+│   │   ├── admin/                # Admin panel handlers + settings
+│   │   ├── agent/                # Agent CRUD + K8s lifecycle
+│   │   ├── auth/                 # JWT auth + bcrypt passwords
+│   │   ├── container/            # K8s StatefulSet management
+│   │   ├── database/             # PostgreSQL connection (bun ORM)
+│   │   ├── history/              # Conversation history (TimescaleDB)
+│   │   ├── models/               # Data models
+│   │   ├── session/              # Session lifecycle
+│   │   ├── skill/                # Skill CRUD + pod sync
+│   │   ├── storage/              # OSS client + provider
+│   │   └── websocket/            # ttyd WebSocket proxy
+│   ├── migrations/               # 12 database migrations
 │   └── pkg/
-├── frontend/               # React 前端
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── Terminal.tsx
-│   │   │   ├── SkillPanel.tsx
-│   │   │   ├── SkillRegister.tsx    # Skill 注册器
-│   │   │   ├── SkillEditor.tsx      # Skill 编辑器
-│   │   │   └── SessionManager.tsx
-│   │   └── services/
-│   │       ├── websocket.ts
-│   │       └── skillAPI.ts          # Skill CRUD API
-├── docker/                 # 容器镜像
-│   ├── claude-code/
-│   │   ├── Dockerfile
-│   │   ├── entrypoint.sh
-│   │   └── skills/
-└── k8s/                    # K8s 配置
-    ├── deployments/
-    ├── services/
-    └── istio/
+│       ├── config/               # Environment-based configuration
+│       └── response/             # Standardized HTTP responses
+├── frontend/
+│   └── src/
+│       ├── components/
+│       │   ├── Terminal/         # xterm.js WebGL terminal
+│       │   ├── ChatInput/        # Chat-mode input bar
+│       │   ├── Agent/            # Agent selector + creator
+│       │   ├── SkillPanel/       # Agent dashboard sidebar
+│       │   ├── SkillMarketplace/ # Skill browse/create/fork
+│       │   └── Workspace/        # File browser with preview
+│       ├── services/             # API client layer
+│       ├── stores/               # Pinia auth store
+│       ├── views/                # Login, Register, Main, Admin
+│       └── utils/                # Error handling, file types
+├── docker/
+│   ├── api-gateway/              # Go multi-stage Dockerfile
+│   ├── ws-proxy/                 # Go multi-stage Dockerfile
+│   ├── frontend/                 # Vue build + nginx
+│   └── claude-code/              # Ubuntu + ttyd + Claude Code CLI
+├── helm/sac/                     # Helm chart
+│   ├── templates/                # K8s manifests
+│   ├── files/                    # Hook scripts + settings
+│   └── charts/                   # Envoy Gateway subchart
+├── Makefile                      # Dev, build, deploy commands
+└── .version                      # Current version
 ```
 
-## 快速开始
+## API Overview
 
-### 本地测试 ttyd
+<details>
+<summary>Public endpoints</summary>
 
-```bash
-# 安装 ttyd
-brew install ttyd  # macOS
-apt install ttyd   # Ubuntu
-
-# 启动测试
-ttyd --port 7681 --writable bash
-
-# 浏览器访问
-open http://localhost:7681
 ```
-
-### 容器镜像构建
-
-```bash
-cd docker/claude-code
-docker build -t claude-code-sandbox:latest .
-docker run -p 7681:7681 \
-  -e USER_ID=test-user \
-  -e SESSION_ID=test-session \
-  claude-code-sandbox:latest
+POST /api/auth/register
+POST /api/auth/login
+GET  /health
 ```
+</details>
 
-### 前端开发
+<details>
+<summary>Protected endpoints (JWT required)</summary>
 
-```bash
-cd frontend
-npm install
-npm run dev
 ```
+# Auth
+GET  /api/auth/me
 
-### 后端开发
+# Agents
+GET    /api/agents
+POST   /api/agents
+GET    /api/agents/:id
+PUT    /api/agents/:id
+DELETE /api/agents/:id
+POST   /api/agents/:id/restart
+POST   /api/agents/:id/skills
+DELETE /api/agents/:id/skills/:skillId
+POST   /api/agents/:id/sync-skills
+GET    /api/agent-statuses
 
-```bash
-cd backend/cmd/ws-proxy
-go mod download
-go run main.go
+# Sessions
+POST   /api/sessions
+GET    /api/sessions
+GET    /api/sessions/:sessionId
+DELETE /api/sessions/:sessionId
+
+# Skills
+GET    /api/skills
+POST   /api/skills
+GET    /api/skills/:id
+PUT    /api/skills/:id
+DELETE /api/skills/:id
+POST   /api/skills/:id/fork
+GET    /api/skills/public
+
+# Conversations
+GET    /api/conversations
+GET    /api/conversations/sessions
+GET    /api/conversations/export
+
+# Workspace
+GET    /api/workspace/status
+POST   /api/workspace/upload
+GET    /api/workspace/files
+GET    /api/workspace/files/download
+DELETE /api/workspace/files
+POST   /api/workspace/directories
+GET    /api/workspace/quota
+GET    /api/workspace/public/files
+GET    /api/workspace/public/files/download
+POST   /api/workspace/public/upload
+POST   /api/workspace/public/directories
+DELETE /api/workspace/public/files
+
+# WebSocket
+WS     /ws/:sessionId?token=<jwt>&agent_id=<id>
 ```
+</details>
 
-## 实现细节
+<details>
+<summary>Admin endpoints (admin role required)</summary>
 
-详细实现文档请查看：
-- [容器配置](./docker/claude-code/README.md)
-- [前端实现](./frontend/README.md)
-- [后端服务](./backend/README.md)
-- [K8s 部署](./k8s/README.md)
+```
+GET    /api/admin/settings
+PUT    /api/admin/settings/:key
+GET    /api/admin/users
+PUT    /api/admin/users/:id/role
+GET    /api/admin/users/:id/settings
+PUT    /api/admin/users/:id/settings/:key
+DELETE /api/admin/users/:id/settings/:key
+GET    /api/admin/users/:id/agents
+DELETE /api/admin/users/:id/agents/:agentId
+POST   /api/admin/users/:id/agents/:agentId/restart
+PUT    /api/admin/users/:id/agents/:agentId/resources
+GET    /api/admin/conversations
+GET    /api/admin/conversations/export
+```
+</details>
 
-## 待办事项
+## Configuration
 
-### 后端开发
-- [ ] 实现 Go WebSocket Proxy 认证逻辑
-- [ ] 配置 K8s Service 和 Istio Gateway
-- [ ] 实现容器生命周期管理 (创建/暂停/销毁)
-- [ ] 添加对话采集 Hook Collector
-- [ ] **实现 Skill Registry API (CRUD + 同步机制)**
-- [ ] **Skill 权限控制 (官方/个人/公开/团队)**
-- [ ] 监控和日志采集
-- [ ] 用户数据持久化 (PVC)
+All backend configuration is via environment variables (with `.env` file support):
 
-### 前端开发
-- [ ] 前端 Skill Panel 界面实现
-- [ ] **Skill Register 界面实现**
-  - [ ] Skill 创建/编辑表单
-  - [ ] 参数配置界面
-  - [ ] Skill 预览和测试功能
-  - [ ] 公开 Skill 市场
-  - [ ] Fork 和分享功能
-- [ ] xterm.js Terminal 集成
-- [ ] WebSocket 连接管理
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `API_GATEWAY_PORT` | `8080` | API server port |
+| `WS_PROXY_PORT` | `8081` | WebSocket proxy port |
+| `DB_HOST` | `localhost` | PostgreSQL host |
+| `DB_PORT` | `5432` | PostgreSQL port |
+| `DB_USER` | `sandbox` | Database user |
+| `DB_PASSWORD` | — | Database password |
+| `DB_NAME` | `sandbox` | Database name |
+| `JWT_SECRET` | — | Secret for JWT signing (HS256) |
+| `KUBECONFIG_PATH` | — | Path to kubeconfig (auto-detects in-cluster) |
+| `K8S_NAMESPACE` | `sac` | Kubernetes namespace |
+| `DOCKER_REGISTRY` | — | Container image registry |
+| `DOCKER_IMAGE` | — | Claude Code container image |
 
-### 容器镜像
-- [ ] 构建 Claude Code 基础镜像
-- [ ] 配置 Skill 热加载机制
-- [ ] 预装常用数据库客户端工具
+## License
+
+MIT

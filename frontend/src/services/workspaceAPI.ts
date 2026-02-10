@@ -68,6 +68,15 @@ export const downloadFile = (agentId: number, path: string): void => {
     })
 }
 
+export const fetchFileBlob = async (agentId: number, path: string): Promise<Blob> => {
+  const token = localStorage.getItem('token')
+  const baseUrl = api.defaults.baseURL
+  const url = `${baseUrl}/workspace/files/download?agent_id=${agentId}&path=${encodeURIComponent(path)}`
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  if (!r.ok) throw new Error(`Download failed: ${r.status}`)
+  return r.blob()
+}
+
 export const deleteFile = async (agentId: number, path: string): Promise<void> => {
   await api.delete('/workspace/files', { params: { agent_id: agentId, path } })
 }
@@ -104,6 +113,15 @@ export const downloadPublicFile = (path: string): void => {
       a.remove()
       URL.revokeObjectURL(objUrl)
     })
+}
+
+export const fetchPublicFileBlob = async (path: string): Promise<Blob> => {
+  const token = localStorage.getItem('token')
+  const baseUrl = api.defaults.baseURL
+  const url = `${baseUrl}/workspace/public/files/download?path=${encodeURIComponent(path)}`
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  if (!r.ok) throw new Error(`Download failed: ${r.status}`)
+  return r.blob()
 }
 
 export const uploadPublicFile = async (
