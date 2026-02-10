@@ -1,4 +1,8 @@
-# SAC - Sandbox Agent Cluster
+<p align="center">
+  <img src="../sac-logo.svg" alt="SAC" height="48" />
+</p>
+
+<h1 align="center">SAC - Sandbox Agent Cluster</h1>
 
 <p align="center">
   <a href="../../README.md">🇺🇸 English</a> •
