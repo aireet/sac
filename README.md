@@ -91,18 +91,23 @@ claude-code-{userID}-{agentID}-0
 | Database | PostgreSQL 17 + TimescaleDB |
 | Storage | Alibaba Cloud OSS (or S3-compatible) |
 | Container | Kubernetes, StatefulSet per agent, ttyd |
-| Ingress | Envoy Gateway v1.6 |
+| Ingress | Any ingress controller (optional Envoy Gateway subchart included) |
 | Deploy | Helm 3, Docker multi-stage builds |
 
 ## Quick Start
 
 ### Prerequisites
 
-- Kubernetes cluster with Gateway API CRDs
+- Kubernetes cluster
 - PostgreSQL 17+ with TimescaleDB extension
 - Alibaba Cloud OSS bucket (or S3-compatible storage)
 - Docker registry access
 - Helm 3
+- Any ingress controller that can route:
+  - `/api/*` → `api-gateway:8080`
+  - `/ws/*` → `ws-proxy:8081` (WebSocket)
+  - `/*` → `frontend:80`
+  - The Helm chart includes an optional [Envoy Gateway](https://gateway.envoyproxy.io/) subchart (`envoyGateway.enabled: true`), or bring your own Nginx / Traefik / Istio / etc.
 
 ### 1. Build Images
 

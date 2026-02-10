@@ -91,18 +91,23 @@ claude-code-{userID}-{agentID}-0
 | 数据库 | PostgreSQL 17 + TimescaleDB |
 | 存储 | 阿里云 OSS（或 S3 兼容存储） |
 | 容器 | Kubernetes, 每 Agent 一个 StatefulSet, ttyd |
-| 入口网关 | Envoy Gateway v1.6 |
+| 入口网关 | 任意 Ingress 控制器（可选内置 Envoy Gateway 子 Chart） |
 | 部署 | Helm 3, Docker 多阶段构建 |
 
 ## 快速开始
 
 ### 前置要求
 
-- 支持 Gateway API CRD 的 Kubernetes 集群
+- Kubernetes 集群
 - PostgreSQL 17+ 并启用 TimescaleDB 扩展
 - 阿里云 OSS 存储桶（或 S3 兼容存储）
 - Docker 镜像仓库访问权限
 - Helm 3
+- 任意 Ingress 控制器，配置以下路由即可：
+  - `/api/*` → `api-gateway:8080`
+  - `/ws/*` → `ws-proxy:8081`（WebSocket）
+  - `/*` → `frontend:80`
+  - Helm Chart 包含可选的 [Envoy Gateway](https://gateway.envoyproxy.io/) 子 Chart（`envoyGateway.enabled: true`），也可自行使用 Nginx / Traefik / Istio 等
 
 ### 1. 构建镜像
 
