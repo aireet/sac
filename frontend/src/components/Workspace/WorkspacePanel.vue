@@ -319,7 +319,7 @@ const handleExpandedKeysUpdate = (keys: string[]) => {
   const newDirs = keys.filter(k => !expandedKeys.value.includes(k))
   expandedKeys.value = keys
   if (newDirs.length > 0) {
-    activeDir.value = newDirs[newDirs.length - 1]
+    activeDir.value = newDirs[newDirs.length - 1]!
   }
 }
 
