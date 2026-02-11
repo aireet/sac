@@ -134,15 +134,20 @@
               v-model:show="showUserAgents"
               preset="card"
               :title="`Agents: ${selectedAgentUser?.username || ''}`"
-              style="width: 900px; max-width: 95vw"
+              style="width: 1000px; max-width: 95vw"
             >
+              <template #header-extra>
+                <n-button size="small" type="warning" @click="showBatchImageUpdate = true; batchImageForm = ''">
+                  Batch Update Image
+                </n-button>
+              </template>
               <n-spin :show="loadingUserAgents">
                 <n-data-table
                   :columns="agentColumns"
                   :data="userAgents"
                   :bordered="false"
                   :single-line="false"
-                  :scroll-x="860"
+                  :scroll-x="1060"
                   v-if="userAgents.length > 0"
                 />
                 <n-empty v-else description="No agents found for this user." />
@@ -178,6 +183,47 @@
                 </n-text>
                 <n-button type="primary" block :loading="savingResources" @click="saveAgentResources">
                   Save
+                </n-button>
+              </n-space>
+            </n-modal>
+            <!-- Agent Image Editor Modal -->
+            <n-modal
+              v-model:show="showImageEditor"
+              preset="card"
+              :title="`Image: ${selectedImageAgent?.name || ''}`"
+              style="width: 520px; max-width: 90vw"
+            >
+              <n-space vertical :size="16">
+                <div>
+                  <n-text depth="3" style="display: block; margin-bottom: 4px">Docker Image (full path with tag)</n-text>
+                  <n-input v-model:value="imageForm" placeholder="e.g. registry/repo:tag" />
+                </div>
+                <n-text depth="3" style="font-size: 12px">
+                  Updating the image will trigger a rolling update of the pod. Active sessions will be disconnected.
+                </n-text>
+                <n-button type="primary" block :loading="savingImage" @click="saveAgentImage">
+                  Update Image
+                </n-button>
+              </n-space>
+            </n-modal>
+
+            <!-- Batch Update Image Modal -->
+            <n-modal
+              v-model:show="showBatchImageUpdate"
+              preset="card"
+              title="Batch Update All Agent Images"
+              style="width: 520px; max-width: 90vw"
+            >
+              <n-space vertical :size="16">
+                <div>
+                  <n-text depth="3" style="display: block; margin-bottom: 4px">New Docker Image for ALL agents</n-text>
+                  <n-input v-model:value="batchImageForm" placeholder="e.g. registry/repo:tag" />
+                </div>
+                <n-text depth="3" style="font-size: 12px">
+                  This will update the image for ALL deployed StatefulSets. Pods will be rolling-updated and all active sessions disconnected.
+                </n-text>
+                <n-button type="warning" block :loading="savingBatchImage" @click="doBatchUpdateImage">
+                  Update All
                 </n-button>
               </n-space>
             </n-modal>
@@ -275,6 +321,7 @@ import {
   NTag,
   NPopconfirm,
   NDatePicker,
+  NTooltip,
   darkTheme,
   useMessage,
   type DataTableColumns,
@@ -291,6 +338,8 @@ import {
   deleteUserAgent,
   restartUserAgent,
   updateAgentResources,
+  updateAgentImage,
+  batchUpdateImage,
   getConversations,
   exportConversationsCSV,
   type SystemSetting,
@@ -545,6 +594,19 @@ const agentColumns = computed<DataTableColumns<AdminAgent>>(() => [
     },
   },
   {
+    title: 'Image',
+    key: 'image',
+    width: 100,
+    render(row) {
+      if (!row.image) return '-'
+      const tag = row.image.split(':').pop() || row.image
+      return h(NTooltip, {}, {
+        trigger: () => h(NText, { code: true, style: 'font-size: 12px' }, { default: () => tag }),
+        default: () => row.image,
+      })
+    },
+  },
+  {
     title: 'Resources',
     key: 'resources',
     width: 160,
@@ -568,7 +630,7 @@ const agentColumns = computed<DataTableColumns<AdminAgent>>(() => [
   {
     title: 'Actions',
     key: 'actions',
-    width: 210,
+    width: 280,
     render(row) {
       return h(NSpace, { size: 4 }, {
         default: () => [
@@ -577,6 +639,12 @@ const agentColumns = computed<DataTableColumns<AdminAgent>>(() => [
             type: 'info',
             onClick: () => openResourceEditor(row),
           }, { default: () => 'Resources' }),
+          h(NButton, {
+            size: 'small',
+            type: 'warning',
+            disabled: row.pod_status === 'NotDeployed',
+            onClick: () => openImageEditor(row),
+          }, { default: () => 'Image' }),
           h(NButton, {
             size: 'small',
             disabled: row.pod_status === 'NotDeployed',
@@ -680,6 +748,53 @@ async function saveAgentResources() {
     message.error(extractApiError(error, 'Failed to save resources'))
   } finally {
     savingResources.value = false
+  }
+}
+
+// --- Agent Image Editor ---
+const showImageEditor = ref(false)
+const selectedImageAgent = ref<AdminAgent | null>(null)
+const imageForm = ref('')
+const savingImage = ref(false)
+
+function openImageEditor(agent: AdminAgent) {
+  selectedImageAgent.value = agent
+  imageForm.value = agent.image || ''
+  showImageEditor.value = true
+}
+
+async function saveAgentImage() {
+  if (!selectedAgentUser.value || !selectedImageAgent.value || !imageForm.value.trim()) return
+  savingImage.value = true
+  try {
+    await updateAgentImage(selectedAgentUser.value.id, selectedImageAgent.value.id, imageForm.value.trim())
+    message.success('Agent image updated. Pod is restarting.')
+    showImageEditor.value = false
+    await loadUserAgents()
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to update image'))
+  } finally {
+    savingImage.value = false
+  }
+}
+
+// --- Batch Update Image ---
+const showBatchImageUpdate = ref(false)
+const batchImageForm = ref('')
+const savingBatchImage = ref(false)
+
+async function doBatchUpdateImage() {
+  if (!batchImageForm.value.trim()) return
+  savingBatchImage.value = true
+  try {
+    const result = await batchUpdateImage(batchImageForm.value.trim())
+    message.success(`Batch update: ${result.updated} updated, ${result.failed} failed out of ${result.total}`)
+    showBatchImageUpdate.value = false
+    await loadUserAgents()
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to batch update images'))
+  } finally {
+    savingBatchImage.value = false
   }
 }
 

@@ -188,8 +188,11 @@ func (h *Handler) CreateSession(c *gin.Context) {
 			rc.MemoryLimit = *agent.MemoryLimit
 		}
 
+		// Get docker image from settings (empty string falls back to env default)
+		dockerImage := h.settingsService.GetDockerImage(ctx)
+
 		// Create StatefulSet with headless service
-		if err := h.containerManager.CreateStatefulSet(ctx, userIDStr, req.AgentID, agent.Config, rc); err != nil {
+		if err := h.containerManager.CreateStatefulSet(ctx, userIDStr, req.AgentID, agent.Config, rc, dockerImage); err != nil {
 			log.Printf("Failed to create StatefulSet: %v", err)
 			response.InternalError(c, "Failed to create StatefulSet", err)
 			return

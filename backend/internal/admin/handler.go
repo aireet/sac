@@ -13,6 +13,7 @@ import (
 	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/uptrace/bun"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type Handler struct {
@@ -242,6 +243,7 @@ func (h *Handler) GetUserAgents(c *gin.Context) {
 		CPULimit      string `json:"cpu_limit"`
 		MemoryRequest string `json:"memory_request"`
 		MemoryLimit   string `json:"memory_limit"`
+		Image         string `json:"image"`
 	}
 
 	result := make([]agentWithStatus, 0, len(agents))
@@ -255,6 +257,7 @@ func (h *Handler) GetUserAgents(c *gin.Context) {
 			CPULimit:      info.CPULimit,
 			MemoryRequest: info.MemoryRequest,
 			MemoryLimit:   info.MemoryLimit,
+			Image:         info.Image,
 		})
 	}
 
@@ -442,6 +445,129 @@ func (h *Handler) UpdateAgentResources(c *gin.Context) {
 	response.Success(c, "Agent resources updated. Restart agent to apply.")
 }
 
+func (h *Handler) UpdateAgentImage(c *gin.Context) {
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid user ID", err)
+		return
+	}
+	agentID, err := strconv.ParseInt(c.Param("agentId"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid agent ID", err)
+		return
+	}
+
+	var req struct {
+		Image string `json:"image" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request body", err)
+		return
+	}
+
+	ctx := context.Background()
+	userIDStr := fmt.Sprintf("%d", userID)
+
+	// Verify agent exists
+	var agent models.Agent
+	err = h.db.NewSelect().Model(&agent).
+		Where("id = ? AND created_by = ?", agentID, userID).
+		Scan(ctx)
+	if err != nil {
+		response.NotFound(c, "Agent not found")
+		return
+	}
+
+	// Update StatefulSet image
+	if err := h.containerManager.UpdateStatefulSetImage(ctx, userIDStr, agentID, req.Image); err != nil {
+		log.Printf("Failed to update image for agent %d: %v", agentID, err)
+		response.InternalError(c, "Failed to update agent image", err)
+		return
+	}
+
+	// Mark active sessions as deleted (pod will restart)
+	_, _ = h.db.NewUpdate().
+		Model((*models.Session)(nil)).
+		Set("status = ?", models.SessionStatusDeleted).
+		Set("updated_at = ?", time.Now()).
+		Where("agent_id = ?", agentID).
+		Where("user_id = ?", userID).
+		Where("status IN (?)", bun.In([]string{
+			string(models.SessionStatusRunning),
+			string(models.SessionStatusCreating),
+			string(models.SessionStatusIdle),
+		})).
+		Exec(ctx)
+
+	log.Printf("Admin updated agent %d image to %s for user %d", agentID, req.Image, userID)
+	response.Success(c, "Agent image updated")
+}
+
+func (h *Handler) BatchUpdateImage(c *gin.Context) {
+	var req struct {
+		Image string `json:"image" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request body", err)
+		return
+	}
+
+	ctx := context.Background()
+
+	stsList, err := h.containerManager.ListStatefulSets(ctx)
+	if err != nil {
+		response.InternalError(c, "Failed to list StatefulSets", err)
+		return
+	}
+
+	type updateError struct {
+		Name  string `json:"name"`
+		Error string `json:"error"`
+	}
+
+	var updated int
+	var failed int
+	var errors []updateError
+
+	for i := range stsList.Items {
+		sts := &stsList.Items[i]
+		for j := range sts.Spec.Template.Spec.Containers {
+			if sts.Spec.Template.Spec.Containers[j].Name == "claude-code" {
+				sts.Spec.Template.Spec.Containers[j].Image = req.Image
+				break
+			}
+		}
+		_, err := h.containerManager.GetClientset().AppsV1().StatefulSets(sts.Namespace).Update(ctx, sts, metav1.UpdateOptions{})
+		if err != nil {
+			failed++
+			errors = append(errors, updateError{Name: sts.Name, Error: err.Error()})
+			log.Printf("Failed to update image for %s: %v", sts.Name, err)
+		} else {
+			updated++
+			log.Printf("Updated image for %s to %s", sts.Name, req.Image)
+		}
+	}
+
+	// Mark all active sessions as deleted
+	_, _ = h.db.NewUpdate().
+		Model((*models.Session)(nil)).
+		Set("status = ?", models.SessionStatusDeleted).
+		Set("updated_at = ?", time.Now()).
+		Where("status IN (?)", bun.In([]string{
+			string(models.SessionStatusRunning),
+			string(models.SessionStatusCreating),
+			string(models.SessionStatusIdle),
+		})).
+		Exec(ctx)
+
+	response.OK(c, gin.H{
+		"total":   len(stsList.Items),
+		"updated": updated,
+		"failed":  failed,
+		"errors":  errors,
+	})
+}
+
 func (h *Handler) GetConversations(c *gin.Context) {
 	ctx := context.Background()
 
@@ -593,6 +719,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		admin.DELETE("/users/:id/agents/:agentId", h.DeleteUserAgent)
 		admin.POST("/users/:id/agents/:agentId/restart", h.RestartUserAgent)
 		admin.PUT("/users/:id/agents/:agentId/resources", h.UpdateAgentResources)
+		admin.PUT("/users/:id/agents/:agentId/image", h.UpdateAgentImage)
+		admin.POST("/agents/batch-update-image", h.BatchUpdateImage)
 		admin.GET("/conversations", h.GetConversations)
 		admin.GET("/conversations/export", h.ExportConversations)
 	}

@@ -73,6 +73,16 @@ func NewManager(kubeconfigPath, namespace, dockerRegistry, dockerImage string) (
 	}, nil
 }
 
+// GetClientset returns the Kubernetes clientset for direct API access.
+func (m *Manager) GetClientset() *kubernetes.Clientset {
+	return m.clientset
+}
+
+// GetNamespace returns the configured namespace.
+func (m *Manager) GetNamespace() string {
+	return m.namespace
+}
+
 // CreatePod creates a new pod for the user
 // agentConfig is optional - if provided, it will be used to configure ANTHROPIC environment variables
 func (m *Manager) CreatePod(ctx context.Context, userID, sessionID string, agentConfig map[string]interface{}) (*corev1.Pod, error) {
@@ -329,9 +339,12 @@ const hooksConfigMapName = "sac-claude-hooks"
 // CreateStatefulSet creates a per-agent StatefulSet with a headless service.
 // The headless service is required for StatefulSet DNS to work.
 // Pod DNS will be: claude-code-{userID}-{agentID}-0.claude-code-{userID}-{agentID}.{namespace}.svc.cluster.local
-func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID int64, agentConfig map[string]interface{}, rc *ResourceConfig) error {
+func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID int64, agentConfig map[string]interface{}, rc *ResourceConfig, imageOverride string) error {
 	name := m.statefulSetName(userID, agentID)
-	imageFullPath := fmt.Sprintf("%s/%s", m.dockerRegistry, m.dockerImage)
+	imageFullPath := imageOverride
+	if imageFullPath == "" {
+		imageFullPath = fmt.Sprintf("%s/%s", m.dockerRegistry, m.dockerImage)
+	}
 	envVars := m.buildAgentEnvVars(userID, agentID, agentConfig)
 
 	// Add SAC_API_URL env var for hook scripts
@@ -522,6 +535,39 @@ func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID 
 	return nil
 }
 
+// UpdateStatefulSetImage patches the container image of a StatefulSet.
+// K8s will automatically perform a rolling update of the pod.
+func (m *Manager) UpdateStatefulSetImage(ctx context.Context, userID string, agentID int64, image string) error {
+	name := m.statefulSetName(userID, agentID)
+
+	sts, err := m.clientset.AppsV1().StatefulSets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get statefulset %s: %w", name, err)
+	}
+
+	for i := range sts.Spec.Template.Spec.Containers {
+		if sts.Spec.Template.Spec.Containers[i].Name == "claude-code" {
+			sts.Spec.Template.Spec.Containers[i].Image = image
+			break
+		}
+	}
+
+	_, err = m.clientset.AppsV1().StatefulSets(m.namespace).Update(ctx, sts, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update statefulset %s image: %w", name, err)
+	}
+
+	log.Printf("StatefulSet %s image updated to %s", name, image)
+	return nil
+}
+
+// ListStatefulSets lists all claude-code StatefulSets in the namespace.
+func (m *Manager) ListStatefulSets(ctx context.Context) (*appsv1.StatefulSetList, error) {
+	return m.clientset.AppsV1().StatefulSets(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app=claude-code",
+	})
+}
+
 // GetStatefulSet gets the StatefulSet for a specific user and agent
 func (m *Manager) GetStatefulSet(ctx context.Context, userID string, agentID int64) (*appsv1.StatefulSet, error) {
 	name := m.statefulSetName(userID, agentID)
@@ -594,6 +640,7 @@ type PodInfo struct {
 	CPULimit      string `json:"cpu_limit"`
 	MemoryRequest string `json:"memory_request"`
 	MemoryLimit   string `json:"memory_limit"`
+	Image         string `json:"image"`
 }
 
 // GetStatefulSetPodInfo returns detailed info for a StatefulSet's pod.
@@ -615,8 +662,9 @@ func (m *Manager) GetStatefulSetPodInfo(ctx context.Context, userID string, agen
 		Status: string(pod.Status.Phase),
 	}
 
-	// Read resource requests/limits from the first container
+	// Read image and resource requests/limits from the first container
 	if len(pod.Spec.Containers) > 0 {
+		info.Image = pod.Spec.Containers[0].Image
 		res := pod.Spec.Containers[0].Resources
 		if q, ok := res.Requests[corev1.ResourceCPU]; ok {
 			info.CPURequest = q.String()

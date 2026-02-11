@@ -82,6 +82,7 @@ export interface AdminAgent {
   cpu_limit: string
   memory_request: string
   memory_limit: string
+  image: string
 }
 
 export async function getUserAgents(userId: number): Promise<AdminAgent[]> {
@@ -104,6 +105,16 @@ export async function updateAgentResources(userId: number, agentId: number, reso
   memory_limit?: string
 }): Promise<void> {
   await api.put(`/admin/users/${userId}/agents/${agentId}/resources`, resources)
+}
+
+// Agent image management
+export async function updateAgentImage(userId: number, agentId: number, image: string): Promise<void> {
+  await api.put(`/admin/users/${userId}/agents/${agentId}/image`, { image })
+}
+
+export async function batchUpdateImage(image: string): Promise<{ total: number; updated: number; failed: number; errors: any[] }> {
+  const response = await api.post('/admin/agents/batch-update-image', { image })
+  return response.data
 }
 
 // Conversations

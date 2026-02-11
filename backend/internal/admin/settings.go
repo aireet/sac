@@ -70,6 +70,12 @@ func (s *SettingsService) GetMaxAgents(ctx context.Context, userID int64) (int, 
 	return n, nil
 }
 
+// GetDockerImage returns the default docker image from system settings.
+func (s *SettingsService) GetDockerImage(ctx context.Context) string {
+	val, _ := s.GetSetting(ctx, "docker_image")
+	return val
+}
+
 // GetResourceLimits returns the resource configuration for a user.
 func (s *SettingsService) GetResourceLimits(ctx context.Context, userID int64) ResourceConfig {
 	cpuReq, _ := s.GetUserSetting(ctx, userID, "default_cpu_request")
