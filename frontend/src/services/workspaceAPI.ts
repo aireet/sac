@@ -150,3 +150,125 @@ export const deletePublicFile = async (path: string): Promise<void> => {
 export const createPublicDirectory = async (path: string): Promise<void> => {
   await api.post('/workspace/public/directories', { path })
 }
+
+// ---- Group workspace ----
+
+export interface GroupWorkspaceQuota {
+  group_id: number
+  used_bytes: number
+  max_bytes: number
+  file_count: number
+  max_file_count: number
+}
+
+export const listGroupFiles = async (groupId: number, path = '/'): Promise<ListFilesResponse> => {
+  const response = await api.get('/workspace/group/files', { params: { group_id: groupId, path } })
+  return response.data
+}
+
+export const uploadGroupFile = async (
+  groupId: number,
+  file: File,
+  path = '/',
+  onProgress?: (percent: number) => void,
+): Promise<void> => {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('path', path)
+  formData.append('group_id', String(groupId))
+
+  await api.post('/workspace/group/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: (e) => {
+      if (onProgress && e.total) {
+        onProgress(Math.round((e.loaded / e.total) * 100))
+      }
+    },
+  })
+}
+
+export const downloadGroupFile = (groupId: number, path: string): void => {
+  const token = localStorage.getItem('token')
+  const baseUrl = api.defaults.baseURL
+  const url = `${baseUrl}/workspace/group/files/download?group_id=${groupId}&path=${encodeURIComponent(path)}`
+  fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+    .then((r) => r.blob())
+    .then((blob) => {
+      const objUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objUrl
+      a.download = path.split('/').pop() || 'download'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(objUrl)
+    })
+}
+
+export const fetchGroupFileBlob = async (groupId: number, path: string): Promise<Blob> => {
+  const token = localStorage.getItem('token')
+  const baseUrl = api.defaults.baseURL
+  const url = `${baseUrl}/workspace/group/files/download?group_id=${groupId}&path=${encodeURIComponent(path)}`
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  if (!r.ok) throw new Error(`Download failed: ${r.status}`)
+  return r.blob()
+}
+
+export const deleteGroupFile = async (groupId: number, path: string): Promise<void> => {
+  await api.delete('/workspace/group/files', { params: { group_id: groupId, path } })
+}
+
+export const createGroupDirectory = async (groupId: number, path: string): Promise<void> => {
+  await api.post('/workspace/group/directories', { group_id: groupId, path })
+}
+
+export const getGroupQuota = async (groupId: number): Promise<GroupWorkspaceQuota> => {
+  const response = await api.get('/workspace/group/quota', { params: { group_id: groupId } })
+  return response.data
+}
+
+// ---- Shared workspace (read-only browsing + publish) ----
+
+export const listSharedFiles = async (path = '/'): Promise<ListFilesResponse> => {
+  const response = await api.get('/workspace/shared/files', { params: { path } })
+  return response.data
+}
+
+export const downloadSharedFile = (path: string): void => {
+  const token = localStorage.getItem('token')
+  const baseUrl = api.defaults.baseURL
+  const url = `${baseUrl}/workspace/shared/files/download?path=${encodeURIComponent(path)}`
+  fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+    .then((r) => r.blob())
+    .then((blob) => {
+      const objUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objUrl
+      a.download = path.split('/').pop() || 'download'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(objUrl)
+    })
+}
+
+export const fetchSharedFileBlob = async (path: string): Promise<Blob> => {
+  const token = localStorage.getItem('token')
+  const baseUrl = api.defaults.baseURL
+  const url = `${baseUrl}/workspace/shared/files/download?path=${encodeURIComponent(path)}`
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  if (!r.ok) throw new Error(`Download failed: ${r.status}`)
+  return r.blob()
+}
+
+export const publishToShared = async (agentId: number, path: string, destPath?: string): Promise<void> => {
+  await api.post('/workspace/shared/publish', { agent_id: agentId, path, dest_path: destPath })
+}
+
+export const deleteSharedFile = async (path: string): Promise<void> => {
+  await api.delete('/workspace/shared/files', { params: { path } })
+}
+
+// ---- Type exports ----
+
+export type SpaceTab = 'private' | 'public' | 'group' | 'shared'
