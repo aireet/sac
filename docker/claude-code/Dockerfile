@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y \
     mysql-client \
     redis-tools \
     jq \
-    tmux \
+    dtach \
     locales \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
