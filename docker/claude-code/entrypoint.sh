@@ -56,6 +56,7 @@ set -ag terminal-overrides ",xterm-256color:RGB"
 set -g mouse off
 set -g status off
 set -g escape-time 0
+setw -g aggressive-resize on
 TMUX
 
 # Start Claude Code inside a persistent tmux session.
@@ -64,7 +65,7 @@ TMUX
 # Reconnecting attaches to the same session with full terminal state.
 TMUX_SESSION="claude-main"
 if ! tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
-  tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 \
+  tmux new-session -d -s "$TMUX_SESSION" \
     'while true; do claude; echo "Claude exited. Restarting in 2s..."; sleep 2; done'
 fi
 exec ttyd --writable -p 7681 tmux attach-session -t "$TMUX_SESSION"

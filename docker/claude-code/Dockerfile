@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV USER_ID=""
 ENV SESSION_ID=""
 
-# Install basic tools
+# Install basic tools + locale support
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
@@ -21,7 +21,12 @@ RUN apt-get update && apt-get install -y \
     redis-tools \
     jq \
     tmux \
+    locales \
+    && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
 
 # Install Node.js 22 LTS
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
