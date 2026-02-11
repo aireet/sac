@@ -22,6 +22,7 @@ export interface Skill {
   created_by: number
   is_public: boolean
   forked_from?: number
+  version: number
   created_at: string
   updated_at: string
 }

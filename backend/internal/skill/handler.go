@@ -184,6 +184,7 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 
 	updateData.ID = skillID
 	updateData.UpdatedAt = time.Now()
+	updateData.Version = existingSkill.Version + 1
 
 	// If user supplied a command_name, use it; otherwise regenerate from name
 	if updateData.CommandName == "" && updateData.Name != "" {
@@ -211,7 +212,7 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 
 	_, err = h.db.NewUpdate().
 		Model(&updateData).
-		Column("name", "description", "icon", "category", "prompt", "command_name", "parameters", "is_public", "updated_at").
+		Column("name", "description", "icon", "category", "prompt", "command_name", "parameters", "is_public", "updated_at", "version").
 		Where("id = ?", skillID).
 		Exec(ctx)
 
@@ -230,33 +231,6 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 		response.InternalError(c, "Failed to reload skill after update", err)
 		return
 	}
-
-	// Async: sync updated skill to all agents that have it installed
-	go func() {
-		bgCtx := context.Background()
-		var agentSkills []models.AgentSkill
-		_ = h.db.NewSelect().
-			Model(&agentSkills).
-			Where("skill_id = ?", skillID).
-			Scan(bgCtx)
-
-		for _, as := range agentSkills {
-			// Look up the agent to get user ID
-			var agent models.Agent
-			err := h.db.NewSelect().Model(&agent).Where("id = ?", as.AgentID).Scan(bgCtx)
-			if err != nil {
-				continue
-			}
-			userIDStr := fmt.Sprintf("%d", agent.CreatedBy)
-
-			// If name changed, remove old command file
-			if existingSkill.CommandName != "" && existingSkill.CommandName != updatedSkill.CommandName {
-				_ = h.syncService.RemoveSkillFromAgent(bgCtx, userIDStr, as.AgentID, existingSkill.CommandName)
-			}
-			// Write updated file
-			_ = h.syncService.SyncSkillToAgent(bgCtx, userIDStr, as.AgentID, &updatedSkill)
-		}
-	}()
 
 	response.OK(c, updatedSkill)
 }

@@ -68,10 +68,29 @@
     <n-card :bordered="false" size="small">
       <template #header>
         <n-space align="center" justify="space-between" style="width: 100%">
-          <n-text strong>Skills</n-text>
-          <n-button size="tiny" quaternary @click="$emit('openMarketplace')">
-            + Install
-          </n-button>
+          <n-space align="center" :size="8">
+            <n-text strong>Skills</n-text>
+            <n-tag v-if="outdatedCount > 0" type="warning" size="small" round>
+              {{ outdatedCount }} update{{ outdatedCount > 1 ? 's' : '' }}
+            </n-tag>
+          </n-space>
+          <n-space :size="4">
+            <n-button
+              v-if="outdatedCount > 0"
+              size="tiny"
+              type="warning"
+              :loading="syncing"
+              @click="handleSyncSkills"
+            >
+              <template #icon>
+                <n-icon><SyncOutline /></n-icon>
+              </template>
+              Sync
+            </n-button>
+            <n-button size="tiny" quaternary @click="$emit('openMarketplace')">
+              + Install
+            </n-button>
+          </n-space>
         </n-space>
       </template>
 
@@ -96,8 +115,10 @@
             <n-space align="center" :size="8" style="cursor: pointer; flex: 1">
               <span class="skill-icon">{{ skill.icon }}</span>
               <div>
-                <n-text strong style="font-size: 13px">{{ skill.name }}</n-text>
-                <br />
+                <n-space align="center" :size="4">
+                  <n-text strong style="font-size: 13px">{{ skill.name }}</n-text>
+                  <n-badge v-if="needsUpdate(skill)" dot type="warning" />
+                </n-space>
                 <n-text depth="3" style="font-size: 11px; font-family: monospace">
                   /{{ skill.command_name }}
                 </n-text>
@@ -281,10 +302,11 @@ import {
   NEmpty,
   NPopconfirm,
   NSpin,
+  NBadge,
   useMessage,
 } from 'naive-ui'
-import { RefreshOutline, CloseOutline, ChatbubblesOutline } from '@vicons/ionicons5'
-import { type Skill } from '../../services/skillAPI'
+import { RefreshOutline, CloseOutline, ChatbubblesOutline, SyncOutline } from '@vicons/ionicons5'
+import { type Skill, syncAgentSkills } from '../../services/skillAPI'
 import {
   restartAgent,
   uninstallSkill,
@@ -292,6 +314,7 @@ import {
   getConversationSessions,
   exportConversationsCSV,
   type Agent,
+  type AgentSkill,
   type AgentStatus,
   type ConversationMessage,
   type SessionInfo,
@@ -470,14 +493,41 @@ const handleExportCSV = async () => {
 const showParameterModal = ref(false)
 const currentSkill = ref<Skill | null>(null)
 const parameterValues = ref<Record<string, any>>({})
+const syncing = ref(false)
 
-// Installed skills derived from agent data
+// Installed skills derived from agent data (preserve AgentSkill wrapper for version info)
 const installedSkillList = computed((): Skill[] => {
   if (!props.installedSkills) return []
   return props.installedSkills
     .map((as: any) => as.skill)
     .filter((s: any) => s != null) as Skill[]
 })
+
+// Version comparison: count skills that need updating
+const outdatedCount = computed(() =>
+  (props.installedSkills || []).filter((as: AgentSkill) =>
+    as.skill && as.synced_version < as.skill.version
+  ).length
+)
+
+const needsUpdate = (skill: Skill): boolean => {
+  const as = (props.installedSkills || []).find((a: AgentSkill) => a.skill?.id === skill.id)
+  return !!as && !!as.skill && as.synced_version < as.skill.version
+}
+
+const handleSyncSkills = async () => {
+  syncing.value = true
+  try {
+    await syncAgentSkills(props.agentId)
+    message.success('Skills synced successfully')
+    emit('skillsChanged')
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to sync skills'))
+    console.error(error)
+  } finally {
+    syncing.value = false
+  }
+}
 
 const handleUninstall = async (skillId: number) => {
   try {

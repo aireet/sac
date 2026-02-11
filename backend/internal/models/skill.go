@@ -60,6 +60,7 @@ type Skill struct {
 	CreatedBy   int64           `bun:"created_by,notnull" json:"created_by"`
 	IsPublic    bool            `bun:"is_public,notnull,default:false" json:"is_public"`
 	ForkedFrom  *int64          `bun:"forked_from" json:"forked_from,omitempty"`
+	Version     int             `bun:"version,notnull,default:1" json:"version"`
 	CreatedAt   time.Time       `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt   time.Time       `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 

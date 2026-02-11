@@ -68,11 +68,12 @@ type Agent struct {
 type AgentSkill struct {
 	bun.BaseModel `bun:"table:agent_skills,alias:as"`
 
-	ID        int64     `bun:"id,pk,autoincrement" json:"id"`
-	AgentID   int64     `bun:"agent_id,notnull" json:"agent_id"`
-	SkillID   int64     `bun:"skill_id,notnull" json:"skill_id"`
-	Order     int       `bun:"order,notnull,default:0" json:"order"` // Display order
-	CreatedAt time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	ID            int64     `bun:"id,pk,autoincrement" json:"id"`
+	AgentID       int64     `bun:"agent_id,notnull" json:"agent_id"`
+	SkillID       int64     `bun:"skill_id,notnull" json:"skill_id"`
+	Order         int       `bun:"order,notnull,default:0" json:"order"` // Display order
+	SyncedVersion int       `bun:"synced_version,notnull,default:0" json:"synced_version"`
+	CreatedAt     time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
 
 	// Relations
 	Agent *Agent `bun:"rel:belongs-to,join:agent_id=id" json:"agent,omitempty"`

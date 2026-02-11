@@ -45,7 +45,15 @@ func (s *SyncService) SyncSkillToAgent(ctx context.Context, userID string, agent
 		return fmt.Errorf("failed to sync skill %q to agent %d: %w", sk.CommandName, agentID, err)
 	}
 
-	log.Printf("Synced skill /%s to pod %s", sk.CommandName, pod)
+	// Update synced_version to mark this skill as up-to-date on this agent
+	_, _ = s.db.NewUpdate().
+		Model((*models.AgentSkill)(nil)).
+		Set("synced_version = ?", sk.Version).
+		Where("agent_id = ?", agentID).
+		Where("skill_id = ?", sk.ID).
+		Exec(ctx)
+
+	log.Printf("Synced skill /%s (v%d) to pod %s", sk.CommandName, sk.Version, pod)
 	return nil
 }
 
@@ -100,6 +108,14 @@ func (s *SyncService) SyncAllSkillsToAgent(ctx context.Context, userID string, a
 			log.Printf("Warning: failed to sync skill /%s to pod %s: %v", sk.CommandName, pod, err)
 			continue
 		}
+
+		// Update synced_version to mark this skill as up-to-date
+		_, _ = s.db.NewUpdate().
+			Model((*models.AgentSkill)(nil)).
+			Set("synced_version = ?", sk.Version).
+			Where("agent_id = ?", agentID).
+			Where("skill_id = ?", sk.ID).
+			Exec(ctx)
 	}
 
 	// Clean up: list existing files and remove any that shouldn't be there

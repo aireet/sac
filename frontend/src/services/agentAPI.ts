@@ -17,6 +17,7 @@ export interface AgentSkill {
   agent_id: number
   skill_id: number
   order: number
+  synced_version: number
   created_at: string
   skill?: {
     id: number
@@ -24,6 +25,7 @@ export interface AgentSkill {
     description: string
     icon: string
     category: string
+    version: number
   }
 }
 
