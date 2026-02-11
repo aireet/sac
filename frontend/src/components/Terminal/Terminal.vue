@@ -173,11 +173,27 @@ const connectWebSocket = () => {
   ws.onopen = () => {
     console.log('WebSocket connected')
     reconnectAttempt = 0
-    // Re-fit and send accurate dimensions after connection is established
-    if (fitAddon && terminal) {
-      fitAddon.fit()
-      ws!.send(JSON.stringify({ type: 'resize', columns: terminal.cols, rows: terminal.rows }))
-    }
+    // Delay fit + resize so the backend (dtach attach) has time to fully
+    // establish the PTY connection. Without this, the resize/SIGWINCH
+    // arrives before dtach is ready, and the initial screen content
+    // never gets redrawn — resulting in a black screen until manual resize.
+    setTimeout(() => {
+      if (fitAddon && terminal && ws && ws.readyState === WebSocket.OPEN) {
+        fitAddon.fit()
+        const cols = terminal.cols
+        const rows = terminal.rows
+        // Send a slightly different size first, then the correct size.
+        // This forces ttyd to emit SIGWINCH even when the terminal
+        // dimensions haven't changed (e.g. agent switch with same
+        // container size), which triggers the process to redraw.
+        ws.send(JSON.stringify({ type: 'resize', columns: cols - 1, rows }))
+        setTimeout(() => {
+          if (ws && ws.readyState === WebSocket.OPEN && terminal) {
+            ws.send(JSON.stringify({ type: 'resize', columns: cols, rows }))
+          }
+        }, 100)
+      }
+    }, 500)
   }
 
   ws.onmessage = (event) => {

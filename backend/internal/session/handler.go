@@ -162,8 +162,10 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	log.Printf("Using agent: %s (ID: %d)", agent.Name, agent.ID)
 
 	// Check if StatefulSet exists for this user-agent combination
+	isNewStatefulSet := false
 	sts, err := h.containerManager.GetStatefulSet(ctx, userIDStr, req.AgentID)
 	if err != nil {
+		isNewStatefulSet = true
 		log.Printf("StatefulSet not found, creating it...")
 
 		// Get resource limits from settings (user/system defaults)
@@ -218,18 +220,31 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	}
 	log.Printf("Pod IP: %s", podIP)
 
-	// Sync workspace files from OSS to the pod (private + public + claude-commands)
-	if h.workspaceSyncSvc != nil {
-		if err := h.workspaceSyncSvc.SyncWorkspaceToPod(ctx, userIDStr, req.AgentID); err != nil {
-			log.Printf("Warning: failed to sync workspace: %v", err)
-			// Not fatal — session can still work without workspace files
+	if isNewStatefulSet {
+		// New pod — sync workspace and skills synchronously (pod has no files yet)
+		if h.workspaceSyncSvc != nil {
+			if err := h.workspaceSyncSvc.SyncWorkspaceToPod(ctx, userIDStr, req.AgentID); err != nil {
+				log.Printf("Warning: failed to sync workspace: %v", err)
+			}
 		}
-	}
-
-	// Sync all installed skills to the pod (ensures files exist after pod restart)
-	if err := h.syncService.SyncAllSkillsToAgent(ctx, userIDStr, req.AgentID); err != nil {
-		log.Printf("Warning: failed to sync skills to agent %d: %v", req.AgentID, err)
-		// Not fatal — session can still work, just without slash commands
+		if err := h.syncService.SyncAllSkillsToAgent(ctx, userIDStr, req.AgentID); err != nil {
+			log.Printf("Warning: failed to sync skills to agent %d: %v", req.AgentID, err)
+		}
+	} else {
+		// Existing pod — files already on disk from last sync. Run background
+		// sync to pick up any changes without blocking session creation.
+		go func() {
+			bgCtx := context.Background()
+			if h.workspaceSyncSvc != nil {
+				if err := h.workspaceSyncSvc.SyncWorkspaceToPod(bgCtx, userIDStr, req.AgentID); err != nil {
+					log.Printf("Warning: background workspace sync failed: %v", err)
+				}
+			}
+			if err := h.syncService.SyncAllSkillsToAgent(bgCtx, userIDStr, req.AgentID); err != nil {
+				log.Printf("Warning: background skill sync failed: %v", err)
+			}
+			log.Printf("Background sync completed for user %s agent %d", userIDStr, req.AgentID)
+		}()
 	}
 
 	// Save session to database

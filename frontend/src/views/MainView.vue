@@ -571,16 +571,18 @@ const createSessionForAgent = async (agentId: number) => {
   const loadingMsg = message.loading('Creating session...', { duration: 0 })
 
   try {
-    // Create session
+    // Create session — backend returns status 'running' once pod is ready
     const response = await createSession(agentId)
     console.log('Session created:', response)
 
-    // Wait for session to be ready
-    loadingMsg.content = 'Waiting for container to start...'
-    const session = await waitForSessionReady(response.session_id)
+    // If already running (existing pod reuse or pod ready), skip polling
+    if (response.status !== 'running') {
+      loadingMsg.content = 'Waiting for container to start...'
+      await waitForSessionReady(response.session_id)
+    }
 
-    sessionId.value = session.session_id
-    console.log('Session ready:', session)
+    sessionId.value = response.session_id
+    console.log('Session ready:', response.session_id)
 
     // Show agent switch banner in terminal
     if (selectedAgent.value) {
