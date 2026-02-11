@@ -11,6 +11,7 @@ import (
 	"g.echo.tech/dev/sac/internal/auth"
 	"g.echo.tech/dev/sac/internal/container"
 	"g.echo.tech/dev/sac/internal/database"
+	"g.echo.tech/dev/sac/internal/group"
 	"g.echo.tech/dev/sac/internal/history"
 	"g.echo.tech/dev/sac/internal/session"
 	"g.echo.tech/dev/sac/internal/skill"
@@ -111,6 +112,10 @@ func main() {
 		// Workspace routes (always registered; requireOSS middleware returns 503 if not configured)
 		workspaceHandler := workspace.NewHandler(database.DB, ossProvider, workspaceSyncSvc)
 		workspaceHandler.RegisterRoutes(protectedGroup)
+
+		// Group routes
+		groupHandler := group.NewHandler(database.DB)
+		groupHandler.RegisterRoutes(protectedGroup)
 
 		// Admin routes (requires admin role, checked inside RegisterRoutes)
 		adminHandler := admin.NewHandler(database.DB, containerMgr)

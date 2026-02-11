@@ -134,6 +134,28 @@ func (h *Handler) GetCurrentUser(c *gin.Context) {
 	response.OK(c, user)
 }
 
+func (h *Handler) SearchUsers(c *gin.Context) {
+	q := c.Query("q")
+	if len(q) < 1 {
+		response.BadRequest(c, "Search query too short", nil)
+		return
+	}
+
+	ctx := context.Background()
+	var users []models.User
+	err := h.db.NewSelect().Model(&users).
+		Where("username ILIKE ? OR display_name ILIKE ?", "%"+q+"%", "%"+q+"%").
+		Column("id", "username", "display_name").
+		Limit(20).
+		Scan(ctx)
+	if err != nil {
+		response.InternalError(c, "Failed to search users", err)
+		return
+	}
+
+	response.OK(c, users)
+}
+
 func (h *Handler) RegisterRoutes(public *gin.RouterGroup, protected *gin.RouterGroup) {
 	if public != nil {
 		public.POST("/auth/register", h.Register)
@@ -141,5 +163,6 @@ func (h *Handler) RegisterRoutes(public *gin.RouterGroup, protected *gin.RouterG
 	}
 	if protected != nil {
 		protected.GET("/auth/me", h.GetCurrentUser)
+		protected.GET("/users/search", h.SearchUsers)
 	}
 }

@@ -19,7 +19,40 @@
             </n-space>
           </template>
         </n-tab-pane>
+        <n-tab-pane name="group">
+          <template #tab>
+            <n-space :size="4" align="center">
+              <n-icon size="14"><PeopleOutline /></n-icon>
+              <span>Group</span>
+            </n-space>
+          </template>
+        </n-tab-pane>
+        <n-tab-pane name="shared">
+          <template #tab>
+            <n-space :size="4" align="center">
+              <n-icon size="14"><ShareSocialOutline /></n-icon>
+              <span>Shared</span>
+            </n-space>
+          </template>
+        </n-tab-pane>
       </n-tabs>
+
+      <!-- Group selector (only shown on group tab) -->
+      <div v-if="spaceTab === 'group'" class="ws-group-selector">
+        <n-select
+          v-model:value="selectedGroupId"
+          :options="groupOptions"
+          :loading="loadingGroups"
+          placeholder="Select a group"
+          size="small"
+          style="flex: 1"
+        />
+        <n-button size="small" quaternary @click="showGroupManager = true" title="Manage groups">
+          <template #icon><n-icon><SettingsOutline /></n-icon></template>
+        </n-button>
+      </div>
+
+      <!-- Quota display for private workspace -->
       <div v-if="spaceTab === 'private' && quota" class="ws-quota">
         <n-progress
           type="line"
@@ -33,6 +66,21 @@
           ({{ quota.file_count }} / {{ quota.max_file_count }} files)
         </n-text>
       </div>
+
+      <!-- Quota display for group workspace -->
+      <div v-if="spaceTab === 'group' && groupQuota && selectedGroupId" class="ws-quota">
+        <n-progress
+          type="line"
+          :percentage="groupQuotaPercent"
+          :status="groupQuotaPercent > 90 ? 'error' : groupQuotaPercent > 70 ? 'warning' : 'success'"
+          :show-indicator="false"
+          :height="4"
+        />
+        <n-text depth="3" style="font-size: 11px">
+          {{ formatBytes(groupQuota.used_bytes) }} / {{ formatBytes(groupQuota.max_bytes) }}
+          ({{ groupQuota.file_count }} / {{ groupQuota.max_file_count }} files)
+        </n-text>
+      </div>
     </div>
 
     <!-- Toolbar -->
@@ -40,17 +88,17 @@
       <n-input v-model:value="searchQuery" placeholder="Search files..." size="small" clearable style="flex: 1" />
       <n-space :size="4" style="flex-shrink: 0">
         <n-upload
+          v-if="canEdit"
           :show-file-list="false"
           :custom-request="handleUpload"
           :multiple="true"
-          :disabled="spaceTab === 'public' && !isAdmin"
         >
           <n-button size="small" type="primary">Upload</n-button>
         </n-upload>
-        <n-button size="small" @click="showNewFile = true" :disabled="spaceTab === 'public' && !isAdmin">
+        <n-button v-if="canEdit" size="small" @click="showNewFile = true">
           New File
         </n-button>
-        <n-button size="small" @click="showNewFolder = true" :disabled="spaceTab === 'public' && !isAdmin">
+        <n-button v-if="canEdit" size="small" @click="showNewFolder = true">
           New Folder
         </n-button>
         <n-button size="small" quaternary @click="refreshTree">
@@ -74,7 +122,7 @@
     <div v-if="checkedKeys.length > 0" class="ws-batch-bar">
       <n-text depth="3" style="font-size: 12px">{{ checkedKeys.length }} selected</n-text>
       <n-button size="tiny" @click="handleBatchDownload">Download</n-button>
-      <n-popconfirm @positive-click="handleBatchDelete">
+      <n-popconfirm v-if="canEdit" @positive-click="handleBatchDelete">
         <template #trigger>
           <n-button size="tiny" type="error">Delete</n-button>
         </template>
@@ -85,7 +133,16 @@
 
     <!-- Body: Tree -->
     <div class="ws-body">
+      <!-- No group selected placeholder -->
+      <div v-if="spaceTab === 'group' && !selectedGroupId" class="ws-placeholder">
+        <n-empty description="Select a group to browse files">
+          <template #extra>
+            <n-button size="small" @click="showGroupManager = true">Manage Groups</n-button>
+          </template>
+        </n-empty>
+      </div>
       <div
+        v-else
         class="ws-content"
         :class="{ 'drag-over': dragOver }"
         @dragover.prevent
@@ -140,6 +197,9 @@
     >
       <n-input v-model:value="newFileName" placeholder="File name (e.g. notes.txt)" @keyup.enter="handleCreateFile" />
     </n-modal>
+
+    <!-- Group Manager modal -->
+    <GroupManager v-model:show="showGroupManager" @groups-changed="loadGroups" />
   </div>
 </template>
 
@@ -147,7 +207,7 @@
 import { ref, computed, watch, onMounted, h, type Component } from 'vue'
 import {
   NTabs, NTabPane, NSpace, NIcon, NText, NButton, NUpload, NSpin,
-  NEmpty, NPopconfirm, NModal, NInput, NProgress, NTree,
+  NEmpty, NPopconfirm, NModal, NInput, NProgress, NTree, NSelect,
   useMessage, useDialog,
   type UploadCustomRequestOptions, type TreeOption,
 } from 'naive-ui'
@@ -155,22 +215,28 @@ import {
   LockClosedOutline, GlobeOutline, RefreshOutline, DocumentOutline,
   DownloadOutline, TrashOutline, FolderOutline, CodeSlashOutline,
   DocumentTextOutline, ImageOutline, SettingsOutline, CloseOutline,
+  PeopleOutline, ShareSocialOutline,
 } from '@vicons/ionicons5'
 import {
   listFiles, uploadFile, downloadFile, deleteFile, createDirectory, getQuota,
   listPublicFiles, uploadPublicFile, downloadPublicFile, deletePublicFile,
   createPublicDirectory,
-  type WorkspaceFile, type WorkspaceQuota,
+  listGroupFiles, uploadGroupFile, downloadGroupFile, deleteGroupFile,
+  createGroupDirectory, getGroupQuota,
+  listSharedFiles, downloadSharedFile, deleteSharedFile,
+  type WorkspaceFile, type WorkspaceQuota, type GroupWorkspaceQuota, type SpaceTab,
 } from '../../services/workspaceAPI'
+import { listGroups, type Group } from '../../services/groupAPI'
 import { getFileIcon } from '../../utils/fileTypes'
 import { useAuthStore } from '../../stores/auth'
+import GroupManager from '../Group/GroupManager.vue'
 
 const props = defineProps<{
   agentId: number
 }>()
 
 const emit = defineEmits<{
-  openFile: [file: WorkspaceFile, spaceTab: 'private' | 'public']
+  openFile: [file: WorkspaceFile, spaceTab: SpaceTab, groupId?: number]
 }>()
 
 const message = useMessage()
@@ -178,7 +244,7 @@ const dialog = useDialog()
 const authStore = useAuthStore()
 
 // --- State ---
-const spaceTab = ref<'private' | 'public'>('private')
+const spaceTab = ref<SpaceTab>('private')
 const treeData = ref<TreeOption[]>([])
 const expandedKeys = ref<string[]>([])
 const checkedKeys = ref<string[]>([])
@@ -193,13 +259,37 @@ const newFolderName = ref('')
 const showNewFile = ref(false)
 const newFileName = ref('')
 
+// Group state
+const groups = ref<Group[]>([])
+const selectedGroupId = ref<number | null>(null)
+const loadingGroups = ref(false)
+const groupQuota = ref<GroupWorkspaceQuota | null>(null)
+const showGroupManager = ref(false)
+
 // --- Computed ---
 const isAdmin = computed(() => authStore.isAdmin)
-const canEdit = computed(() => spaceTab.value === 'private' || isAdmin.value)
+const canEdit = computed(() => {
+  if (spaceTab.value === 'private') return true
+  if (spaceTab.value === 'public') return isAdmin.value
+  if (spaceTab.value === 'group') return !!selectedGroupId.value // group members can edit
+  return false // shared is read-only
+})
 
 const quotaPercent = computed(() => {
   if (!quota.value || quota.value.max_bytes === 0) return 0
   return Math.round((quota.value.used_bytes / quota.value.max_bytes) * 100)
+})
+
+const groupQuotaPercent = computed(() => {
+  if (!groupQuota.value || groupQuota.value.max_bytes === 0) return 0
+  return Math.round((groupQuota.value.used_bytes / groupQuota.value.max_bytes) * 100)
+})
+
+const groupOptions = computed(() => {
+  return groups.value.map(g => ({
+    label: g.name,
+    value: g.id,
+  }))
 })
 
 // --- Icon mapping ---
@@ -308,7 +398,7 @@ const getNodeProps = ({ option }: { option: TreeOption }) => {
           expandedKeys.value = [...expandedKeys.value, key]
         }
       } else {
-        emit('openFile', file, spaceTab.value)
+        emit('openFile', file, spaceTab.value, selectedGroupId.value ?? undefined)
       }
     },
   }
@@ -328,12 +418,28 @@ const handleCheckedKeysUpdate = (keys: Array<string | number>) => {
 }
 
 // --- Data loading ---
+const listFilesForTab = async (path: string) => {
+  switch (spaceTab.value) {
+    case 'private':
+      return listFiles(props.agentId, path)
+    case 'public':
+      return listPublicFiles(path)
+    case 'group':
+      if (!selectedGroupId.value) throw new Error('No group selected')
+      return listGroupFiles(selectedGroupId.value, path)
+    case 'shared':
+      return listSharedFiles(path)
+  }
+}
+
 const loadRootFiles = async () => {
+  if (spaceTab.value === 'group' && !selectedGroupId.value) {
+    treeData.value = []
+    return
+  }
   rootLoading.value = true
   try {
-    const result = spaceTab.value === 'private'
-      ? await listFiles(props.agentId, '/')
-      : await listPublicFiles('/')
+    const result = await listFilesForTab('/')
     treeData.value = buildNodes(result.files || [])
   } catch (err) {
     console.error('Failed to load files:', err)
@@ -347,9 +453,7 @@ const loadRootFiles = async () => {
 const handleTreeLoad = async (node: TreeOption): Promise<void> => {
   const path = node.key as string
   try {
-    const result = spaceTab.value === 'private'
-      ? await listFiles(props.agentId, path)
-      : await listPublicFiles(path)
+    const result = await listFilesForTab(path)
     node.children = buildNodes(result.files || [])
   } catch (err) {
     console.error('Failed to load directory:', err)
@@ -359,9 +463,7 @@ const handleTreeLoad = async (node: TreeOption): Promise<void> => {
 
 const reloadDir = async (dirPath: string) => {
   try {
-    const result = spaceTab.value === 'private'
-      ? await listFiles(props.agentId, dirPath)
-      : await listPublicFiles(dirPath)
+    const result = await listFilesForTab(dirPath)
     const newNodes = buildNodes(result.files || [])
 
     if (dirPath === '/') {
@@ -409,19 +511,47 @@ const loadQuota = async () => {
   }
 }
 
+const loadGroupQuota = async () => {
+  if (!selectedGroupId.value) return
+  try {
+    groupQuota.value = await getGroupQuota(selectedGroupId.value)
+  } catch {
+    // ignore
+  }
+}
+
+const loadGroups = async () => {
+  loadingGroups.value = true
+  try {
+    groups.value = (await listGroups()) || []
+  } catch {
+    groups.value = []
+  } finally {
+    loadingGroups.value = false
+  }
+}
+
 // --- File operations ---
 const handleUpload = async ({ file, onFinish, onError }: UploadCustomRequestOptions) => {
   if (!file.file) return
   try {
-    if (spaceTab.value === 'private') {
-      await uploadFile(props.agentId, file.file, activeDir.value)
-    } else {
-      await uploadPublicFile(file.file, activeDir.value)
+    switch (spaceTab.value) {
+      case 'private':
+        await uploadFile(props.agentId, file.file, activeDir.value)
+        break
+      case 'public':
+        await uploadPublicFile(file.file, activeDir.value)
+        break
+      case 'group':
+        if (!selectedGroupId.value) return
+        await uploadGroupFile(selectedGroupId.value, file.file, activeDir.value)
+        break
     }
     message.success(`Uploaded ${file.name}`)
     onFinish()
     await reloadDir(activeDir.value)
     if (spaceTab.value === 'private') loadQuota()
+    if (spaceTab.value === 'group') loadGroupQuota()
   } catch (err) {
     console.error('Upload failed:', err)
     message.error(`Failed to upload ${file.name}`)
@@ -430,20 +560,39 @@ const handleUpload = async ({ file, onFinish, onError }: UploadCustomRequestOpti
 }
 
 const handleDownloadFile = (file: WorkspaceFile) => {
-  if (spaceTab.value === 'private') {
-    downloadFile(props.agentId, file.path)
-  } else {
-    downloadPublicFile(file.path)
+  switch (spaceTab.value) {
+    case 'private':
+      downloadFile(props.agentId, file.path)
+      break
+    case 'public':
+      downloadPublicFile(file.path)
+      break
+    case 'group':
+      if (selectedGroupId.value) downloadGroupFile(selectedGroupId.value, file.path)
+      break
+    case 'shared':
+      downloadSharedFile(file.path)
+      break
   }
 }
 
 const handleDeleteFile = async (file: WorkspaceFile) => {
   try {
     const deletePath = file.is_directory ? file.path + '/' : file.path
-    if (spaceTab.value === 'private') {
-      await deleteFile(props.agentId, deletePath)
-    } else {
-      await deletePublicFile(deletePath)
+    switch (spaceTab.value) {
+      case 'private':
+        await deleteFile(props.agentId, deletePath)
+        break
+      case 'public':
+        await deletePublicFile(deletePath)
+        break
+      case 'group':
+        if (!selectedGroupId.value) return
+        await deleteGroupFile(selectedGroupId.value, deletePath)
+        break
+      case 'shared':
+        await deleteSharedFile(deletePath)
+        break
     }
     message.success(`Deleted ${file.name}`)
     // Reload parent directory
@@ -452,6 +601,7 @@ const handleDeleteFile = async (file: WorkspaceFile) => {
     const parentDir = parts.join('/') || '/'
     await reloadDir(parentDir)
     if (spaceTab.value === 'private') loadQuota()
+    if (spaceTab.value === 'group') loadGroupQuota()
   } catch (err) {
     console.error('Delete failed:', err)
     message.error(`Failed to delete ${file.name}`)
@@ -464,10 +614,17 @@ const handleCreateFolder = async () => {
     ? newFolderName.value.trim()
     : activeDir.value.replace(/\/$/, '') + '/' + newFolderName.value.trim()
   try {
-    if (spaceTab.value === 'private') {
-      await createDirectory(props.agentId, folderPath)
-    } else {
-      await createPublicDirectory(folderPath)
+    switch (spaceTab.value) {
+      case 'private':
+        await createDirectory(props.agentId, folderPath)
+        break
+      case 'public':
+        await createPublicDirectory(folderPath)
+        break
+      case 'group':
+        if (!selectedGroupId.value) return
+        await createGroupDirectory(selectedGroupId.value, folderPath)
+        break
     }
     message.success(`Created folder "${newFolderName.value}"`)
     newFolderName.value = ''
@@ -484,23 +641,30 @@ const handleCreateFile = async () => {
   if (!name) return
   const emptyFile = new File([''], name, { type: 'text/plain' })
   try {
-    if (spaceTab.value === 'private') {
-      await uploadFile(props.agentId, emptyFile, activeDir.value)
-    } else {
-      await uploadPublicFile(emptyFile, activeDir.value)
+    switch (spaceTab.value) {
+      case 'private':
+        await uploadFile(props.agentId, emptyFile, activeDir.value)
+        break
+      case 'public':
+        await uploadPublicFile(emptyFile, activeDir.value)
+        break
+      case 'group':
+        if (!selectedGroupId.value) return
+        await uploadGroupFile(selectedGroupId.value, emptyFile, activeDir.value)
+        break
     }
     message.success(`Created file "${name}"`)
     newFileName.value = ''
     showNewFile.value = false
     await reloadDir(activeDir.value)
     if (spaceTab.value === 'private') loadQuota()
+    if (spaceTab.value === 'group') loadGroupQuota()
     // Open the newly created file in editor
-    // Path format must match API response: no leading slash, e.g. "notes.txt" or "subdir/notes.txt"
     const filePath = activeDir.value === '/'
       ? name
       : activeDir.value.replace(/\/$/, '') + '/' + name
     const newWsFile: WorkspaceFile = { name, path: filePath, size: 0, is_directory: false }
-    emit('openFile', newWsFile, spaceTab.value)
+    emit('openFile', newWsFile, spaceTab.value, selectedGroupId.value ?? undefined)
   } catch (err) {
     console.error('Create file failed:', err)
     message.error('Failed to create file')
@@ -525,14 +689,22 @@ const onDragLeave = () => {
 const handleDrop = async (e: DragEvent) => {
   dragCounter.value = 0
   dragOver.value = false
+  if (!canEdit.value) return
   const droppedFiles = e.dataTransfer?.files
   if (!droppedFiles?.length) return
   for (const f of droppedFiles) {
     try {
-      if (spaceTab.value === 'private') {
-        await uploadFile(props.agentId, f, activeDir.value)
-      } else {
-        await uploadPublicFile(f, activeDir.value)
+      switch (spaceTab.value) {
+        case 'private':
+          await uploadFile(props.agentId, f, activeDir.value)
+          break
+        case 'public':
+          await uploadPublicFile(f, activeDir.value)
+          break
+        case 'group':
+          if (!selectedGroupId.value) continue
+          await uploadGroupFile(selectedGroupId.value, f, activeDir.value)
+          break
       }
       message.success(`Uploaded ${f.name}`)
     } catch {
@@ -541,6 +713,7 @@ const handleDrop = async (e: DragEvent) => {
   }
   await reloadDir(activeDir.value)
   if (spaceTab.value === 'private') loadQuota()
+  if (spaceTab.value === 'group') loadGroupQuota()
 }
 
 // --- Batch operations ---
@@ -576,12 +749,30 @@ const formatBytes = (bytes: number): string => {
 }
 
 // --- Watchers ---
-watch(spaceTab, () => {
+watch(spaceTab, (newTab) => {
+  expandedKeys.value = []
+  checkedKeys.value = []
+  activeDir.value = '/'
+  searchQuery.value = ''
+  if (newTab === 'group') {
+    loadGroups()
+    if (selectedGroupId.value) {
+      loadRootFiles()
+      loadGroupQuota()
+    }
+  } else {
+    loadRootFiles()
+  }
+})
+
+watch(selectedGroupId, () => {
+  if (spaceTab.value !== 'group') return
   expandedKeys.value = []
   checkedKeys.value = []
   activeDir.value = '/'
   searchQuery.value = ''
   loadRootFiles()
+  loadGroupQuota()
 })
 
 watch(() => props.agentId, () => {
@@ -609,6 +800,13 @@ onMounted(() => {
 .ws-header {
   padding: 12px 12px 0;
   flex-shrink: 0;
+}
+
+.ws-group-selector {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
 }
 
 .ws-quota {
@@ -645,6 +843,13 @@ onMounted(() => {
   overflow-y: auto;
   padding: 0 8px 12px;
   min-height: 0;
+}
+
+.ws-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
 }
 
 .ws-content {

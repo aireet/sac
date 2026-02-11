@@ -12,7 +12,8 @@ type WorkspaceFile struct {
 	ID            int64     `bun:"id,pk,autoincrement" json:"id"`
 	UserID        int64     `bun:"user_id,notnull" json:"user_id"`
 	AgentID       int64     `bun:"agent_id,notnull,default:0" json:"agent_id"`
-	WorkspaceType string    `bun:"workspace_type,notnull" json:"workspace_type"` // "private" | "public"
+	GroupID       *int64    `bun:"group_id" json:"group_id,omitempty"`
+	WorkspaceType string    `bun:"workspace_type,notnull" json:"workspace_type"` // "private" | "public" | "group" | "shared"
 	OSSKey        string    `bun:"oss_key,notnull" json:"oss_key"`
 	FileName      string    `bun:"file_name,notnull" json:"file_name"`
 	FilePath      string    `bun:"file_path,notnull" json:"file_path"` // relative path within workspace

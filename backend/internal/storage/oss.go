@@ -179,6 +179,15 @@ func (c *OSSClient) GeneratePresignedURL(key string, expiry time.Duration) (stri
 	return url, nil
 }
 
+// Copy copies an object within the bucket.
+func (c *OSSClient) Copy(srcKey, destKey string) error {
+	_, err := c.bucket.CopyObject(srcKey, destKey)
+	if err != nil {
+		return fmt.Errorf("failed to copy %s to %s: %w", srcKey, destKey, err)
+	}
+	return nil
+}
+
 // GetObjectSize returns the size of an object.
 func (c *OSSClient) GetObjectSize(key string) (int64, error) {
 	props, err := c.bucket.GetObjectDetailedMeta(key)

@@ -54,6 +54,20 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		ws.POST("/public/upload", h.requireOSS(), h.UploadPublic)
 		ws.POST("/public/directories", h.requireOSS(), h.CreatePublicDirectory)
 		ws.DELETE("/public/files", h.requireOSS(), h.DeletePublicFile)
+
+		// Group workspace
+		ws.GET("/group/files", h.requireOSS(), h.ListGroupFiles)
+		ws.GET("/group/files/download", h.requireOSS(), h.DownloadGroupFile)
+		ws.POST("/group/upload", h.requireOSS(), h.UploadGroup)
+		ws.POST("/group/directories", h.requireOSS(), h.CreateGroupDirectory)
+		ws.DELETE("/group/files", h.requireOSS(), h.DeleteGroupFile)
+		ws.GET("/group/quota", h.requireOSS(), h.GetGroupQuota)
+
+		// Shared workspace (read-only browsing + publish)
+		ws.GET("/shared/files", h.requireOSS(), h.ListSharedFiles)
+		ws.GET("/shared/files/download", h.requireOSS(), h.DownloadSharedFile)
+		ws.POST("/shared/publish", h.requireOSS(), h.PublishToShared)
+		ws.DELETE("/shared/files", h.requireOSS(), h.DeleteSharedFile)
 	}
 }
 
