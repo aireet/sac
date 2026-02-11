@@ -180,6 +180,28 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 		log.Printf("Failed to update last_active: %v", err)
 	}
 
+	// Enable ping/pong heartbeat to prevent idle disconnections (Envoy/NAT timeout).
+	// PongHandler refreshes the read deadline on each pong response so the
+	// connection stays alive as long as the peer is responsive.
+	const heartbeatInterval = 30 * time.Second
+	const pongTimeout = 60 * time.Second
+
+	clientConn.SetReadDeadline(time.Now().Add(pongTimeout))
+	clientConn.SetPongHandler(func(string) error {
+		clientConn.SetReadDeadline(time.Now().Add(pongTimeout))
+		return nil
+	})
+
+	ttydConn.SetReadDeadline(time.Now().Add(pongTimeout))
+	ttydConn.SetPongHandler(func(string) error {
+		ttydConn.SetReadDeadline(time.Now().Add(pongTimeout))
+		return nil
+	})
+
+	// Start heartbeat goroutines for both directions
+	go h.StartHeartbeat(clientConn, heartbeatInterval)
+	go h.StartHeartbeat(ttydConn, heartbeatInterval)
+
 	// Start bidirectional forwarding with ttyd protocol translation
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -236,6 +258,8 @@ func (h *ProxyHandler) forwardClientToTtyd(src, dst *websocket.Conn) {
 			}
 			return
 		}
+		// Refresh read deadline on successful read (data = activity)
+		src.SetReadDeadline(time.Now().Add(60 * time.Second))
 
 		// Check if this is a resize message from the frontend
 		if len(message) > 0 && message[0] == '{' {
@@ -277,6 +301,8 @@ func (h *ProxyHandler) forwardTtydToClient(src, dst *websocket.Conn) {
 			}
 			return
 		}
+		// Refresh read deadline on successful read (data = activity)
+		src.SetReadDeadline(time.Now().Add(60 * time.Second))
 
 		if len(message) < 1 {
 			continue

@@ -1,0 +1,16 @@
+{{- if .Values.envoyGateway.enabled }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: sac-ws-timeout
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: sac-ws-route
+  timeout:
+    http:
+      connectionIdleTimeout: 3600s
+      requestTimeout: "0s"
+{{- end }}

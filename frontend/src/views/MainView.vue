@@ -166,7 +166,7 @@
                 <n-space :size="8" align="center">
                   <n-tag v-if="editorDirty" size="small" type="warning">Unsaved</n-tag>
                   <n-button
-                    v-if="editorCategory === 'text'"
+                    v-if="editorCategory === 'text' && editorCanSave"
                     size="small"
                     type="primary"
                     :disabled="!editorDirty"
@@ -190,6 +190,7 @@
                     v-model="editorContent"
                     class="editor-textarea"
                     spellcheck="false"
+                    :readonly="!editorCanSave"
                   />
                   <!-- Image preview -->
                   <div v-else-if="editorCategory === 'image'" class="image-preview">
@@ -296,11 +297,12 @@ import AgentSelector from '../components/Agent/AgentSelector.vue'
 import AgentCreator from '../components/Agent/AgentCreator.vue'
 import WorkspacePanel from '../components/Workspace/WorkspacePanel.vue'
 import { getAgent, getAgents, getAgentStatuses, type Agent, type AgentStatus } from '../services/agentAPI'
-import { createSession, deleteSession, waitForSessionReady } from '../services/sessionAPI'
+import { createSession, waitForSessionReady } from '../services/sessionAPI'
 import {
-  fetchFileBlob, fetchPublicFileBlob, downloadFile, downloadPublicFile,
-  uploadFile, uploadPublicFile,
-  type WorkspaceFile,
+  fetchFileBlob, fetchPublicFileBlob, fetchGroupFileBlob, fetchSharedFileBlob,
+  downloadFile, downloadPublicFile, downloadGroupFile, downloadSharedFile,
+  uploadFile, uploadPublicFile, uploadGroupFile,
+  type WorkspaceFile, type SpaceTab,
 } from '../services/workspaceAPI'
 import { getFileCategory, MAX_TEXT_PREVIEW_BYTES, MAX_IMAGE_PREVIEW_BYTES } from '../utils/fileTypes'
 import { extractApiError } from '../utils/error'
@@ -350,7 +352,8 @@ const startResize = (e: MouseEvent) => {
 
 // --- File Editor (center overlay) ---
 const editorFile = ref<WorkspaceFile | null>(null)
-const editorSpaceTab = ref<'private' | 'public'>('private')
+const editorSpaceTab = ref<SpaceTab>('private')
+const editorGroupId = ref<number | undefined>(undefined)
 const editorCategory = ref<'text' | 'image' | 'binary'>('binary')
 const editorContent = ref('')
 const editorOriginalContent = ref('')
@@ -359,15 +362,21 @@ const editorLoading = ref(false)
 const editorSaving = ref(false)
 
 const editorDirty = computed(() => editorCategory.value === 'text' && editorContent.value !== editorOriginalContent.value)
+const editorCanSave = computed(() => {
+  if (editorSpaceTab.value === 'shared') return false
+  if (editorSpaceTab.value === 'public' && !authStore.isAdmin) return false
+  return true
+})
 
 const editorPathSegments = computed(() => {
   if (!editorFile.value) return []
   return editorFile.value.path.replace(/^\//, '').split('/')
 })
 
-const handleOpenFile = async (file: WorkspaceFile, spaceTab: 'private' | 'public') => {
+const handleOpenFile = async (file: WorkspaceFile, spaceTab: SpaceTab, groupId?: number) => {
   editorFile.value = file
   editorSpaceTab.value = spaceTab
+  editorGroupId.value = groupId
   editorCategory.value = getFileCategory(file.name)
   editorContent.value = ''
   editorOriginalContent.value = ''
@@ -380,9 +389,21 @@ const handleOpenFile = async (file: WorkspaceFile, spaceTab: 'private' | 'public
   }
 
   try {
-    const blob = spaceTab === 'private'
-      ? await fetchFileBlob(selectedAgentId.value, file.path)
-      : await fetchPublicFileBlob(file.path)
+    let blob: Blob
+    switch (spaceTab) {
+      case 'private':
+        blob = await fetchFileBlob(selectedAgentId.value, file.path)
+        break
+      case 'public':
+        blob = await fetchPublicFileBlob(file.path)
+        break
+      case 'group':
+        blob = await fetchGroupFileBlob(groupId!, file.path)
+        break
+      case 'shared':
+        blob = await fetchSharedFileBlob(file.path)
+        break
+    }
 
     if (editorCategory.value === 'text') {
       if (file.size > MAX_TEXT_PREVIEW_BYTES) {
@@ -424,10 +445,19 @@ const handleEditorSave = async () => {
     if (dirPath && !dirPath.endsWith('/')) dirPath += '/'
     if (!dirPath) dirPath = '/'
 
-    if (editorSpaceTab.value === 'private') {
-      await uploadFile(selectedAgentId.value, f, dirPath)
-    } else {
-      await uploadPublicFile(f, dirPath)
+    switch (editorSpaceTab.value) {
+      case 'private':
+        await uploadFile(selectedAgentId.value, f, dirPath)
+        break
+      case 'public':
+        await uploadPublicFile(f, dirPath)
+        break
+      case 'group':
+        await uploadGroupFile(editorGroupId.value!, f, dirPath)
+        break
+      case 'shared':
+        // shared is read-only, save should not be reachable
+        break
     }
     editorOriginalContent.value = editorContent.value
     message.success('File saved')
@@ -441,10 +471,19 @@ const handleEditorSave = async () => {
 
 const handleEditorDownload = () => {
   if (!editorFile.value) return
-  if (editorSpaceTab.value === 'private') {
-    downloadFile(selectedAgentId.value, editorFile.value.path)
-  } else {
-    downloadPublicFile(editorFile.value.path)
+  switch (editorSpaceTab.value) {
+    case 'private':
+      downloadFile(selectedAgentId.value, editorFile.value.path)
+      break
+    case 'public':
+      downloadPublicFile(editorFile.value.path)
+      break
+    case 'group':
+      if (editorGroupId.value) downloadGroupFile(editorGroupId.value, editorFile.value.path)
+      break
+    case 'shared':
+      downloadSharedFile(editorFile.value.path)
+      break
   }
 }
 
@@ -511,16 +550,9 @@ const handleAgentSelect = async (agentId: number) => {
       selectedAgent.value = await getAgent(agentId)
       activeTab.value = 'skills'
 
-      // Clean up old connection and session
+      // Clean up old WS connection (backend manages session lifecycle)
       terminalRef.value?.cleanup()
-      if (sessionId.value) {
-        try {
-          await deleteSession(sessionId.value)
-        } catch (err) {
-          console.warn('Failed to delete old session:', err)
-        }
-        sessionId.value = ''
-      }
+      sessionId.value = ''
 
       // Create new session for the selected agent
       await createSessionForAgent(agentId)

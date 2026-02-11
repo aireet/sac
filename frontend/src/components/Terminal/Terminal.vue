@@ -28,6 +28,8 @@ let ws: WebSocket | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let resizeObserver: ResizeObserver | null = null
 let intentionalClose = false
+let reconnectAttempt = 0
+const MAX_RECONNECT_ATTEMPTS = 10
 
 const initTerminal = () => {
   if (!terminalContainer.value) return
@@ -122,6 +124,7 @@ const getWebSocketUrl = (): string => {
 
 const cleanup = () => {
   intentionalClose = true
+  reconnectAttempt = 0
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
@@ -169,6 +172,7 @@ const connectWebSocket = () => {
 
   ws.onopen = () => {
     console.log('WebSocket connected')
+    reconnectAttempt = 0
     // Re-fit and send accurate dimensions after connection is established
     if (fitAddon && terminal) {
       fitAddon.fit()
@@ -199,12 +203,19 @@ const connectWebSocket = () => {
     console.log('WebSocket closed')
     if (intentionalClose) return
 
-    terminal?.writeln('\r\nConnection closed. Attempting to reconnect...')
+    reconnectAttempt++
+    if (reconnectAttempt > MAX_RECONNECT_ATTEMPTS) {
+      terminal?.writeln('\r\n\x1b[1;31mMax reconnection attempts reached. Please refresh the page.\x1b[0m')
+      return
+    }
+
+    const delay = Math.min(1000 * Math.pow(2, reconnectAttempt - 1), 30000)
+    terminal?.writeln(`\r\nConnection closed. Reconnecting in ${(delay / 1000).toFixed(0)}s... (attempt ${reconnectAttempt}/${MAX_RECONNECT_ATTEMPTS})`)
     reconnectTimer = setTimeout(() => {
       if (terminal && props.sessionId) {
         connectWebSocket()
       }
-    }, 3000)
+    }, delay)
   }
 }
 

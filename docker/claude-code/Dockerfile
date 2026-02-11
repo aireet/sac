@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y \
     mysql-client \
     redis-tools \
     jq \
+    tmux \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 22 LTS

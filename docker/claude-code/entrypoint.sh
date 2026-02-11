@@ -48,5 +48,13 @@ if [ ! -f /root/.claude/settings.json ]; then
 SETTINGS
 fi
 
-# Start ttyd with Claude Code CLI
-ttyd --writable -p 7681 claude
+# Start Claude Code inside a persistent tmux session.
+# Each WS connection spawns `tmux attach`, so disconnecting only kills
+# the attach process — the tmux server + claude process keep running.
+# Reconnecting attaches to the same session with full terminal state.
+TMUX_SESSION="claude-main"
+if ! tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+  tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 \
+    'while true; do claude; echo "Claude exited. Restarting in 2s..."; sleep 2; done'
+fi
+exec ttyd --writable -p 7681 tmux attach-session -t "$TMUX_SESSION"

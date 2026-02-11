@@ -46,7 +46,10 @@ type CreateSessionResponse struct {
 	CreatedAt time.Time            `json:"created_at"`
 }
 
-// CreateSession creates a new session using a per-agent StatefulSet
+// CreateSession creates or reuses a session using a per-agent StatefulSet.
+// If an active session already exists for the same user+agent pair with a
+// healthy pod, it is returned directly (GetOrCreate semantics). This allows
+// the frontend to reconnect to the same terminal after a WS disconnect.
 func (h *Handler) CreateSession(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
@@ -61,8 +64,6 @@ func (h *Handler) CreateSession(c *gin.Context) {
 
 	ctx := context.Background()
 
-	// Generate session ID
-	sessionID := uuid.New().String()
 	userIDInt := userID.(int64)
 	userIDStr := fmt.Sprintf("%d", userIDInt)
 
@@ -72,14 +73,67 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		return
 	}
 
+	// --- GetOrCreate: try to reuse an existing session for this user+agent ---
+	var existing models.Session
+	err := h.db.NewSelect().
+		Model(&existing).
+		Where("user_id = ?", userIDInt).
+		Where("agent_id = ?", req.AgentID).
+		Where("status IN (?)", bun.In([]models.SessionStatus{
+			models.SessionStatusRunning,
+			models.SessionStatusIdle,
+		})).
+		Order("created_at DESC").
+		Limit(1).
+		Scan(ctx)
+
+	if err == nil {
+		// Found an existing session — verify the pod is still healthy
+		podIP, podErr := h.containerManager.GetStatefulSetPodIP(ctx, userIDStr, req.AgentID)
+		if podErr == nil && podIP != "" {
+			// Pod is healthy — reuse session, refresh pod_ip and last_active
+			now := time.Now()
+			_, _ = h.db.NewUpdate().
+				Model((*models.Session)(nil)).
+				Set("pod_ip = ?", podIP).
+				Set("last_active = ?", now).
+				Set("status = ?", models.SessionStatusRunning).
+				Set("updated_at = ?", now).
+				Where("id = ?", existing.ID).
+				Exec(ctx)
+
+			log.Printf("Reusing existing session: sessionID=%s, agentID=%d, podIP=%s", existing.SessionID, req.AgentID, podIP)
+
+			response.Created(c, CreateSessionResponse{
+				SessionID: existing.SessionID,
+				Status:    models.SessionStatusRunning,
+				PodName:   existing.PodName,
+				CreatedAt: existing.CreatedAt,
+			})
+			return
+		}
+
+		// Pod is unhealthy — mark old session as deleted, fall through to create new
+		log.Printf("Existing session %s has unhealthy pod, marking as deleted", existing.SessionID)
+		_, _ = h.db.NewUpdate().
+			Model((*models.Session)(nil)).
+			Set("status = ?", models.SessionStatusDeleted).
+			Set("updated_at = ?", time.Now()).
+			Where("id = ?", existing.ID).
+			Exec(ctx)
+	}
+
+	// --- Create new session ---
+	sessionID := uuid.New().String()
 	log.Printf("Creating session: userID=%s, sessionID=%s, agentID=%d", userIDStr, sessionID, req.AgentID)
 
-	// Auto-close any existing running sessions for this user
-	_, err := h.db.NewUpdate().
+	// Close sessions for OTHER agents (user can only have one active agent at a time)
+	_, err = h.db.NewUpdate().
 		Model((*models.Session)(nil)).
 		Set("status = ?", models.SessionStatusDeleted).
 		Set("updated_at = ?", time.Now()).
 		Where("user_id = ?", userIDInt).
+		Where("agent_id != ?", req.AgentID).
 		Where("status IN (?)", bun.In([]models.SessionStatus{
 			models.SessionStatusRunning,
 			models.SessionStatusCreating,
@@ -87,7 +141,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		})).
 		Exec(ctx)
 	if err != nil {
-		log.Printf("Warning: failed to auto-close old sessions: %v", err)
+		log.Printf("Warning: failed to auto-close other agent sessions: %v", err)
 		// Not fatal, continue
 	}
 
