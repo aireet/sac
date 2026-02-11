@@ -302,6 +302,7 @@ import {
   fetchFileBlob, fetchPublicFileBlob, fetchGroupFileBlob, fetchSharedFileBlob,
   downloadFile, downloadPublicFile, downloadGroupFile, downloadSharedFile,
   uploadFile, uploadPublicFile, uploadGroupFile,
+  syncWorkspaceToPodStream,
   type WorkspaceFile, type SpaceTab,
 } from '../services/workspaceAPI'
 import { getFileCategory, MAX_TEXT_PREVIEW_BYTES, MAX_IMAGE_PREVIEW_BYTES } from '../utils/fileTypes'
@@ -581,6 +582,20 @@ const createSessionForAgent = async (agentId: number) => {
       await waitForSessionReady(response.session_id)
     }
 
+    // New StatefulSet — sync workspace files with progress
+    if (response.is_new) {
+      loadingMsg.content = 'Syncing workspace files...'
+      await syncWorkspaceToPodStream(agentId, (e) => {
+        if (e.error) return
+        if (e.total === 0) {
+          loadingMsg.content = 'No files to sync'
+        } else {
+          const pct = Math.round((e.synced / e.total) * 100)
+          loadingMsg.content = `Syncing files ${e.synced}/${e.total} (${pct}%)${e.file ? ': ' + e.file : ''}`
+        }
+      })
+    }
+
     sessionId.value = response.session_id
     console.log('Session ready:', response.session_id)
 
@@ -647,14 +662,43 @@ const handleSkillsChanged = async () => {
   }
 }
 
-const handleRestartFromPanel = () => {
-  // Fast poll for 30s to catch the transition back to Running
-  let fastPolls = 15
-  const fastTimer = setInterval(async () => {
+const handleRestartFromPanel = async () => {
+  // Immediately disconnect the dead terminal so the user sees a clear state
+  terminalRef.value?.cleanup()
+  sessionId.value = ''
+
+  const loadingMsg = message.loading('Restarting agent, waiting for pod to come back...', { duration: 0 })
+
+  // Wait a moment for K8s to process the force-delete, then poll until Running
+  await new Promise(r => setTimeout(r, 1500))
+
+  let retries = 30 // 60s total (30 × 2s)
+  const timer = setInterval(async () => {
     await pollStatuses()
-    fastPolls--
-    if (fastPolls <= 0) {
-      clearInterval(fastTimer)
+    retries--
+
+    const status = podStatuses.value.get(selectedAgentId.value)
+    const phase = status?.status
+
+    if (phase === 'Running') {
+      clearInterval(timer)
+      loadingMsg.content = 'Pod is back, reconnecting...'
+      try {
+        await createSessionForAgent(selectedAgentId.value)
+        loadingMsg.destroy()
+      } catch {
+        loadingMsg.type = 'error'
+        loadingMsg.content = 'Failed to reconnect after restart'
+        setTimeout(() => loadingMsg.destroy(), 3000)
+      }
+      return
+    }
+
+    if (retries <= 0) {
+      clearInterval(timer)
+      loadingMsg.type = 'warning'
+      loadingMsg.content = 'Pod did not come back within 60s. Try selecting the agent again.'
+      setTimeout(() => loadingMsg.destroy(), 5000)
     }
   }, 2000)
 }

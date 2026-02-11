@@ -323,17 +323,15 @@ func (h *Handler) RestartAgent(c *gin.Context) {
 		})).
 		Exec(ctx)
 
-	// Delete the StatefulSet pod (not the StatefulSet itself)
-	// K8s will automatically recreate the pod
-	podName := fmt.Sprintf("claude-code-%s-%d-0", userIDStr, agentID)
-	err = h.containerManager.DeletePodByName(ctx, podName)
-	if err != nil {
-		log.Printf("Failed to delete pod %s: %v", podName, err)
-		response.InternalError(c, "Failed to restart agent pod", err)
+	// Delete the entire StatefulSet so it's recreated with latest settings
+	// (resource limits, docker image, etc.) on next session creation
+	if err := h.containerManager.DeleteStatefulSet(ctx, userIDStr, agentID); err != nil {
+		log.Printf("Failed to delete StatefulSet for agent %d: %v", agentID, err)
+		response.InternalError(c, "Failed to restart agent", err)
 		return
 	}
 
-	log.Printf("Restarted agent %d pod %s for user %s", agentID, podName, userIDStr)
+	log.Printf("Restarted agent %d (deleted StatefulSet) for user %s", agentID, userIDStr)
 	response.Success(c, "Agent is restarting")
 }
 
@@ -438,6 +436,7 @@ func (h *Handler) GetAgentStatuses(c *gin.Context) {
 
 	type agentStatus struct {
 		AgentID       int64  `json:"agent_id"`
+		PodName       string `json:"pod_name"`
 		Status        string `json:"status"`
 		RestartCount  int32  `json:"restart_count"`
 		CPURequest    string `json:"cpu_request"`
@@ -451,6 +450,7 @@ func (h *Handler) GetAgentStatuses(c *gin.Context) {
 		info := h.containerManager.GetStatefulSetPodInfo(c.Request.Context(), userIDStr, aid)
 		statuses = append(statuses, agentStatus{
 			AgentID:       aid,
+			PodName:       info.PodName,
 			Status:        info.Status,
 			RestartCount:  info.RestartCount,
 			CPURequest:    info.CPURequest,

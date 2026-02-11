@@ -88,6 +88,7 @@ export const uninstallSkill = async (agentId: number, skillId: number): Promise<
 // Agent pod status
 export interface AgentStatus {
   agent_id: number
+  pod_name: string
   status: string
   restart_count: number
   cpu_request: string

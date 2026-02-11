@@ -355,16 +355,15 @@ func (h *Handler) RestartUserAgent(c *gin.Context) {
 		})).
 		Exec(ctx)
 
-	// Delete the pod (K8s will recreate it)
-	podName := fmt.Sprintf("claude-code-%s-%d-0", userIDStr, agentID)
-	err = h.containerManager.DeletePodByName(ctx, podName)
-	if err != nil {
-		log.Printf("Failed to delete pod %s: %v", podName, err)
-		response.InternalError(c, "Failed to restart agent pod", err)
+	// Delete the entire StatefulSet so it's recreated with latest settings
+	// (resource limits, docker image, etc.) on next session creation
+	if err := h.containerManager.DeleteStatefulSet(ctx, userIDStr, agentID); err != nil {
+		log.Printf("Failed to delete StatefulSet for agent %d: %v", agentID, err)
+		response.InternalError(c, "Failed to restart agent", err)
 		return
 	}
 
-	log.Printf("Admin restarted agent %d pod %s for user %d", agentID, podName, userID)
+	log.Printf("Admin restarted agent %d (deleted StatefulSet) for user %d", agentID, userID)
 	response.Success(c, "Agent is restarting")
 }
 

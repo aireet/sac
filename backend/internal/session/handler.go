@@ -44,6 +44,7 @@ type CreateSessionResponse struct {
 	Status    models.SessionStatus `json:"status"`
 	PodName   string               `json:"pod_name,omitempty"`
 	CreatedAt time.Time            `json:"created_at"`
+	IsNew     bool                 `json:"is_new"`
 }
 
 // CreateSession creates or reuses a session using a per-agent StatefulSet.
@@ -221,12 +222,9 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	log.Printf("Pod IP: %s", podIP)
 
 	if isNewStatefulSet {
-		// New pod — sync workspace and skills synchronously (pod has no files yet)
-		if h.workspaceSyncSvc != nil {
-			if err := h.workspaceSyncSvc.SyncWorkspaceToPod(ctx, userIDStr, req.AgentID); err != nil {
-				log.Printf("Warning: failed to sync workspace: %v", err)
-			}
-		}
+		// New pod — only sync skills (fast). Workspace sync is deferred to
+		// the frontend which calls the SSE /workspace/sync-stream endpoint
+		// with a progress bar so the user sees what's happening.
 		if err := h.syncService.SyncAllSkillsToAgent(ctx, userIDStr, req.AgentID); err != nil {
 			log.Printf("Warning: failed to sync skills to agent %d: %v", req.AgentID, err)
 		}
@@ -273,6 +271,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		Status:    models.SessionStatusRunning,
 		PodName:   stsName,
 		CreatedAt: session.CreatedAt,
+		IsNew:     isNewStatefulSet,
 	})
 }
 

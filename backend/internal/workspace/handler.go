@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"crypto/md5"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -68,6 +69,10 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		ws.GET("/shared/files/download", h.requireOSS(), h.DownloadSharedFile)
 		ws.POST("/shared/publish", h.requireOSS(), h.PublishToShared)
 		ws.DELETE("/shared/files", h.requireOSS(), h.DeleteSharedFile)
+
+		// Sync workspace files from OSS to pod
+		ws.POST("/sync", h.SyncToPod)
+		ws.GET("/sync-stream", h.SyncToPodStream)
 	}
 }
 
@@ -606,6 +611,64 @@ func (h *Handler) DeletePublicFile(c *gin.Context) {
 	go h.syncSvc.DeletePublicFileFromPods(context.Background(), filePath)
 
 	response.Success(c, "File deleted")
+}
+
+// SyncToPod triggers a full workspace re-sync from OSS to the agent's pod.
+func (h *Handler) SyncToPod(c *gin.Context) {
+	userID, _ := c.Get("userID")
+	userIDInt := userID.(int64)
+	userIDStr := fmt.Sprintf("%d", userIDInt)
+
+	var req struct {
+		AgentID int64 `json:"agent_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.AgentID <= 0 {
+		response.BadRequest(c, "agent_id is required")
+		return
+	}
+
+	ctx := context.Background()
+
+	if err := h.syncSvc.SyncWorkspaceToPod(ctx, userIDStr, req.AgentID); err != nil {
+		log.Printf("Workspace sync failed for user %s agent %d: %v", userIDStr, req.AgentID, err)
+		response.InternalError(c, "Workspace sync failed", err)
+		return
+	}
+
+	response.Success(c, "Workspace synced to pod")
+}
+
+// SyncToPodStream triggers a full workspace sync with SSE progress events.
+func (h *Handler) SyncToPodStream(c *gin.Context) {
+	userID, _ := c.Get("userID")
+	userIDInt := userID.(int64)
+	userIDStr := fmt.Sprintf("%d", userIDInt)
+
+	agentIDStr := c.Query("agent_id")
+	agentID, err := strconv.ParseInt(agentIDStr, 10, 64)
+	if err != nil || agentID <= 0 {
+		response.BadRequest(c, "agent_id is required")
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+
+	ctx := context.Background()
+	flusher := c.Writer
+
+	syncErr := h.syncSvc.SyncWorkspaceToPodWithProgress(ctx, userIDStr, agentID, func(p SyncProgress) {
+		data, _ := json.Marshal(p)
+		fmt.Fprintf(flusher, "data: %s\n\n", data)
+		flusher.Flush()
+	})
+
+	if syncErr != nil {
+		log.Printf("Workspace sync-stream failed for user %s agent %d: %v", userIDStr, agentID, syncErr)
+		fmt.Fprintf(flusher, "data: {\"error\":\"%s\"}\n\n", syncErr.Error())
+		flusher.Flush()
+	}
 }
 
 // ---- Helpers ----

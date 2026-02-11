@@ -282,11 +282,14 @@ func (m *Manager) CreatePVC(ctx context.Context, userID, sessionID string) error
 
 // DeletePodByName deletes a specific pod by name, used to restart StatefulSet pods
 func (m *Manager) DeletePodByName(ctx context.Context, podName string) error {
-	err := m.clientset.CoreV1().Pods(m.namespace).Delete(ctx, podName, metav1.DeleteOptions{})
+	grace := int64(0)
+	err := m.clientset.CoreV1().Pods(m.namespace).Delete(ctx, podName, metav1.DeleteOptions{
+		GracePeriodSeconds: &grace,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to delete pod %s: %w", podName, err)
 	}
-	log.Printf("Pod %s deleted (will be recreated by StatefulSet)", podName)
+	log.Printf("Pod %s force-deleted (will be recreated by StatefulSet)", podName)
 	return nil
 }
 
@@ -634,6 +637,7 @@ func (m *Manager) GetStatefulSetPodIP(ctx context.Context, userID string, agentI
 
 // PodInfo contains detailed information about a StatefulSet's pod.
 type PodInfo struct {
+	PodName       string `json:"pod_name"`
 	Status        string `json:"status"`
 	RestartCount  int32  `json:"restart_count"`
 	CPURequest    string `json:"cpu_request"`
@@ -659,7 +663,13 @@ func (m *Manager) GetStatefulSetPodInfo(ctx context.Context, userID string, agen
 	}
 
 	info := PodInfo{
-		Status: string(pod.Status.Phase),
+		PodName: podName,
+		Status:  string(pod.Status.Phase),
+	}
+
+	// Pod with a deletion timestamp is being terminated — report accurately
+	if pod.DeletionTimestamp != nil {
+		info.Status = "Terminating"
 	}
 
 	// Read image and resource requests/limits from the first container

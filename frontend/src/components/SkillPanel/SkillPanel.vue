@@ -31,6 +31,11 @@
             {{ agent?.config?.anthropic_base_url || 'Anthropic (default)' }}
           </n-text>
         </n-descriptions-item>
+        <n-descriptions-item label="Pod">
+          <n-text code style="font-size: 11px; word-break: break-all">
+            {{ podStatus?.pod_name || '-' }}
+          </n-text>
+        </n-descriptions-item>
       </n-descriptions>
 
       <n-space style="margin-top: 12px" :size="8">
@@ -40,7 +45,7 @@
               <template #icon>
                 <n-icon><RefreshOutline /></n-icon>
               </template>
-              Restart Pod
+              Restart Agent
             </n-button>
           </template>
           Restarting will terminate the current session and all unsaved conversation will be lost. Continue?
@@ -315,7 +320,8 @@ const statusTagType = computed((): 'success' | 'warning' | 'error' | 'default' =
   const status = props.podStatus?.status
   switch (status) {
     case 'Running': return 'success'
-    case 'Pending': return 'warning'
+    case 'Pending':
+    case 'Terminating': return 'warning'
     case 'Failed':
     case 'Error': return 'error'
     default: return 'default'
@@ -327,6 +333,7 @@ const statusLabel = computed((): string => {
   switch (status) {
     case 'Running': return 'Running'
     case 'Pending': return 'Pending'
+    case 'Terminating': return 'Terminating'
     case 'Failed': return 'Failed'
     case 'Error': return 'Error'
     case 'NotDeployed': return 'Not Deployed'

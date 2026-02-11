@@ -105,6 +105,8 @@ func (s *SyncService) SyncWorkspaceToPod(ctx context.Context, userID string, age
 }
 
 // getActivePodsForAgent returns pod names for active sessions of a user's specific agent.
+// Session stores the StatefulSet name (e.g. "claude-code-1-37"), but the actual pod
+// name has a "-0" suffix (e.g. "claude-code-1-37-0"), so we append it.
 func (s *SyncService) getActivePodsForAgent(ctx context.Context, userID, agentID int64) ([]string, error) {
 	var sessions []models.Session
 	err := s.db.NewSelect().Model(&sessions).
@@ -117,7 +119,7 @@ func (s *SyncService) getActivePodsForAgent(ctx context.Context, userID, agentID
 	pods := make([]string, 0, len(sessions))
 	for _, sess := range sessions {
 		if sess.PodName != "" {
-			pods = append(pods, sess.PodName)
+			pods = append(pods, sess.PodName+"-0")
 		}
 	}
 	return pods, nil
@@ -135,7 +137,7 @@ func (s *SyncService) getAllActivePods(ctx context.Context) ([]string, error) {
 	pods := make([]string, 0, len(sessions))
 	for _, sess := range sessions {
 		if sess.PodName != "" {
-			pods = append(pods, sess.PodName)
+			pods = append(pods, sess.PodName+"-0")
 		}
 	}
 	return pods, nil
@@ -327,7 +329,7 @@ func (s *SyncService) getActivePodsForGroupMembers(ctx context.Context, groupID 
 	pods := make([]string, 0, len(sessions))
 	for _, sess := range sessions {
 		if sess.PodName != "" {
-			pods = append(pods, sess.PodName)
+			pods = append(pods, sess.PodName+"-0")
 		}
 	}
 	return pods, nil
@@ -452,53 +454,161 @@ func (s *SyncService) DeleteSharedFileFromPods(ctx context.Context, relPath stri
 	}
 }
 
-// syncPrefix downloads all files under an OSS prefix and writes them to destDir in the pod.
-func (s *SyncService) syncPrefix(ctx context.Context, oss *storage.OSSClient, pod, prefix, destDir, _ string) error {
+// SyncProgress represents the progress of a full workspace sync.
+type SyncProgress struct {
+	Synced int    `json:"synced"`
+	Total  int    `json:"total"`
+	File   string `json:"file"`
+}
+
+// syncTask represents a single file to sync from OSS to pod.
+type syncTask struct {
+	ossKey   string
+	destPath string
+	prefix   string
+}
+
+// collectTasks lists all syncable files under a prefix and returns tasks.
+func (s *SyncService) collectTasks(oss *storage.OSSClient, prefix, destDir string) ([]syncTask, error) {
 	objects, err := oss.ListAll(prefix)
 	if err != nil {
-		return fmt.Errorf("failed to list OSS prefix %s: %w", prefix, err)
+		return nil, fmt.Errorf("failed to list OSS prefix %s: %w", prefix, err)
 	}
-
-	synced := 0
+	var tasks []syncTask
 	for _, obj := range objects {
-		if obj.Size > maxSyncFileSize {
-			log.Printf("Skipping large file %s (%d bytes > %d limit)", obj.Key, obj.Size, maxSyncFileSize)
+		if obj.Size > maxSyncFileSize || strings.HasSuffix(obj.Key, "/") {
 			continue
 		}
-
-		// Skip directory markers
-		if strings.HasSuffix(obj.Key, "/") {
-			continue
-		}
-
-		// Compute relative path within the destination
 		relPath := strings.TrimPrefix(obj.Key, prefix)
 		if relPath == "" {
 			continue
 		}
+		tasks = append(tasks, syncTask{
+			ossKey:   obj.Key,
+			destPath: destDir + "/" + relPath,
+			prefix:   prefix,
+		})
+	}
+	return tasks, nil
+}
 
-		destPath := destDir + "/" + relPath
+// SyncWorkspaceToPodWithProgress syncs with progress callback for SSE.
+func (s *SyncService) SyncWorkspaceToPodWithProgress(ctx context.Context, userID string, agentID int64, progressFn func(SyncProgress)) error {
+	oss := s.provider.GetClient(ctx)
+	if oss == nil {
+		log.Println("Workspace sync skipped: OSS not configured")
+		return nil
+	}
 
-		// Download from OSS
-		body, err := oss.Download(obj.Key)
+	pod := s.podName(userID, agentID)
+
+	// Create workspace directories
+	mkdirCmd := []string{"bash", "-c", fmt.Sprintf(
+		"mkdir -p %s %s %s %s %s",
+		privateWorkDir, publicWorkDir, groupWorkBaseDir, sharedWorkDir, claudeCommandsDir,
+	)}
+	if _, _, err := s.containerManager.ExecInPod(ctx, pod, mkdirCmd, nil); err != nil {
+		return fmt.Errorf("failed to create workspace dirs: %w", err)
+	}
+
+	// Collect all tasks
+	var allTasks []syncTask
+
+	privatePrefix := fmt.Sprintf("users/%s/agents/%d/", userID, agentID)
+	if tasks, err := s.collectTasks(oss, privatePrefix, privateWorkDir); err == nil {
+		allTasks = append(allTasks, tasks...)
+	}
+
+	commandsPrefix := fmt.Sprintf("users/%s/agents/%d/claude-commands/", userID, agentID)
+	if tasks, err := s.collectTasks(oss, commandsPrefix, claudeCommandsDir); err == nil {
+		allTasks = append(allTasks, tasks...)
+	}
+
+	if tasks, err := s.collectTasks(oss, "public/", publicWorkDir); err == nil {
+		allTasks = append(allTasks, tasks...)
+	}
+
+	// Group workspaces
+	var members []models.GroupMember
+	_ = s.db.NewSelect().Model(&members).
+		Where("gm.user_id = ?", userID).
+		Scan(ctx)
+	for _, m := range members {
+		groupDir := fmt.Sprintf("%s/%d", groupWorkBaseDir, m.GroupID)
+		groupPrefix := fmt.Sprintf("groups/%d/", m.GroupID)
+		mkdirCmd := []string{"bash", "-c", fmt.Sprintf("mkdir -p %s", groupDir)}
+		s.containerManager.ExecInPod(ctx, pod, mkdirCmd, nil)
+		if tasks, err := s.collectTasks(oss, groupPrefix, groupDir); err == nil {
+			allTasks = append(allTasks, tasks...)
+		}
+	}
+
+	if tasks, err := s.collectTasks(oss, "shared/", sharedWorkDir); err == nil {
+		allTasks = append(allTasks, tasks...)
+	}
+
+	total := len(allTasks)
+	progressFn(SyncProgress{Synced: 0, Total: total})
+
+	// Sync all tasks
+	synced := 0
+	for _, task := range allTasks {
+		body, err := oss.Download(task.ossKey)
 		if err != nil {
-			log.Printf("Warning: failed to download %s: %v", obj.Key, err)
+			log.Printf("Warning: failed to download %s: %v", task.ossKey, err)
 			continue
 		}
-
 		content, err := io.ReadAll(body)
 		body.Close()
 		if err != nil {
-			log.Printf("Warning: failed to read %s: %v", obj.Key, err)
+			log.Printf("Warning: failed to read %s: %v", task.ossKey, err)
 			continue
 		}
-
-		// Write to pod
-		if err := s.containerManager.WriteFileInPod(ctx, pod, destPath, string(content)); err != nil {
-			log.Printf("Warning: failed to write %s to pod %s: %v", destPath, pod, err)
+		if err := s.containerManager.WriteFileInPod(ctx, pod, task.destPath, string(content)); err != nil {
+			log.Printf("Warning: failed to write %s to pod %s: %v", task.destPath, pod, err)
 			continue
 		}
+		synced++
+		// Extract short filename for display
+		parts := strings.Split(task.destPath, "/")
+		fileName := parts[len(parts)-1]
+		progressFn(SyncProgress{Synced: synced, Total: total, File: fileName})
+	}
 
+	// Make public/shared workspace read-only
+	for _, dir := range []string{publicWorkDir, sharedWorkDir} {
+		chmodCmd := []string{"bash", "-c", fmt.Sprintf("chmod -R a-w %s 2>/dev/null || true", dir)}
+		s.containerManager.ExecInPod(ctx, pod, chmodCmd, nil)
+	}
+
+	log.Printf("Workspace sync completed for user %s, agent %d (%d files)", userID, agentID, synced)
+	return nil
+}
+
+// syncPrefix downloads all files under an OSS prefix and writes them to destDir in the pod.
+func (s *SyncService) syncPrefix(ctx context.Context, oss *storage.OSSClient, pod, prefix, destDir, _ string) error {
+	tasks, err := s.collectTasks(oss, prefix, destDir)
+	if err != nil {
+		return err
+	}
+
+	synced := 0
+	for _, task := range tasks {
+		body, err := oss.Download(task.ossKey)
+		if err != nil {
+			log.Printf("Warning: failed to download %s: %v", task.ossKey, err)
+			continue
+		}
+		content, err := io.ReadAll(body)
+		body.Close()
+		if err != nil {
+			log.Printf("Warning: failed to read %s: %v", task.ossKey, err)
+			continue
+		}
+		if err := s.containerManager.WriteFileInPod(ctx, pod, task.destPath, string(content)); err != nil {
+			log.Printf("Warning: failed to write %s to pod %s: %v", task.destPath, pod, err)
+			continue
+		}
 		synced++
 	}
 

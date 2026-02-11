@@ -22,6 +22,7 @@ export interface CreateSessionResponse {
   status: string
   pod_name?: string
   created_at: string
+  is_new?: boolean
 }
 
 /**

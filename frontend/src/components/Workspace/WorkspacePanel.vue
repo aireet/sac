@@ -101,9 +101,22 @@
         <n-button v-if="canEdit" size="small" @click="showNewFolder = true">
           New Folder
         </n-button>
-        <n-button size="small" quaternary @click="refreshTree">
-          <template #icon><n-icon><RefreshOutline /></n-icon></template>
-        </n-button>
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button size="small" quaternary @click="refreshTree">
+              <template #icon><n-icon><RefreshOutline /></n-icon></template>
+            </n-button>
+          </template>
+          Refresh file list
+        </n-tooltip>
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button size="small" quaternary @click="handleSyncToPod" :loading="syncing">
+              <template #icon><n-icon :class="{ 'sync-spin': syncing }"><SyncOutline /></n-icon></template>
+            </n-button>
+          </template>
+          Sync all workspace files to agent
+        </n-tooltip>
       </n-space>
     </div>
 
@@ -129,6 +142,38 @@
         Delete {{ checkedKeys.length }} items?
       </n-popconfirm>
       <n-button size="tiny" quaternary @click="checkedKeys = []">Clear</n-button>
+    </div>
+
+    <!-- Upload progress overlay -->
+    <div v-if="uploading" class="ws-sync-overlay">
+      <div class="ws-sync-content" style="width: 70%; max-width: 300px">
+        <n-text style="font-size: 13px; color: #63e2b7; margin-bottom: 4px">
+          {{ uploadStatus }}
+        </n-text>
+        <n-progress
+          type="line"
+          :percentage="uploadProgress"
+          :indicator-placement="'inside'"
+          processing
+          :height="20"
+        />
+      </div>
+    </div>
+
+    <!-- Sync overlay -->
+    <div v-if="syncing" class="ws-sync-overlay">
+      <div class="ws-sync-content" style="width: 70%; max-width: 300px">
+        <n-text style="font-size: 13px; color: #63e2b7; margin-bottom: 4px">
+          {{ syncStatus }}
+        </n-text>
+        <n-progress
+          type="line"
+          :percentage="syncProgress"
+          :indicator-placement="'inside'"
+          processing
+          :height="20"
+        />
+      </div>
     </div>
 
     <!-- Body: Tree -->
@@ -207,7 +252,7 @@
 import { ref, computed, watch, onMounted, h, type Component } from 'vue'
 import {
   NTabs, NTabPane, NSpace, NIcon, NText, NButton, NUpload, NSpin,
-  NEmpty, NPopconfirm, NModal, NInput, NProgress, NTree, NSelect,
+  NEmpty, NPopconfirm, NModal, NInput, NProgress, NTree, NSelect, NTooltip,
   useMessage, useDialog,
   type UploadCustomRequestOptions, type TreeOption,
 } from 'naive-ui'
@@ -215,7 +260,7 @@ import {
   LockClosedOutline, GlobeOutline, RefreshOutline, DocumentOutline,
   DownloadOutline, TrashOutline, FolderOutline, CodeSlashOutline,
   DocumentTextOutline, ImageOutline, SettingsOutline, CloseOutline,
-  PeopleOutline, ShareSocialOutline,
+  PeopleOutline, ShareSocialOutline, SyncOutline,
 } from '@vicons/ionicons5'
 import {
   listFiles, uploadFile, downloadFile, deleteFile, createDirectory, getQuota,
@@ -224,6 +269,7 @@ import {
   listGroupFiles, uploadGroupFile, downloadGroupFile, deleteGroupFile,
   createGroupDirectory, getGroupQuota,
   listSharedFiles, downloadSharedFile, deleteSharedFile,
+  syncWorkspaceToPodStream,
   type WorkspaceFile, type WorkspaceQuota, type GroupWorkspaceQuota, type SpaceTab,
 } from '../../services/workspaceAPI'
 import { listGroups, type Group } from '../../services/groupAPI'
@@ -265,6 +311,16 @@ const selectedGroupId = ref<number | null>(null)
 const loadingGroups = ref(false)
 const groupQuota = ref<GroupWorkspaceQuota | null>(null)
 const showGroupManager = ref(false)
+
+// Sync state
+const syncing = ref(false)
+const syncProgress = ref(0)
+const syncStatus = ref('')
+
+// Upload progress state
+const uploading = ref(false)
+const uploadProgress = ref(0)
+const uploadStatus = ref('')
 
 // --- Computed ---
 const isAdmin = computed(() => authStore.isAdmin)
@@ -534,17 +590,21 @@ const loadGroups = async () => {
 // --- File operations ---
 const handleUpload = async ({ file, onFinish, onError }: UploadCustomRequestOptions) => {
   if (!file.file) return
+  uploading.value = true
+  uploadProgress.value = 0
+  uploadStatus.value = `Uploading ${file.name}...`
+  const onProg = (p: number) => { uploadProgress.value = p }
   try {
     switch (spaceTab.value) {
       case 'private':
-        await uploadFile(props.agentId, file.file, activeDir.value)
+        await uploadFile(props.agentId, file.file, activeDir.value, onProg)
         break
       case 'public':
-        await uploadPublicFile(file.file, activeDir.value)
+        await uploadPublicFile(file.file, activeDir.value, onProg)
         break
       case 'group':
         if (!selectedGroupId.value) return
-        await uploadGroupFile(selectedGroupId.value, file.file, activeDir.value)
+        await uploadGroupFile(selectedGroupId.value, file.file, activeDir.value, onProg)
         break
     }
     message.success(`Uploaded ${file.name}`)
@@ -556,6 +616,8 @@ const handleUpload = async ({ file, onFinish, onError }: UploadCustomRequestOpti
     console.error('Upload failed:', err)
     message.error(`Failed to upload ${file.name}`)
     onError()
+  } finally {
+    uploading.value = false
   }
 }
 
@@ -671,6 +733,37 @@ const handleCreateFile = async () => {
   }
 }
 
+// --- Sync to Pod ---
+const handleSyncToPod = async () => {
+  syncing.value = true
+  syncProgress.value = 0
+  syncStatus.value = 'Preparing...'
+  try {
+    await syncWorkspaceToPodStream(props.agentId, (e) => {
+      if (e.error) {
+        message.error(`Sync error: ${e.error}`)
+        return
+      }
+      if (e.total === 0) {
+        syncStatus.value = 'No files to sync'
+        syncProgress.value = 100
+      } else {
+        syncProgress.value = Math.round((e.synced / e.total) * 100)
+        syncStatus.value = e.file
+          ? `${e.synced}/${e.total}: ${e.file}`
+          : `0/${e.total} files...`
+      }
+    })
+    message.success('Workspace synced to agent')
+    refreshTree()
+  } catch (err) {
+    console.error('Sync failed:', err)
+    message.error('Failed to sync workspace to agent')
+  } finally {
+    syncing.value = false
+  }
+}
+
 // --- Drag & Drop ---
 const onDragEnter = (e: DragEvent) => {
   e.preventDefault()
@@ -692,24 +785,36 @@ const handleDrop = async (e: DragEvent) => {
   if (!canEdit.value) return
   const droppedFiles = e.dataTransfer?.files
   if (!droppedFiles?.length) return
-  for (const f of droppedFiles) {
+  const total = droppedFiles.length
+  uploading.value = true
+  uploadProgress.value = 0
+  let succeeded = 0
+  for (let i = 0; i < total; i++) {
+    const f = droppedFiles[i]!
+    uploadStatus.value = total > 1 ? `Uploading ${i + 1}/${total}: ${f.name}` : `Uploading ${f.name}...`
+    uploadProgress.value = 0
+    const onProg = (p: number) => { uploadProgress.value = p }
     try {
       switch (spaceTab.value) {
         case 'private':
-          await uploadFile(props.agentId, f, activeDir.value)
+          await uploadFile(props.agentId, f, activeDir.value, onProg)
           break
         case 'public':
-          await uploadPublicFile(f, activeDir.value)
+          await uploadPublicFile(f, activeDir.value, onProg)
           break
         case 'group':
           if (!selectedGroupId.value) continue
-          await uploadGroupFile(selectedGroupId.value, f, activeDir.value)
+          await uploadGroupFile(selectedGroupId.value, f, activeDir.value, onProg)
           break
       }
-      message.success(`Uploaded ${f.name}`)
+      succeeded++
     } catch {
       message.error(`Failed to upload ${f.name}`)
     }
+  }
+  uploading.value = false
+  if (succeeded > 0) {
+    message.success(total === 1 ? `Uploaded ${droppedFiles[0]!.name}` : `Uploaded ${succeeded}/${total} files`)
   }
   await reloadDir(activeDir.value)
   if (spaceTab.value === 'private') loadQuota()
@@ -795,6 +900,7 @@ onMounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 .ws-header {
@@ -862,6 +968,34 @@ onMounted(() => {
 .ws-content.drag-over {
   border: 2px dashed #0ea5e9;
   background: rgba(14, 165, 233, 0.04);
+}
+
+.ws-sync-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  border-radius: 8px;
+}
+
+.ws-sync-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.sync-spin {
+  animation: sync-rotate 1s linear infinite;
+}
+
+@keyframes sync-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* Tree node styles */

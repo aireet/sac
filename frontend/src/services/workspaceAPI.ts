@@ -269,6 +269,55 @@ export const deleteSharedFile = async (path: string): Promise<void> => {
   await api.delete('/workspace/shared/files', { params: { path } })
 }
 
+// ---- Sync workspace to pod ----
+
+export const syncWorkspaceToPod = async (agentId: number): Promise<void> => {
+  await api.post('/workspace/sync', { agent_id: agentId })
+}
+
+export interface SyncProgressEvent {
+  synced: number
+  total: number
+  file: string
+  error?: string
+}
+
+export const syncWorkspaceToPodStream = async (
+  agentId: number,
+  onProgress: (event: SyncProgressEvent) => void,
+): Promise<void> => {
+  const token = localStorage.getItem('token')
+  const baseUrl = api.defaults.baseURL
+  const url = `${baseUrl}/workspace/sync-stream?agent_id=${agentId}`
+
+  const resp = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!resp.ok) throw new Error(`Sync failed: ${resp.status}`)
+  if (!resp.body) throw new Error('No response body')
+
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try {
+          const event = JSON.parse(line.slice(6)) as SyncProgressEvent
+          onProgress(event)
+        } catch { /* skip malformed */ }
+      }
+    }
+  }
+}
+
 // ---- Type exports ----
 
 export type SpaceTab = 'private' | 'public' | 'group' | 'shared'
