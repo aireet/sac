@@ -48,6 +48,16 @@ if [ ! -f /root/.claude/settings.json ]; then
 SETTINGS
 fi
 
+# Configure tmux for true-color passthrough so terminal rendering
+# matches direct ttyd→claude (xterm-256color) behavior.
+cat > /root/.tmux.conf <<'TMUX'
+set -g default-terminal "tmux-256color"
+set -ag terminal-overrides ",xterm-256color:RGB"
+set -g mouse off
+set -g status off
+set -g escape-time 0
+TMUX
+
 # Start Claude Code inside a persistent tmux session.
 # Each WS connection spawns `tmux attach`, so disconnecting only kills
 # the attach process — the tmux server + claude process keep running.
