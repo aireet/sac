@@ -315,7 +315,6 @@ import {
   NEmpty,
   NPopconfirm,
   NSpin,
-  NBadge,
   useMessage,
 } from 'naive-ui'
 import { RefreshOutline, CloseOutline, ChatbubblesOutline, SyncOutline } from '@vicons/ionicons5'
