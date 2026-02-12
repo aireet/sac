@@ -18,6 +18,12 @@ export interface UserSetting {
   updated_at: string
 }
 
+export interface AdminUserGroup {
+  id: number
+  name: string
+  role: string
+}
+
 export interface AdminUser {
   id: number
   username: string
@@ -25,6 +31,7 @@ export interface AdminUser {
   display_name: string
   role: string
   agent_count: number
+  groups: AdminUserGroup[]
   created_at: string
   updated_at: string
 }
@@ -160,4 +167,60 @@ export async function exportConversationsCSV(params: { user_id?: number; agent_i
   link.click()
   link.remove()
   window.URL.revokeObjectURL(url)
+}
+
+// Admin group management
+export interface AdminGroup {
+  id: number
+  name: string
+  description: string
+  owner_id: number
+  owner?: { id: number; username: string; display_name: string }
+  member_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface AdminGroupMember {
+  id: number
+  group_id: number
+  user_id: number
+  role: string
+  created_at: string
+  user?: { id: number; username: string; display_name: string }
+}
+
+export async function getAdminGroups(): Promise<AdminGroup[]> {
+  const response = await api.get('/admin/groups')
+  return response.data
+}
+
+export async function createAdminGroup(data: { name: string; description?: string; owner_id?: number }): Promise<AdminGroup> {
+  const response = await api.post('/admin/groups', data)
+  return response.data
+}
+
+export async function updateAdminGroup(id: number, data: { name?: string; description?: string }): Promise<void> {
+  await api.put(`/admin/groups/${id}`, data)
+}
+
+export async function deleteAdminGroup(id: number): Promise<void> {
+  await api.delete(`/admin/groups/${id}`)
+}
+
+export async function getAdminGroupMembers(groupId: number): Promise<AdminGroupMember[]> {
+  const response = await api.get(`/admin/groups/${groupId}/members`)
+  return response.data
+}
+
+export async function addAdminGroupMember(groupId: number, userId: number, role: string = 'member'): Promise<void> {
+  await api.post(`/admin/groups/${groupId}/members`, { user_id: userId, role })
+}
+
+export async function removeAdminGroupMember(groupId: number, userId: number): Promise<void> {
+  await api.delete(`/admin/groups/${groupId}/members/${userId}`)
+}
+
+export async function updateAdminGroupMemberRole(groupId: number, userId: number, role: string): Promise<void> {
+  await api.put(`/admin/groups/${groupId}/members/${userId}`, { role })
 }

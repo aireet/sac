@@ -113,13 +113,17 @@ func main() {
 		workspaceHandler := workspace.NewHandler(database.DB, ossProvider, workspaceSyncSvc)
 		workspaceHandler.RegisterRoutes(protectedGroup)
 
-		// Group routes
+		// Group routes (read-only for authenticated users)
 		groupHandler := group.NewHandler(database.DB)
 		groupHandler.RegisterRoutes(protectedGroup)
 
-		// Admin routes (requires admin role, checked inside RegisterRoutes)
+		// Admin routes (requires admin role)
+		adminGroup := protectedGroup.Group("/admin")
+		adminGroup.Use(admin.AdminMiddleware())
+
 		adminHandler := admin.NewHandler(database.DB, containerMgr)
-		adminHandler.RegisterRoutes(protectedGroup)
+		adminHandler.RegisterRoutes(adminGroup)
+		groupHandler.RegisterAdminRoutes(adminGroup)
 	}
 
 	// Start server (listen on all interfaces for remote debugging)

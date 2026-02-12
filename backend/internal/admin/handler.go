@@ -76,9 +76,16 @@ func (h *Handler) UpdateSetting(c *gin.Context) {
 func (h *Handler) GetUsers(c *gin.Context) {
 	ctx := context.Background()
 
+	type GroupBrief struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+		Role string `json:"role"`
+	}
+
 	type UserWithCount struct {
 		models.User
-		AgentCount int `bun:"agent_count" json:"agent_count"`
+		AgentCount int          `bun:"agent_count" json:"agent_count"`
+		Groups     []GroupBrief `bun:"-" json:"groups"`
 	}
 
 	var users []UserWithCount
@@ -91,6 +98,44 @@ func (h *Handler) GetUsers(c *gin.Context) {
 	if err != nil {
 		response.InternalError(c, "Failed to fetch users", err)
 		return
+	}
+
+	// Batch-load group memberships for all users
+	if len(users) > 0 {
+		userIDs := make([]int64, len(users))
+		for i, u := range users {
+			userIDs[i] = u.ID
+		}
+
+		type memberRow struct {
+			UserID    int64  `bun:"user_id"`
+			GroupID   int64  `bun:"group_id"`
+			GroupName string `bun:"group_name"`
+			Role      string `bun:"role"`
+		}
+		var rows []memberRow
+		_ = h.db.NewSelect().
+			TableExpr("group_members AS gm").
+			ColumnExpr("gm.user_id").
+			ColumnExpr("gm.group_id").
+			ColumnExpr("g.name AS group_name").
+			ColumnExpr("gm.role").
+			Join("JOIN groups AS g ON g.id = gm.group_id").
+			Where("gm.user_id IN (?)", bun.In(userIDs)).
+			Scan(ctx, &rows)
+
+		groupMap := make(map[int64][]GroupBrief)
+		for _, r := range rows {
+			groupMap[r.UserID] = append(groupMap[r.UserID], GroupBrief{
+				ID: r.GroupID, Name: r.GroupName, Role: r.Role,
+			})
+		}
+		for i := range users {
+			users[i].Groups = groupMap[users[i].ID]
+			if users[i].Groups == nil {
+				users[i].Groups = []GroupBrief{}
+			}
+		}
 	}
 
 	response.OK(c, users)
@@ -703,24 +748,22 @@ func (h *Handler) ExportConversations(c *gin.Context) {
 	w.Flush()
 }
 
-func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	admin := rg.Group("/admin")
-	admin.Use(AdminMiddleware())
-	{
-		admin.GET("/settings", h.GetSettings)
-		admin.PUT("/settings/:key", h.UpdateSetting)
-		admin.GET("/users", h.GetUsers)
-		admin.PUT("/users/:id/role", h.UpdateUserRole)
-		admin.GET("/users/:id/settings", h.GetUserSettings)
-		admin.PUT("/users/:id/settings/:key", h.SetUserSetting)
-		admin.DELETE("/users/:id/settings/:key", h.DeleteUserSetting)
-		admin.GET("/users/:id/agents", h.GetUserAgents)
-		admin.DELETE("/users/:id/agents/:agentId", h.DeleteUserAgent)
-		admin.POST("/users/:id/agents/:agentId/restart", h.RestartUserAgent)
-		admin.PUT("/users/:id/agents/:agentId/resources", h.UpdateAgentResources)
-		admin.PUT("/users/:id/agents/:agentId/image", h.UpdateAgentImage)
-		admin.POST("/agents/batch-update-image", h.BatchUpdateImage)
-		admin.GET("/conversations", h.GetConversations)
-		admin.GET("/conversations/export", h.ExportConversations)
-	}
+// RegisterRoutes registers admin routes on the given admin router group.
+// The caller must provide a group that already has AdminMiddleware applied.
+func (h *Handler) RegisterRoutes(adminGroup *gin.RouterGroup) {
+	adminGroup.GET("/settings", h.GetSettings)
+	adminGroup.PUT("/settings/:key", h.UpdateSetting)
+	adminGroup.GET("/users", h.GetUsers)
+	adminGroup.PUT("/users/:id/role", h.UpdateUserRole)
+	adminGroup.GET("/users/:id/settings", h.GetUserSettings)
+	adminGroup.PUT("/users/:id/settings/:key", h.SetUserSetting)
+	adminGroup.DELETE("/users/:id/settings/:key", h.DeleteUserSetting)
+	adminGroup.GET("/users/:id/agents", h.GetUserAgents)
+	adminGroup.DELETE("/users/:id/agents/:agentId", h.DeleteUserAgent)
+	adminGroup.POST("/users/:id/agents/:agentId/restart", h.RestartUserAgent)
+	adminGroup.PUT("/users/:id/agents/:agentId/resources", h.UpdateAgentResources)
+	adminGroup.PUT("/users/:id/agents/:agentId/image", h.UpdateAgentImage)
+	adminGroup.POST("/agents/batch-update-image", h.BatchUpdateImage)
+	adminGroup.GET("/conversations", h.GetConversations)
+	adminGroup.GET("/conversations/export", h.ExportConversations)
 }

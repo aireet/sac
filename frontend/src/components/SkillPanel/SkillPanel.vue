@@ -68,31 +68,42 @@
     <n-card :bordered="false" size="small">
       <template #header>
         <n-space align="center" justify="space-between" style="width: 100%">
-          <n-space align="center" :size="8">
-            <n-text strong>Skills</n-text>
-            <n-tag v-if="outdatedCount > 0" type="warning" size="small" round>
-              {{ outdatedCount }} update{{ outdatedCount > 1 ? 's' : '' }}
-            </n-tag>
-          </n-space>
-          <n-space :size="4">
-            <n-button
-              v-if="outdatedCount > 0"
-              size="tiny"
-              type="warning"
-              :loading="syncing"
-              @click="handleSyncSkills"
-            >
-              <template #icon>
-                <n-icon><SyncOutline /></n-icon>
-              </template>
-              Sync
-            </n-button>
-            <n-button size="tiny" quaternary @click="$emit('openMarketplace')">
-              + Install
-            </n-button>
-          </n-space>
+          <n-text strong>Skills</n-text>
+          <n-button size="tiny" quaternary @click="$emit('openMarketplace')">
+            + Install
+          </n-button>
         </n-space>
       </template>
+
+      <!-- Update Banner -->
+      <div v-if="outdatedCount > 0" class="update-banner" @click="handleSyncSkills">
+        <div class="update-banner-pulse" />
+        <div class="update-banner-content">
+          <n-space align="center" :size="8">
+            <n-icon size="18" color="#f0a020"><SyncOutline /></n-icon>
+            <div>
+              <n-text strong style="font-size: 13px; color: #f0a020">
+                {{ outdatedCount }} skill{{ outdatedCount > 1 ? 's' : '' }} available to update
+              </n-text>
+              <br />
+              <n-text depth="3" style="font-size: 11px">
+                Click to sync latest versions to your agent
+              </n-text>
+            </div>
+          </n-space>
+          <n-button
+            size="small"
+            type="warning"
+            :loading="syncing"
+            @click.stop="handleSyncSkills"
+          >
+            <template #icon>
+              <n-icon><SyncOutline /></n-icon>
+            </template>
+            Sync Now
+          </n-button>
+        </div>
+      </div>
 
       <n-empty v-if="installedSkillList.length === 0" description="No skills installed" size="small">
         <template #extra>
@@ -115,9 +126,11 @@
             <n-space align="center" :size="8" style="cursor: pointer; flex: 1">
               <span class="skill-icon">{{ skill.icon }}</span>
               <div>
-                <n-space align="center" :size="4">
+                <n-space align="center" :size="6">
                   <n-text strong style="font-size: 13px">{{ skill.name }}</n-text>
-                  <n-badge v-if="needsUpdate(skill)" dot type="warning" />
+                  <n-tag v-if="needsUpdate(skill)" type="warning" size="small" round :bordered="false" class="update-tag">
+                    NEW
+                  </n-tag>
                 </n-space>
                 <n-text depth="3" style="font-size: 11px; font-family: monospace">
                   /{{ skill.command_name }}
@@ -592,6 +605,67 @@ const sendCommand = (command: string) => {
 .agent-icon-large {
   font-size: 36px;
   line-height: 1;
+}
+
+.update-banner {
+  position: relative;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(240, 160, 32, 0.3);
+  background: rgba(240, 160, 32, 0.08);
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  overflow: hidden;
+}
+
+.update-banner:hover {
+  background: rgba(240, 160, 32, 0.14);
+  border-color: rgba(240, 160, 32, 0.5);
+}
+
+.update-banner-content {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 1;
+}
+
+.update-banner-pulse {
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  border-radius: 8px;
+  border: 2px solid rgba(240, 160, 32, 0.4);
+  animation: pulse-border 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes pulse-border {
+  0%, 100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.005);
+  }
+}
+
+.update-tag {
+  animation: tag-blink 2s ease-in-out infinite;
+  font-size: 10px;
+  padding: 0 5px;
+  line-height: 16px;
+  height: 16px;
+}
+
+@keyframes tag-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 .skill-card {

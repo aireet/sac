@@ -98,6 +98,11 @@
               Admin
             </n-button>
             <n-text depth="3" style="font-size: 13px">{{ authStore.user?.username }}</n-text>
+            <template v-if="userGroups.length > 0">
+              <n-tag v-for="g in userGroups" :key="g.id" size="small" type="info" :bordered="false">
+                {{ g.name }}
+              </n-tag>
+            </template>
             <n-button
               size="small"
               quaternary
@@ -306,6 +311,7 @@ import {
   type WorkspaceFile, type SpaceTab,
 } from '../services/workspaceAPI'
 import { getFileCategory, MAX_TEXT_PREVIEW_BYTES, MAX_IMAGE_PREVIEW_BYTES } from '../utils/fileTypes'
+import { listGroups, type Group } from '../services/groupAPI'
 import { extractApiError } from '../utils/error'
 import { useAuthStore } from '../stores/auth'
 import { getWsBaseUrl } from '../services/api'
@@ -327,6 +333,7 @@ const showAgentCreator = ref(false)
 const editingAgent = ref<Agent | null>(null)
 const viewMode = ref<'terminal' | 'marketplace'>('terminal')
 const inputMode = ref<'chat' | 'terminal'>('terminal')
+const userGroups = ref<Group[]>([])
 
 // Right panel resize
 const rightPanelWidth = ref(480)
@@ -732,6 +739,7 @@ onMounted(() => {
   loadAgents()
   pollStatuses()
   pollTimer = setInterval(pollStatuses, 5000)
+  listGroups().then(g => { userGroups.value = g }).catch(() => {})
 })
 
 onUnmounted(() => {

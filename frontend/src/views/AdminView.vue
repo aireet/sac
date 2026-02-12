@@ -229,6 +229,100 @@
             </n-modal>
           </n-tab-pane>
 
+          <!-- Groups Tab -->
+          <n-tab-pane name="groups" tab="Groups">
+            <n-space justify="end" style="margin-bottom: 12px">
+              <n-button type="primary" @click="openCreateGroup">Create Group</n-button>
+            </n-space>
+            <n-spin :show="loadingGroups">
+              <n-data-table
+                :columns="groupColumns"
+                :data="groups"
+                :bordered="false"
+                :single-line="false"
+              />
+            </n-spin>
+
+            <!-- Create / Edit Group Modal -->
+            <n-modal
+              v-model:show="showGroupForm"
+              preset="card"
+              :title="editingGroup ? 'Edit Group' : 'Create Group'"
+              style="width: 480px; max-width: 90vw"
+            >
+              <n-space vertical :size="16">
+                <div>
+                  <n-text depth="3" style="display: block; margin-bottom: 4px">Name</n-text>
+                  <n-input v-model:value="groupForm.name" placeholder="Group name" />
+                </div>
+                <div>
+                  <n-text depth="3" style="display: block; margin-bottom: 4px">Description</n-text>
+                  <n-input v-model:value="groupForm.description" type="textarea" placeholder="Optional description" :rows="3" />
+                </div>
+                <div v-if="!editingGroup">
+                  <n-text depth="3" style="display: block; margin-bottom: 4px">Owner</n-text>
+                  <n-select
+                    v-model:value="groupForm.owner_id"
+                    :options="userOptionsForOwner"
+                    placeholder="Default: yourself"
+                    clearable
+                    filterable
+                  />
+                </div>
+                <n-button
+                  type="primary"
+                  block
+                  :loading="savingGroup"
+                  :disabled="!groupForm.name.trim()"
+                  @click="saveGroup"
+                >
+                  {{ editingGroup ? 'Save' : 'Create' }}
+                </n-button>
+              </n-space>
+            </n-modal>
+
+            <!-- Group Members Modal -->
+            <n-modal
+              v-model:show="showGroupMembers"
+              preset="card"
+              :title="`Members: ${selectedGroup?.name || ''}`"
+              style="width: 640px; max-width: 90vw"
+            >
+              <n-spin :show="loadingGroupMembers">
+                <n-data-table
+                  :columns="groupMemberColumns"
+                  :data="groupMembers"
+                  :bordered="false"
+                  :single-line="false"
+                  v-if="groupMembers.length > 0"
+                />
+                <n-empty v-else description="No members yet." />
+
+                <n-divider />
+                <n-text strong>Add Member</n-text>
+                <n-space style="margin-top: 12px" :size="8" align="center">
+                  <n-select
+                    v-model:value="newMemberUserId"
+                    :options="availableMemberOptions"
+                    placeholder="Select user"
+                    filterable
+                    style="width: 200px"
+                    size="small"
+                  />
+                  <n-select
+                    v-model:value="newMemberRole"
+                    :options="[{ label: 'member', value: 'member' }, { label: 'admin', value: 'admin' }]"
+                    style="width: 120px"
+                    size="small"
+                  />
+                  <n-button size="small" type="primary" :disabled="!newMemberUserId" @click="handleAddMember">
+                    Add
+                  </n-button>
+                </n-space>
+              </n-spin>
+            </n-modal>
+          </n-tab-pane>
+
           <!-- Conversations Tab -->
           <n-tab-pane name="conversations" tab="Conversations">
             <n-card style="margin-bottom: 16px">
@@ -342,11 +436,21 @@ import {
   batchUpdateImage,
   getConversations,
   exportConversationsCSV,
+  getAdminGroups,
+  createAdminGroup,
+  updateAdminGroup,
+  deleteAdminGroup,
+  getAdminGroupMembers,
+  addAdminGroupMember,
+  removeAdminGroupMember,
+  updateAdminGroupMemberRole,
   type SystemSetting,
   type AdminUser,
   type UserSetting,
   type AdminAgent,
   type ConversationRecord,
+  type AdminGroup,
+  type AdminGroupMember,
 } from '../services/adminAPI'
 import { extractApiError } from '../utils/error'
 import sacLogo from '../assets/sac-logo.svg'
@@ -414,6 +518,18 @@ const userColumns = computed<DataTableColumns<AdminUser>>(() => [
         type: row.role === 'admin' ? 'warning' : 'default',
         size: 'small',
       }, { default: () => row.role })
+    },
+  },
+  {
+    title: 'Groups',
+    key: 'groups',
+    render(row) {
+      if (!row.groups?.length) return '-'
+      return h(NSpace, { size: 4 }, {
+        default: () => row.groups.map(g =>
+          h(NTag, { size: 'small', type: 'info' }, { default: () => g.name })
+        )
+      })
     },
   },
   { title: 'Agents', key: 'agent_count' },
@@ -798,6 +914,252 @@ async function doBatchUpdateImage() {
   }
 }
 
+// --- Groups ---
+const groups = ref<AdminGroup[]>([])
+const loadingGroups = ref(false)
+const showGroupForm = ref(false)
+const editingGroup = ref<AdminGroup | null>(null)
+const groupForm = ref({ name: '', description: '', owner_id: null as number | null })
+const savingGroup = ref(false)
+const showGroupMembers = ref(false)
+const selectedGroup = ref<AdminGroup | null>(null)
+const groupMembers = ref<AdminGroupMember[]>([])
+const loadingGroupMembers = ref(false)
+const newMemberUserId = ref<number | null>(null)
+const newMemberRole = ref('member')
+
+const userOptionsForOwner = computed(() =>
+  users.value.map(u => ({ label: `${u.username} (${u.display_name || u.email})`, value: u.id }))
+)
+
+const availableMemberOptions = computed(() => {
+  const existing = new Set(groupMembers.value.map(m => m.user_id))
+  return users.value
+    .filter(u => !existing.has(u.id))
+    .map(u => ({ label: `${u.username} (${u.display_name || u.email})`, value: u.id }))
+})
+
+const groupColumns = computed<DataTableColumns<AdminGroup>>(() => [
+  { title: 'Name', key: 'name' },
+  { title: 'Description', key: 'description', ellipsis: { tooltip: true } },
+  {
+    title: 'Owner',
+    key: 'owner',
+    render(row) {
+      return row.owner?.username || '-'
+    },
+  },
+  { title: 'Members', key: 'member_count' },
+  {
+    title: 'Created',
+    key: 'created_at',
+    render(row) {
+      return new Date(row.created_at).toLocaleDateString()
+    },
+  },
+  {
+    title: 'Actions',
+    key: 'actions',
+    width: 240,
+    render(row) {
+      return h(NSpace, { size: 4 }, {
+        default: () => [
+          h(NButton, {
+            size: 'small',
+            type: 'info',
+            onClick: () => openGroupMembers(row),
+          }, { default: () => 'Members' }),
+          h(NButton, {
+            size: 'small',
+            onClick: () => openEditGroup(row),
+          }, { default: () => 'Edit' }),
+          h(NPopconfirm, {
+            onPositiveClick: () => handleDeleteGroup(row),
+          }, {
+            trigger: () => h(NButton, {
+              size: 'small',
+              type: 'error',
+              quaternary: true,
+            }, { default: () => 'Delete' }),
+            default: () => `Delete group "${row.name}"?`,
+          }),
+        ]
+      })
+    },
+  },
+])
+
+const groupMemberColumns = computed<DataTableColumns<AdminGroupMember>>(() => [
+  {
+    title: 'User',
+    key: 'user',
+    render(row) {
+      return row.user?.username || `User #${row.user_id}`
+    },
+  },
+  {
+    title: 'Display Name',
+    key: 'display_name',
+    render(row) {
+      return row.user?.display_name || '-'
+    },
+  },
+  {
+    title: 'Role',
+    key: 'role',
+    width: 120,
+    render(row) {
+      return h(NSelect, {
+        value: row.role,
+        size: 'small',
+        options: [{ label: 'member', value: 'member' }, { label: 'admin', value: 'admin' }],
+        style: 'width: 100px',
+        onUpdateValue: (val: string) => handleUpdateMemberRole(row, val),
+      })
+    },
+  },
+  {
+    title: 'Joined',
+    key: 'created_at',
+    render(row) {
+      return new Date(row.created_at).toLocaleDateString()
+    },
+  },
+  {
+    title: '',
+    key: 'actions',
+    width: 80,
+    render(row) {
+      return h(NPopconfirm, {
+        onPositiveClick: () => handleRemoveMember(row),
+      }, {
+        trigger: () => h(NButton, {
+          size: 'small',
+          type: 'error',
+          quaternary: true,
+        }, { default: () => 'Remove' }),
+        default: () => 'Remove this member?',
+      })
+    },
+  },
+])
+
+async function loadGroups() {
+  loadingGroups.value = true
+  try {
+    groups.value = await getAdminGroups()
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to load groups'))
+  } finally {
+    loadingGroups.value = false
+  }
+}
+
+function openCreateGroup() {
+  editingGroup.value = null
+  groupForm.value = { name: '', description: '', owner_id: null }
+  showGroupForm.value = true
+}
+
+function openEditGroup(group: AdminGroup) {
+  editingGroup.value = group
+  groupForm.value = { name: group.name, description: group.description || '', owner_id: null }
+  showGroupForm.value = true
+}
+
+async function saveGroup() {
+  savingGroup.value = true
+  try {
+    if (editingGroup.value) {
+      await updateAdminGroup(editingGroup.value.id, {
+        name: groupForm.value.name,
+        description: groupForm.value.description,
+      })
+      message.success('Group updated')
+    } else {
+      const data: { name: string; description?: string; owner_id?: number } = {
+        name: groupForm.value.name,
+      }
+      if (groupForm.value.description) data.description = groupForm.value.description
+      if (groupForm.value.owner_id) data.owner_id = groupForm.value.owner_id
+      await createAdminGroup(data)
+      message.success('Group created')
+    }
+    showGroupForm.value = false
+    await loadGroups()
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to save group'))
+  } finally {
+    savingGroup.value = false
+  }
+}
+
+async function handleDeleteGroup(group: AdminGroup) {
+  try {
+    await deleteAdminGroup(group.id)
+    message.success(`Group "${group.name}" deleted`)
+    await loadGroups()
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to delete group'))
+  }
+}
+
+async function openGroupMembers(group: AdminGroup) {
+  selectedGroup.value = group
+  showGroupMembers.value = true
+  newMemberUserId.value = null
+  newMemberRole.value = 'member'
+  await loadGroupMembers(group.id)
+}
+
+async function loadGroupMembers(groupId: number) {
+  loadingGroupMembers.value = true
+  try {
+    groupMembers.value = await getAdminGroupMembers(groupId)
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to load members'))
+  } finally {
+    loadingGroupMembers.value = false
+  }
+}
+
+async function handleAddMember() {
+  if (!selectedGroup.value || !newMemberUserId.value) return
+  try {
+    await addAdminGroupMember(selectedGroup.value.id, newMemberUserId.value, newMemberRole.value)
+    message.success('Member added')
+    newMemberUserId.value = null
+    newMemberRole.value = 'member'
+    await loadGroupMembers(selectedGroup.value.id)
+    await loadGroups()
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to add member'))
+  }
+}
+
+async function handleRemoveMember(member: AdminGroupMember) {
+  if (!selectedGroup.value) return
+  try {
+    await removeAdminGroupMember(selectedGroup.value.id, member.user_id)
+    message.success('Member removed')
+    await loadGroupMembers(selectedGroup.value.id)
+    await loadGroups()
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to remove member'))
+  }
+}
+
+async function handleUpdateMemberRole(member: AdminGroupMember, role: string) {
+  if (!selectedGroup.value) return
+  try {
+    await updateAdminGroupMemberRole(selectedGroup.value.id, member.user_id, role)
+    message.success('Role updated')
+    await loadGroupMembers(selectedGroup.value.id)
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to update role'))
+  }
+}
+
 // --- Conversations ---
 const conversations = ref<ConversationRecord[]>([])
 const loadingConversations = ref(false)
@@ -934,6 +1296,7 @@ const conversationColumns = computed<DataTableColumns<ConversationRecord>>(() =>
 onMounted(() => {
   loadSettings()
   loadUsers()
+  loadGroups()
 })
 </script>
 

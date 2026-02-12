@@ -21,18 +21,26 @@ func NewHandler(db *bun.DB) *Handler {
 	return &Handler{db: db}
 }
 
-// RegisterRoutes registers group routes on a protected router group.
+// RegisterRoutes registers read-only group routes for authenticated users.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	g := rg.Group("/groups")
 	{
 		g.GET("", h.List)
-		g.POST("", h.Create)
 		g.GET("/:id", h.Get)
+		g.GET("/:id/members", h.ListMembers)
+	}
+}
+
+// RegisterAdminRoutes registers group management routes on the admin router group.
+// These routes are protected by AdminMiddleware from the admin package.
+func (h *Handler) RegisterAdminRoutes(rg *gin.RouterGroup) {
+	g := rg.Group("/groups")
+	{
+		g.GET("", h.ListAll)
+		g.POST("", h.Create)
 		g.PUT("/:id", h.Update)
 		g.DELETE("/:id", h.Delete)
-
-		// Members
-		g.GET("/:id/members", h.ListMembers)
+		g.GET("/:id/members", h.ListMembersAdmin)
 		g.POST("/:id/members", h.AddMember)
 		g.DELETE("/:id/members/:userId", h.RemoveMember)
 		g.PUT("/:id/members/:userId", h.UpdateMemberRole)
@@ -93,13 +101,66 @@ func (h *Handler) List(c *gin.Context) {
 	response.OK(c, result)
 }
 
-// Create creates a new group. The creator becomes owner and admin member.
+// ListAll returns all groups with member counts (admin-only endpoint).
+func (h *Handler) ListAll(c *gin.Context) {
+	ctx := context.Background()
+
+	var groups []models.Group
+	err := h.db.NewSelect().Model(&groups).
+		Relation("Owner", func(q *bun.SelectQuery) *bun.SelectQuery {
+			return q.Column("id", "username", "display_name")
+		}).
+		OrderExpr("g.name ASC").
+		Scan(ctx)
+	if err != nil {
+		response.InternalError(c, "Failed to list groups", err)
+		return
+	}
+
+	if len(groups) == 0 {
+		response.OK(c, []any{})
+		return
+	}
+
+	// Get member counts
+	type countResult struct {
+		GroupID int64 `bun:"group_id"`
+		Count   int   `bun:"count"`
+	}
+	var counts []countResult
+	_ = h.db.NewSelect().
+		TableExpr("group_members").
+		Column("group_id").
+		ColumnExpr("COUNT(*) AS count").
+		Where("group_id IN (?)", bun.In(groupIDs(groups))).
+		Group("group_id").
+		Scan(ctx, &counts)
+
+	countMap := make(map[int64]int)
+	for _, cnt := range counts {
+		countMap[cnt.GroupID] = cnt.Count
+	}
+
+	type groupResponse struct {
+		models.Group
+		MemberCount int `json:"member_count"`
+	}
+	result := make([]groupResponse, len(groups))
+	for i, g := range groups {
+		result[i] = groupResponse{Group: g, MemberCount: countMap[g.ID]}
+	}
+
+	response.OK(c, result)
+}
+
+// Create creates a new group (admin-only). The admin becomes owner and admin member.
 func (h *Handler) Create(c *gin.Context) {
 	userID := c.GetInt64("userID")
 
 	var req struct {
 		Name        string `json:"name" binding:"required"`
 		Description string `json:"description"`
+		OwnerID     *int64 `json:"owner_id"` // optional; defaults to the admin
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "name is required", err)
@@ -121,12 +182,17 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
+	ownerID := userID
+	if req.OwnerID != nil && *req.OwnerID > 0 {
+		ownerID = *req.OwnerID
+	}
+
 	now := time.Now()
 
 	group := &models.Group{
 		Name:        req.Name,
 		Description: req.Description,
-		OwnerID:     userID,
+		OwnerID:     ownerID,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -144,10 +210,10 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
-	// Add creator as admin member
+	// Add owner as admin member
 	member := &models.GroupMember{
 		GroupID:   group.ID,
-		UserID:    userID,
+		UserID:    ownerID,
 		Role:      "admin",
 		CreatedAt: now,
 	}
@@ -208,9 +274,8 @@ func (h *Handler) Get(c *gin.Context) {
 	response.OK(c, group)
 }
 
-// Update updates a group (owner or admin only).
+// Update updates a group (admin-only endpoint).
 func (h *Handler) Update(c *gin.Context) {
-	userID := c.GetInt64("userID")
 	groupID, ok := parseGroupID(c)
 	if !ok {
 		return
@@ -226,11 +291,6 @@ func (h *Handler) Update(c *gin.Context) {
 	}
 
 	ctx := context.Background()
-
-	if !h.isAdmin(ctx, groupID, userID) {
-		response.Forbidden(c, "Admin access required")
-		return
-	}
 
 	q := h.db.NewUpdate().Model((*models.Group)(nil)).Where("id = ?", groupID)
 	if req.Name != nil {
@@ -250,9 +310,8 @@ func (h *Handler) Update(c *gin.Context) {
 	response.Success(c, "Group updated")
 }
 
-// Delete deletes a group (owner only).
+// Delete deletes a group (admin-only endpoint).
 func (h *Handler) Delete(c *gin.Context) {
-	userID := c.GetInt64("userID")
 	groupID, ok := parseGroupID(c)
 	if !ok {
 		return
@@ -260,19 +319,7 @@ func (h *Handler) Delete(c *gin.Context) {
 
 	ctx := context.Background()
 
-	var group models.Group
-	err := h.db.NewSelect().Model(&group).Where("id = ?", groupID).Scan(ctx)
-	if err != nil {
-		response.NotFound(c, "Group not found")
-		return
-	}
-
-	if group.OwnerID != userID {
-		response.Forbidden(c, "Only the group owner can delete the group")
-		return
-	}
-
-	_, err = h.db.NewDelete().Model((*models.Group)(nil)).Where("id = ?", groupID).Exec(ctx)
+	_, err := h.db.NewDelete().Model((*models.Group)(nil)).Where("id = ?", groupID).Exec(ctx)
 	if err != nil {
 		response.InternalError(c, "Failed to delete group", err)
 		return
@@ -312,9 +359,33 @@ func (h *Handler) ListMembers(c *gin.Context) {
 	response.OK(c, members)
 }
 
-// AddMember adds a user to a group (admin only).
+// ListMembersAdmin lists all members of a group (admin-only, no membership check).
+func (h *Handler) ListMembersAdmin(c *gin.Context) {
+	groupID, ok := parseGroupID(c)
+	if !ok {
+		return
+	}
+
+	ctx := context.Background()
+
+	var members []models.GroupMember
+	err := h.db.NewSelect().Model(&members).
+		Where("gm.group_id = ?", groupID).
+		Relation("User", func(q *bun.SelectQuery) *bun.SelectQuery {
+			return q.Column("id", "username", "display_name")
+		}).
+		OrderExpr("gm.created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		response.InternalError(c, "Failed to list members", err)
+		return
+	}
+
+	response.OK(c, members)
+}
+
+// AddMember adds a user to a group (admin-only endpoint).
 func (h *Handler) AddMember(c *gin.Context) {
-	userID := c.GetInt64("userID")
 	groupID, ok := parseGroupID(c)
 	if !ok {
 		return
@@ -333,11 +404,6 @@ func (h *Handler) AddMember(c *gin.Context) {
 	}
 
 	ctx := context.Background()
-
-	if !h.isAdmin(ctx, groupID, userID) {
-		response.Forbidden(c, "Admin access required")
-		return
-	}
 
 	// Verify target user exists
 	var user models.User
@@ -369,9 +435,8 @@ func (h *Handler) AddMember(c *gin.Context) {
 	response.Created(c, member)
 }
 
-// RemoveMember removes a user from a group (admin only, or self-remove).
+// RemoveMember removes a user from a group (admin-only endpoint).
 func (h *Handler) RemoveMember(c *gin.Context) {
-	userID := c.GetInt64("userID")
 	groupID, ok := parseGroupID(c)
 	if !ok {
 		return
@@ -384,12 +449,6 @@ func (h *Handler) RemoveMember(c *gin.Context) {
 	}
 
 	ctx := context.Background()
-
-	// Allow self-remove or admin
-	if targetUserID != userID && !h.isAdmin(ctx, groupID, userID) {
-		response.Forbidden(c, "Admin access required")
-		return
-	}
 
 	// Don't allow removing the owner
 	var group models.Group
@@ -411,9 +470,8 @@ func (h *Handler) RemoveMember(c *gin.Context) {
 	response.Success(c, "Member removed")
 }
 
-// UpdateMemberRole updates a member's role (admin only).
+// UpdateMemberRole updates a member's role (admin-only endpoint).
 func (h *Handler) UpdateMemberRole(c *gin.Context) {
-	userID := c.GetInt64("userID")
 	groupID, ok := parseGroupID(c)
 	if !ok {
 		return
@@ -434,11 +492,6 @@ func (h *Handler) UpdateMemberRole(c *gin.Context) {
 	}
 
 	ctx := context.Background()
-
-	if !h.isAdmin(ctx, groupID, userID) {
-		response.Forbidden(c, "Admin access required")
-		return
-	}
 
 	_, err = h.db.NewUpdate().Model((*models.GroupMember)(nil)).
 		Set("role = ?", req.Role).
@@ -466,21 +519,6 @@ func parseGroupID(c *gin.Context) (int64, bool) {
 func (h *Handler) isMember(ctx context.Context, groupID, userID int64) bool {
 	exists, _ := h.db.NewSelect().Model((*models.GroupMember)(nil)).
 		Where("group_id = ? AND user_id = ?", groupID, userID).
-		Exists(ctx)
-	return exists
-}
-
-func (h *Handler) isAdmin(ctx context.Context, groupID, userID int64) bool {
-	// Check if owner
-	var group models.Group
-	err := h.db.NewSelect().Model(&group).Where("id = ?", groupID).Scan(ctx)
-	if err == nil && group.OwnerID == userID {
-		return true
-	}
-
-	// Check if admin member
-	exists, _ := h.db.NewSelect().Model((*models.GroupMember)(nil)).
-		Where("group_id = ? AND user_id = ? AND role = 'admin'", groupID, userID).
 		Exists(ctx)
 	return exists
 }

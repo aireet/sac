@@ -11,7 +11,7 @@
             </n-space>
           </template>
         </n-tab-pane>
-        <n-tab-pane v-if="isAdmin" name="public">
+        <n-tab-pane name="public">
           <template #tab>
             <n-space :size="4" align="center">
               <n-icon size="14"><GlobeOutline /></n-icon>
@@ -47,9 +47,6 @@
           size="small"
           style="flex: 1"
         />
-        <n-button size="small" quaternary @click="showGroupManager = true" title="Manage groups">
-          <template #icon><n-icon><SettingsOutline /></n-icon></template>
-        </n-button>
       </div>
 
       <!-- Quota display for private workspace -->
@@ -182,7 +179,6 @@
       <div v-if="spaceTab === 'group' && !selectedGroupId" class="ws-placeholder">
         <n-empty description="Select a group to browse files">
           <template #extra>
-            <n-button size="small" @click="showGroupManager = true">Manage Groups</n-button>
           </template>
         </n-empty>
       </div>
@@ -244,7 +240,6 @@
     </n-modal>
 
     <!-- Group Manager modal -->
-    <GroupManager v-model:show="showGroupManager" @groups-changed="loadGroups" />
   </div>
 </template>
 
@@ -275,7 +270,6 @@ import {
 import { listGroups, type Group } from '../../services/groupAPI'
 import { getFileIcon } from '../../utils/fileTypes'
 import { useAuthStore } from '../../stores/auth'
-import GroupManager from '../Group/GroupManager.vue'
 
 const props = defineProps<{
   agentId: number
@@ -310,7 +304,6 @@ const groups = ref<Group[]>([])
 const selectedGroupId = ref<number | null>(null)
 const loadingGroups = ref(false)
 const groupQuota = ref<GroupWorkspaceQuota | null>(null)
-const showGroupManager = ref(false)
 
 // Sync state
 const syncing = ref(false)
