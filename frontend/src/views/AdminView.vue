@@ -641,6 +641,7 @@ async function saveStorageConfig() {
   savingStorage.value = true
   try {
     const selectedType = storageForm.value.storage_type
+    if (!selectedType) return
     // Always save storage_type
     await updateSystemSetting('storage_type', selectedType)
     // Save only keys relevant to the selected type
