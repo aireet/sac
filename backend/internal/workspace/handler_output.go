@@ -283,27 +283,23 @@ func (h *Handler) WatchOutput(c *gin.Context) {
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 
-	ch, unsub := h.hub.Subscribe(userIDInt, agentID)
+	cursor, unsub := h.hub.Subscribe(userIDInt, agentID)
 	defer unsub()
 
 	flusher := c.Writer
 	ctx := c.Request.Context()
 
 	for {
-		select {
-		case <-ctx.Done():
+		event, ok := cursor.Next(ctx)
+		if !ok {
 			return
-		case event, ok := <-ch:
-			if !ok {
-				return
-			}
-			data, err := json.Marshal(event)
-			if err != nil {
-				log.Printf("WatchOutput: marshal error: %v", err)
-				continue
-			}
-			fmt.Fprintf(flusher, "data: %s\n\n", data)
-			flusher.Flush()
 		}
+		data, err := json.Marshal(event)
+		if err != nil {
+			log.Printf("WatchOutput: marshal error: %v", err)
+			continue
+		}
+		fmt.Fprintf(flusher, "data: %s\n\n", data)
+		flusher.Flush()
 	}
 }
