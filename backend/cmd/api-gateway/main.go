@@ -68,9 +68,9 @@ func main() {
 		log.Fatalf("Failed to create container manager: %v", err)
 	}
 
-	// OSS provider reads config from system_settings (admin-managed)
-	ossProvider := storage.NewOSSProvider(database.DB)
-	workspaceSyncSvc := workspace.NewSyncService(database.DB, ossProvider, containerMgr)
+	// Storage provider reads config from system_settings (admin-managed)
+	storageProvider := storage.NewStorageProvider(database.DB)
+	workspaceSyncSvc := workspace.NewSyncService(database.DB, storageProvider, containerMgr)
 
 	// Shared history handler
 	historyHandler := history.NewHandler(database.DB)
@@ -110,7 +110,7 @@ func main() {
 		agentHandler.RegisterRoutes(protectedGroup)
 
 		// Workspace routes (always registered; requireOSS middleware returns 503 if not configured)
-		workspaceHandler := workspace.NewHandler(database.DB, ossProvider, workspaceSyncSvc)
+		workspaceHandler := workspace.NewHandler(database.DB, storageProvider, workspaceSyncSvc)
 		workspaceHandler.RegisterRoutes(protectedGroup)
 
 		// Group routes (read-only for authenticated users)

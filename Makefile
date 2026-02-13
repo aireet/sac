@@ -15,7 +15,7 @@ FRONTEND := frontend
 # Docker
 REGISTRY   ?= docker-register-registry-vpc.cn-shanghai.cr.aliyuncs.com/prod/sac
 VERSION    := $(shell cat .version 2>/dev/null || echo "0.0.4")
-KUBECONFIG ?= ../kubeconfig.yaml
+KUBECONFIG ?= $(HOME)/.kube/config
 NAMESPACE  ?= sac
 
 # --- Main targets ---

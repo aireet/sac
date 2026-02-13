@@ -25,12 +25,12 @@ const (
 // SyncService syncs workspace files from OSS to agent pods.
 type SyncService struct {
 	db               *bun.DB
-	provider         *storage.OSSProvider
+	provider         *storage.StorageProvider
 	containerManager *container.Manager
 }
 
 // NewSyncService creates a new SyncService.
-func NewSyncService(db *bun.DB, provider *storage.OSSProvider, containerManager *container.Manager) *SyncService {
+func NewSyncService(db *bun.DB, provider *storage.StorageProvider, containerManager *container.Manager) *SyncService {
 	return &SyncService{
 		db:               db,
 		provider:         provider,
@@ -155,7 +155,7 @@ func (s *SyncService) SyncFileToPods(ctx context.Context, userID, agentID int64,
 		return
 	}
 
-	body, err := oss.Download(ossKey)
+	body, err := oss.Download(ctx, ossKey)
 	if err != nil {
 		log.Printf("Warning: sync download failed for %s: %v", ossKey, err)
 		return
@@ -221,7 +221,7 @@ func (s *SyncService) SyncPublicFileToPods(ctx context.Context, ossKey, relPath 
 		return
 	}
 
-	body, err := oss.Download(ossKey)
+	body, err := oss.Download(ctx, ossKey)
 	if err != nil {
 		log.Printf("Warning: public sync download failed for %s: %v", ossKey, err)
 		return
@@ -271,7 +271,7 @@ func (s *SyncService) DeletePublicFileFromPods(ctx context.Context, relPath stri
 }
 
 // syncGroupWorkspacesToPod syncs all group workspaces for groups the user belongs to.
-func (s *SyncService) syncGroupWorkspacesToPod(ctx context.Context, oss *storage.OSSClient, pod, userID string) {
+func (s *SyncService) syncGroupWorkspacesToPod(ctx context.Context, oss storage.StorageBackend, pod, userID string) {
 	// Find groups the user belongs to
 	var members []models.GroupMember
 	err := s.db.NewSelect().Model(&members).
@@ -347,7 +347,7 @@ func (s *SyncService) SyncGroupFileToPods(ctx context.Context, groupID int64, os
 		return
 	}
 
-	body, err := oss.Download(ossKey)
+	body, err := oss.Download(ctx, ossKey)
 	if err != nil {
 		log.Printf("Warning: group sync download failed for %s: %v", ossKey, err)
 		return
@@ -405,7 +405,7 @@ func (s *SyncService) SyncSharedFileToPods(ctx context.Context, ossKey, relPath 
 		return
 	}
 
-	body, err := oss.Download(ossKey)
+	body, err := oss.Download(ctx, ossKey)
 	if err != nil {
 		log.Printf("Warning: shared sync download failed for %s: %v", ossKey, err)
 		return
@@ -469,8 +469,8 @@ type syncTask struct {
 }
 
 // collectTasks lists all syncable files under a prefix and returns tasks.
-func (s *SyncService) collectTasks(oss *storage.OSSClient, prefix, destDir string) ([]syncTask, error) {
-	objects, err := oss.ListAll(prefix)
+func (s *SyncService) collectTasks(ctx context.Context, oss storage.StorageBackend, prefix, destDir string) ([]syncTask, error) {
+	objects, err := oss.ListAll(ctx, prefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list OSS prefix %s: %w", prefix, err)
 	}
@@ -515,16 +515,16 @@ func (s *SyncService) SyncWorkspaceToPodWithProgress(ctx context.Context, userID
 	var allTasks []syncTask
 
 	privatePrefix := fmt.Sprintf("users/%s/agents/%d/", userID, agentID)
-	if tasks, err := s.collectTasks(oss, privatePrefix, privateWorkDir); err == nil {
+	if tasks, err := s.collectTasks(ctx, oss, privatePrefix, privateWorkDir); err == nil {
 		allTasks = append(allTasks, tasks...)
 	}
 
 	commandsPrefix := fmt.Sprintf("users/%s/agents/%d/claude-commands/", userID, agentID)
-	if tasks, err := s.collectTasks(oss, commandsPrefix, claudeCommandsDir); err == nil {
+	if tasks, err := s.collectTasks(ctx, oss, commandsPrefix, claudeCommandsDir); err == nil {
 		allTasks = append(allTasks, tasks...)
 	}
 
-	if tasks, err := s.collectTasks(oss, "public/", publicWorkDir); err == nil {
+	if tasks, err := s.collectTasks(ctx, oss, "public/", publicWorkDir); err == nil {
 		allTasks = append(allTasks, tasks...)
 	}
 
@@ -538,12 +538,12 @@ func (s *SyncService) SyncWorkspaceToPodWithProgress(ctx context.Context, userID
 		groupPrefix := fmt.Sprintf("groups/%d/", m.GroupID)
 		mkdirCmd := []string{"bash", "-c", fmt.Sprintf("mkdir -p %s", groupDir)}
 		s.containerManager.ExecInPod(ctx, pod, mkdirCmd, nil)
-		if tasks, err := s.collectTasks(oss, groupPrefix, groupDir); err == nil {
+		if tasks, err := s.collectTasks(ctx, oss, groupPrefix, groupDir); err == nil {
 			allTasks = append(allTasks, tasks...)
 		}
 	}
 
-	if tasks, err := s.collectTasks(oss, "shared/", sharedWorkDir); err == nil {
+	if tasks, err := s.collectTasks(ctx, oss, "shared/", sharedWorkDir); err == nil {
 		allTasks = append(allTasks, tasks...)
 	}
 
@@ -553,7 +553,7 @@ func (s *SyncService) SyncWorkspaceToPodWithProgress(ctx context.Context, userID
 	// Sync all tasks
 	synced := 0
 	for _, task := range allTasks {
-		body, err := oss.Download(task.ossKey)
+		body, err := oss.Download(ctx, task.ossKey)
 		if err != nil {
 			log.Printf("Warning: failed to download %s: %v", task.ossKey, err)
 			continue
@@ -586,15 +586,15 @@ func (s *SyncService) SyncWorkspaceToPodWithProgress(ctx context.Context, userID
 }
 
 // syncPrefix downloads all files under an OSS prefix and writes them to destDir in the pod.
-func (s *SyncService) syncPrefix(ctx context.Context, oss *storage.OSSClient, pod, prefix, destDir, _ string) error {
-	tasks, err := s.collectTasks(oss, prefix, destDir)
+func (s *SyncService) syncPrefix(ctx context.Context, oss storage.StorageBackend, pod, prefix, destDir, _ string) error {
+	tasks, err := s.collectTasks(ctx, oss, prefix, destDir)
 	if err != nil {
 		return err
 	}
 
 	synced := 0
 	for _, task := range tasks {
-		body, err := oss.Download(task.ossKey)
+		body, err := oss.Download(ctx, task.ossKey)
 		if err != nil {
 			log.Printf("Warning: failed to download %s: %v", task.ossKey, err)
 			continue

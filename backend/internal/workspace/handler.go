@@ -25,12 +25,12 @@ const maxUploadSize = 100 << 20 // 100MB
 // Handler serves workspace HTTP endpoints.
 type Handler struct {
 	db       *bun.DB
-	provider *storage.OSSProvider
+	provider *storage.StorageProvider
 	syncSvc  *SyncService
 }
 
 // NewHandler creates a new workspace handler.
-func NewHandler(db *bun.DB, provider *storage.OSSProvider, syncSvc *SyncService) *Handler {
+func NewHandler(db *bun.DB, provider *storage.StorageProvider, syncSvc *SyncService) *Handler {
 	return &Handler{db: db, provider: provider, syncSvc: syncSvc}
 }
 
@@ -76,25 +76,35 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	}
 }
 
-// requireOSS is a middleware that checks if OSS is configured.
-func (h *Handler) requireOSS() gin.HandlerFunc {
+// requireStorage is a middleware that checks if storage is configured.
+func (h *Handler) requireStorage() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		oss := h.provider.GetClient(c.Request.Context())
-		if oss == nil {
-			response.ServiceUnavailable(c, "Workspace storage is not configured. Ask your admin to set OSS settings.")
+		backend := h.provider.GetClient(c.Request.Context())
+		if backend == nil {
+			response.ServiceUnavailable(c, "Workspace storage is not configured. Ask your admin to configure storage settings.")
 			c.Abort()
 			return
 		}
-		// Store client in context for the handler to use
-		c.Set("ossClient", oss)
+		// Store backend in context for the handler to use
+		c.Set("storageBackend", backend)
 		c.Next()
 	}
 }
 
-// getOSS retrieves the OSSClient stored by requireOSS middleware.
-func (h *Handler) getOSS(c *gin.Context) *storage.OSSClient {
-	v, _ := c.Get("ossClient")
-	return v.(*storage.OSSClient)
+// getStorage retrieves the StorageBackend stored by requireStorage middleware.
+func (h *Handler) getStorage(c *gin.Context) storage.StorageBackend {
+	v, _ := c.Get("storageBackend")
+	return v.(storage.StorageBackend)
+}
+
+// requireOSS is an alias for requireStorage (backward compatible route registration).
+func (h *Handler) requireOSS() gin.HandlerFunc {
+	return h.requireStorage()
+}
+
+// getOSS is an alias for getStorage (backward compatible helper).
+func (h *Handler) getOSS(c *gin.Context) storage.StorageBackend {
+	return h.getStorage(c)
 }
 
 // GetStatus returns whether OSS is configured.
@@ -169,7 +179,7 @@ func (h *Handler) Upload(c *gin.Context) {
 
 	ossKey := ossKeyPrefix(userIDInt, agentID) + filePath + header.Filename
 
-	checksum, err := uploadToOSS(oss, ossKey, file, header)
+	checksum, err := uploadToStorage(ctx, oss, ossKey, file, header)
 	if err != nil {
 		response.InternalError(c, "Failed to upload file", err)
 		return
@@ -225,7 +235,7 @@ func (h *Handler) ListFiles(c *gin.Context) {
 	reqPath := sanitizePath(c.DefaultQuery("path", "/"))
 	prefix := ossKeyPrefix(userIDInt, agentID) + reqPath
 
-	items, err := oss.List(prefix, "/", 1000)
+	items, err := oss.List(c.Request.Context(), prefix, "/", 1000)
 	if err != nil {
 		response.InternalError(c, "Failed to list files", err)
 		return
@@ -288,7 +298,7 @@ func (h *Handler) DownloadFile(c *gin.Context) {
 
 	ossKey := ossKeyPrefix(userIDInt, agentID) + filePath
 
-	body, err := oss.Download(ossKey)
+	body, err := oss.Download(c.Request.Context(), ossKey)
 	if err != nil {
 		response.NotFound(c, "File not found", err)
 		return
@@ -324,7 +334,7 @@ func (h *Handler) DeleteFile(c *gin.Context) {
 
 	// Check if it's a directory prefix
 	if strings.HasSuffix(filePath, "/") {
-		if err := oss.DeletePrefix(ossKey); err != nil {
+		if err := oss.DeletePrefix(ctx, ossKey); err != nil {
 			response.InternalError(c, "Failed to delete directory", err)
 			return
 		}
@@ -333,7 +343,7 @@ func (h *Handler) DeleteFile(c *gin.Context) {
 			Where("user_id = ? AND agent_id = ? AND workspace_type = 'private' AND oss_key LIKE ?", userIDInt, agentID, ossKey+"%").
 			Exec(ctx)
 	} else {
-		if err := oss.Delete(ossKey); err != nil {
+		if err := oss.Delete(ctx, ossKey); err != nil {
 			response.InternalError(c, "Failed to delete file", err)
 			return
 		}
@@ -378,7 +388,7 @@ func (h *Handler) CreateDirectory(c *gin.Context) {
 	ossKey := ossKeyPrefix(userIDInt, req.AgentID) + dirPath
 
 	// Create an empty object as directory marker
-	if err := oss.Upload(ossKey, strings.NewReader(""), "application/x-directory"); err != nil {
+	if err := oss.Upload(c.Request.Context(), ossKey, strings.NewReader(""), 0, "application/x-directory"); err != nil {
 		response.InternalError(c, "Failed to create directory", err)
 		return
 	}
@@ -409,7 +419,7 @@ func (h *Handler) ListPublicFiles(c *gin.Context) {
 	reqPath := sanitizePath(c.DefaultQuery("path", "/"))
 	prefix := "public/" + reqPath
 
-	items, err := oss.List(prefix, "/", 1000)
+	items, err := oss.List(c.Request.Context(), prefix, "/", 1000)
 	if err != nil {
 		response.InternalError(c, "Failed to list public files", err)
 		return
@@ -460,7 +470,7 @@ func (h *Handler) DownloadPublicFile(c *gin.Context) {
 	filePath = sanitizePath(filePath)
 	ossKey := "public/" + filePath
 
-	body, err := oss.Download(ossKey)
+	body, err := oss.Download(c.Request.Context(), ossKey)
 	if err != nil {
 		response.NotFound(c, "File not found", err)
 		return
@@ -497,7 +507,7 @@ func (h *Handler) CreatePublicDirectory(c *gin.Context) {
 
 	ossKey := "public/" + dirPath
 
-	if err := oss.Upload(ossKey, strings.NewReader(""), "application/x-directory"); err != nil {
+	if err := oss.Upload(c.Request.Context(), ossKey, strings.NewReader(""), 0, "application/x-directory"); err != nil {
 		response.InternalError(c, "Failed to create directory", err)
 		return
 	}
@@ -531,13 +541,13 @@ func (h *Handler) UploadPublic(c *gin.Context) {
 
 	ossKey := "public/" + filePath + header.Filename
 
-	checksum, err := uploadToOSS(oss, ossKey, file, header)
+	ctx := context.Background()
+	checksum, err := uploadToStorage(ctx, oss, ossKey, file, header)
 	if err != nil {
 		response.InternalError(c, "Failed to upload file", err)
 		return
 	}
 
-	ctx := context.Background()
 	wf := &models.WorkspaceFile{
 		UserID:        0, // public
 		AgentID:       0, // public
@@ -590,7 +600,7 @@ func (h *Handler) DeletePublicFile(c *gin.Context) {
 	ctx := context.Background()
 
 	if strings.HasSuffix(filePath, "/") {
-		if err := oss.DeletePrefix(ossKey); err != nil {
+		if err := oss.DeletePrefix(ctx, ossKey); err != nil {
 			response.InternalError(c, "Failed to delete directory", err)
 			return
 		}
@@ -598,7 +608,7 @@ func (h *Handler) DeletePublicFile(c *gin.Context) {
 			Where("workspace_type = 'public' AND oss_key LIKE ?", ossKey+"%").
 			Exec(ctx)
 	} else {
-		if err := oss.Delete(ossKey); err != nil {
+		if err := oss.Delete(ctx, ossKey); err != nil {
 			response.InternalError(c, "Failed to delete file", err)
 			return
 		}
@@ -673,7 +683,7 @@ func (h *Handler) SyncToPodStream(c *gin.Context) {
 
 // ---- Helpers ----
 
-func uploadToOSS(oss *storage.OSSClient, ossKey string, file multipart.File, header *multipart.FileHeader) (string, error) {
+func uploadToStorage(ctx context.Context, backend storage.StorageBackend, ossKey string, file multipart.File, header *multipart.FileHeader) (string, error) {
 	// Compute MD5 checksum
 	hasher := md5.New()
 	tee := io.TeeReader(file, hasher)
@@ -683,7 +693,7 @@ func uploadToOSS(oss *storage.OSSClient, ossKey string, file multipart.File, hea
 		contentType = "application/octet-stream"
 	}
 
-	if err := oss.Upload(ossKey, tee, contentType); err != nil {
+	if err := backend.Upload(ctx, ossKey, tee, header.Size, contentType); err != nil {
 		return "", err
 	}
 

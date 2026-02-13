@@ -16,6 +16,98 @@
           <!-- System Settings Tab -->
           <n-tab-pane name="settings" tab="System Settings">
             <n-spin :show="loadingSettings">
+              <!-- Storage Configuration Card -->
+              <n-card title="Storage Configuration" style="margin-bottom: 16px">
+                <n-space vertical :size="16">
+                  <div>
+                    <n-text depth="3" style="display: block; margin-bottom: 4px">Storage Backend</n-text>
+                    <n-select
+                      v-model:value="storageForm.storage_type"
+                      :options="storageTypeOptions"
+                      style="width: 240px"
+                    />
+                  </div>
+
+                  <!-- OSS fields -->
+                  <template v-if="storageForm.storage_type === 'oss'">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px">
+                      <div>
+                        <n-text depth="3" style="display: block; margin-bottom: 4px">Endpoint</n-text>
+                        <n-input v-model:value="storageForm.oss_endpoint" placeholder="oss-cn-shanghai.aliyuncs.com" />
+                      </div>
+                      <div>
+                        <n-text depth="3" style="display: block; margin-bottom: 4px">Bucket</n-text>
+                        <n-input v-model:value="storageForm.oss_bucket" placeholder="sac-workspace" />
+                      </div>
+                      <div>
+                        <n-text depth="3" style="display: block; margin-bottom: 4px">Access Key ID</n-text>
+                        <n-input v-model:value="storageForm.oss_access_key_id" placeholder="AccessKey ID" />
+                      </div>
+                      <div>
+                        <n-text depth="3" style="display: block; margin-bottom: 4px">Access Key Secret</n-text>
+                        <n-input v-model:value="storageForm.oss_access_key_secret" type="password" show-password-on="click" placeholder="AccessKey Secret" />
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- AWS S3 fields -->
+                  <template v-if="storageForm.storage_type === 's3'">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px">
+                      <div>
+                        <n-text depth="3" style="display: block; margin-bottom: 4px">Region</n-text>
+                        <n-input v-model:value="storageForm.s3_region" placeholder="us-east-1" />
+                      </div>
+                      <div>
+                        <n-text depth="3" style="display: block; margin-bottom: 4px">Bucket</n-text>
+                        <n-input v-model:value="storageForm.s3_bucket" placeholder="sac-workspace" />
+                      </div>
+                      <div>
+                        <n-text depth="3" style="display: block; margin-bottom: 4px">Access Key ID</n-text>
+                        <n-input v-model:value="storageForm.s3_access_key_id" placeholder="Access Key ID" />
+                      </div>
+                      <div>
+                        <n-text depth="3" style="display: block; margin-bottom: 4px">Secret Access Key</n-text>
+                        <n-input v-model:value="storageForm.s3_secret_access_key" type="password" show-password-on="click" placeholder="Secret Access Key" />
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- S3 Compatible fields (MinIO, RustFS, etc.) -->
+                  <template v-if="storageForm.storage_type === 's3compat'">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px">
+                      <div>
+                        <n-text depth="3" style="display: block; margin-bottom: 4px">Endpoint</n-text>
+                        <n-input v-model:value="storageForm.s3compat_endpoint" placeholder="minio.example.com:9000" />
+                      </div>
+                      <div>
+                        <n-text depth="3" style="display: block; margin-bottom: 4px">Bucket</n-text>
+                        <n-input v-model:value="storageForm.s3compat_bucket" placeholder="sac-workspace" />
+                      </div>
+                      <div>
+                        <n-text depth="3" style="display: block; margin-bottom: 4px">Access Key ID</n-text>
+                        <n-input v-model:value="storageForm.s3compat_access_key_id" placeholder="Access Key ID" />
+                      </div>
+                      <div>
+                        <n-text depth="3" style="display: block; margin-bottom: 4px">Secret Access Key</n-text>
+                        <n-input v-model:value="storageForm.s3compat_secret_access_key" type="password" show-password-on="click" placeholder="Secret Access Key" />
+                      </div>
+                      <div>
+                        <n-text depth="3" style="display: block; margin-bottom: 4px">Use SSL</n-text>
+                        <n-select
+                          v-model:value="storageForm.s3compat_use_ssl"
+                          :options="[{ label: 'Yes', value: 'true' }, { label: 'No', value: 'false' }]"
+                          style="width: 120px"
+                        />
+                      </div>
+                    </div>
+                  </template>
+
+                  <n-button type="primary" :loading="savingStorage" @click="saveStorageConfig" style="width: 200px">
+                    Save Storage Configuration
+                  </n-button>
+                </n-space>
+              </n-card>
+
               <n-card title="Default Resource Limits" style="margin-bottom: 16px">
                 <n-table :bordered="false" :single-line="false">
                   <thead>
@@ -27,7 +119,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="setting in settings" :key="setting.key">
+                    <tr v-for="setting in nonStorageSettings" :key="setting.key">
                       <td><n-text code>{{ setting.key }}</n-text></td>
                       <td>
                         <n-input
@@ -477,6 +569,7 @@ async function loadSettings() {
     for (const s of settings.value) {
       settingEdits.value[s.key] = formatValue(s.value)
     }
+    initStorageForm()
   } catch (error) {
     message.error(extractApiError(error, 'Failed to load settings'))
   } finally {
@@ -500,6 +593,67 @@ async function saveSetting(key: string) {
     message.error(extractApiError(error, 'Failed to save setting'))
   } finally {
     savingSetting.value = null
+  }
+}
+
+// --- Storage Configuration ---
+const storageSettingKeys = new Set([
+  'storage_type',
+  'oss_endpoint', 'oss_access_key_id', 'oss_access_key_secret', 'oss_bucket',
+  's3_region', 's3_access_key_id', 's3_secret_access_key', 's3_bucket',
+  's3compat_endpoint', 's3compat_access_key_id', 's3compat_secret_access_key', 's3compat_bucket', 's3compat_use_ssl',
+])
+
+const nonStorageSettings = computed(() =>
+  settings.value.filter(s => !storageSettingKeys.has(s.key))
+)
+
+const storageTypeOptions = [
+  { label: 'Alibaba Cloud OSS', value: 'oss' },
+  { label: 'AWS S3', value: 's3' },
+  { label: 'S3 Compatible (MinIO, RustFS, etc.)', value: 's3compat' },
+]
+
+const storageForm = ref<Record<string, string>>({
+  storage_type: 'oss',
+  oss_endpoint: '', oss_access_key_id: '', oss_access_key_secret: '', oss_bucket: '',
+  s3_region: '', s3_access_key_id: '', s3_secret_access_key: '', s3_bucket: '',
+  s3compat_endpoint: '', s3compat_access_key_id: '', s3compat_secret_access_key: '', s3compat_bucket: '', s3compat_use_ssl: 'false',
+})
+const savingStorage = ref(false)
+
+function initStorageForm() {
+  for (const s of settings.value) {
+    if (storageSettingKeys.has(s.key)) {
+      storageForm.value[s.key] = formatValue(s.value)
+    }
+  }
+}
+
+// Keys relevant to each storage type
+const storageTypeKeys: Record<string, string[]> = {
+  oss: ['oss_endpoint', 'oss_access_key_id', 'oss_access_key_secret', 'oss_bucket'],
+  s3: ['s3_region', 's3_access_key_id', 's3_secret_access_key', 's3_bucket'],
+  s3compat: ['s3compat_endpoint', 's3compat_access_key_id', 's3compat_secret_access_key', 's3compat_bucket', 's3compat_use_ssl'],
+}
+
+async function saveStorageConfig() {
+  savingStorage.value = true
+  try {
+    const selectedType = storageForm.value.storage_type
+    // Always save storage_type
+    await updateSystemSetting('storage_type', selectedType)
+    // Save only keys relevant to the selected type
+    const keys = storageTypeKeys[selectedType] || []
+    for (const key of keys) {
+      await updateSystemSetting(key, storageForm.value[key] || '')
+    }
+    message.success('Storage configuration saved')
+    await loadSettings()
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to save storage configuration'))
+  } finally {
+    savingStorage.value = false
   }
 }
 

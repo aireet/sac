@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -9,13 +10,16 @@ import (
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 )
 
-// OSSClient wraps the Alibaba Cloud OSS SDK.
-type OSSClient struct {
+// Compile-time check: OSSBackend implements StorageBackend.
+var _ StorageBackend = (*OSSBackend)(nil)
+
+// OSSBackend wraps the Alibaba Cloud OSS SDK.
+type OSSBackend struct {
 	bucket *oss.Bucket
 }
 
-// NewOSSClient creates a new OSS client.
-func NewOSSClient(endpoint, keyID, keySecret, bucketName string) (*OSSClient, error) {
+// NewOSSBackend creates a new Alibaba Cloud OSS backend.
+func NewOSSBackend(endpoint, keyID, keySecret, bucketName string) (*OSSBackend, error) {
 	client, err := oss.New(endpoint, keyID, keySecret)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OSS client: %w", err)
@@ -26,26 +30,26 @@ func NewOSSClient(endpoint, keyID, keySecret, bucketName string) (*OSSClient, er
 		return nil, fmt.Errorf("failed to get bucket %s: %w", bucketName, err)
 	}
 
-	log.Printf("OSS client initialized: endpoint=%s, bucket=%s", endpoint, bucketName)
-	return &OSSClient{bucket: bucket}, nil
+	log.Printf("OSS backend initialized: endpoint=%s, bucket=%s", endpoint, bucketName)
+	return &OSSBackend{bucket: bucket}, nil
 }
 
-// Upload uploads an object to OSS.
-func (c *OSSClient) Upload(key string, reader io.Reader, contentType string) error {
+// Upload uploads an object to OSS. size is ignored (OSS SDK reads until EOF).
+func (b *OSSBackend) Upload(_ context.Context, key string, reader io.Reader, _ int64, contentType string) error {
 	var opts []oss.Option
 	if contentType != "" {
 		opts = append(opts, oss.ContentType(contentType))
 	}
 
-	if err := c.bucket.PutObject(key, reader, opts...); err != nil {
+	if err := b.bucket.PutObject(key, reader, opts...); err != nil {
 		return fmt.Errorf("failed to upload %s: %w", key, err)
 	}
 	return nil
 }
 
 // Download downloads an object from OSS.
-func (c *OSSClient) Download(key string) (io.ReadCloser, error) {
-	body, err := c.bucket.GetObject(key)
+func (b *OSSBackend) Download(_ context.Context, key string) (io.ReadCloser, error) {
+	body, err := b.bucket.GetObject(key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download %s: %w", key, err)
 	}
@@ -53,18 +57,18 @@ func (c *OSSClient) Download(key string) (io.ReadCloser, error) {
 }
 
 // Delete deletes a single object from OSS.
-func (c *OSSClient) Delete(key string) error {
-	if err := c.bucket.DeleteObject(key); err != nil {
+func (b *OSSBackend) Delete(_ context.Context, key string) error {
+	if err := b.bucket.DeleteObject(key); err != nil {
 		return fmt.Errorf("failed to delete %s: %w", key, err)
 	}
 	return nil
 }
 
 // DeletePrefix deletes all objects under a given prefix.
-func (c *OSSClient) DeletePrefix(prefix string) error {
+func (b *OSSBackend) DeletePrefix(_ context.Context, prefix string) error {
 	marker := ""
 	for {
-		result, err := c.bucket.ListObjects(oss.Prefix(prefix), oss.Marker(marker), oss.MaxKeys(1000))
+		result, err := b.bucket.ListObjects(oss.Prefix(prefix), oss.Marker(marker), oss.MaxKeys(1000))
 		if err != nil {
 			return fmt.Errorf("failed to list objects for deletion: %w", err)
 		}
@@ -74,7 +78,7 @@ func (c *OSSClient) DeletePrefix(prefix string) error {
 			keys = append(keys, obj.Key)
 		}
 		if len(keys) > 0 {
-			_, err = c.bucket.DeleteObjects(keys)
+			_, err = b.bucket.DeleteObjects(keys)
 			if err != nil {
 				return fmt.Errorf("failed to batch delete objects: %w", err)
 			}
@@ -88,16 +92,8 @@ func (c *OSSClient) DeletePrefix(prefix string) error {
 	return nil
 }
 
-// ObjectInfo represents a listed OSS object.
-type ObjectInfo struct {
-	Key          string    `json:"key"`
-	Size         int64     `json:"size"`
-	LastModified time.Time `json:"last_modified"`
-	IsDirectory  bool      `json:"is_directory"`
-}
-
 // List lists objects under a prefix. If delimiter is non-empty, it simulates directories.
-func (c *OSSClient) List(prefix, delimiter string, maxKeys int) ([]ObjectInfo, error) {
+func (b *OSSBackend) List(_ context.Context, prefix, delimiter string, maxKeys int) ([]ObjectInfo, error) {
 	if maxKeys <= 0 {
 		maxKeys = 1000
 	}
@@ -108,7 +104,7 @@ func (c *OSSClient) List(prefix, delimiter string, maxKeys int) ([]ObjectInfo, e
 		opts = append(opts, oss.Delimiter(delimiter))
 	}
 
-	result, err := c.bucket.ListObjects(opts...)
+	result, err := b.bucket.ListObjects(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects: %w", err)
 	}
@@ -141,11 +137,11 @@ func (c *OSSClient) List(prefix, delimiter string, maxKeys int) ([]ObjectInfo, e
 }
 
 // ListAll lists all objects under a prefix (no pagination limit).
-func (c *OSSClient) ListAll(prefix string) ([]ObjectInfo, error) {
+func (b *OSSBackend) ListAll(_ context.Context, prefix string) ([]ObjectInfo, error) {
 	var items []ObjectInfo
 	marker := ""
 	for {
-		result, err := c.bucket.ListObjects(oss.Prefix(prefix), oss.Marker(marker), oss.MaxKeys(1000))
+		result, err := b.bucket.ListObjects(oss.Prefix(prefix), oss.Marker(marker), oss.MaxKeys(1000))
 		if err != nil {
 			return nil, fmt.Errorf("failed to list all objects: %w", err)
 		}
@@ -171,8 +167,8 @@ func (c *OSSClient) ListAll(prefix string) ([]ObjectInfo, error) {
 }
 
 // GeneratePresignedURL generates a pre-signed download URL.
-func (c *OSSClient) GeneratePresignedURL(key string, expiry time.Duration) (string, error) {
-	url, err := c.bucket.SignURL(key, oss.HTTPGet, int64(expiry.Seconds()))
+func (b *OSSBackend) GeneratePresignedURL(_ context.Context, key string, expiry time.Duration) (string, error) {
+	url, err := b.bucket.SignURL(key, oss.HTTPGet, int64(expiry.Seconds()))
 	if err != nil {
 		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
@@ -180,8 +176,8 @@ func (c *OSSClient) GeneratePresignedURL(key string, expiry time.Duration) (stri
 }
 
 // Copy copies an object within the bucket.
-func (c *OSSClient) Copy(srcKey, destKey string) error {
-	_, err := c.bucket.CopyObject(srcKey, destKey)
+func (b *OSSBackend) Copy(_ context.Context, srcKey, destKey string) error {
+	_, err := b.bucket.CopyObject(srcKey, destKey)
 	if err != nil {
 		return fmt.Errorf("failed to copy %s to %s: %w", srcKey, destKey, err)
 	}
@@ -189,8 +185,8 @@ func (c *OSSClient) Copy(srcKey, destKey string) error {
 }
 
 // GetObjectSize returns the size of an object.
-func (c *OSSClient) GetObjectSize(key string) (int64, error) {
-	props, err := c.bucket.GetObjectDetailedMeta(key)
+func (b *OSSBackend) GetObjectSize(_ context.Context, key string) (int64, error) {
+	props, err := b.bucket.GetObjectDetailedMeta(key)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get object meta: %w", err)
 	}

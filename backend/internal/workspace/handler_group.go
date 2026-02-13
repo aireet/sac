@@ -68,7 +68,7 @@ func (h *Handler) ListGroupFiles(c *gin.Context) {
 	reqPath := sanitizePath(c.DefaultQuery("path", "/"))
 	prefix := groupOSSKeyPrefix(groupID) + reqPath
 
-	items, err := oss.List(prefix, "/", 1000)
+	items, err := oss.List(c.Request.Context(), prefix, "/", 1000)
 	if err != nil {
 		response.InternalError(c, "Failed to list group files", err)
 		return
@@ -133,7 +133,7 @@ func (h *Handler) DownloadGroupFile(c *gin.Context) {
 	filePath = sanitizePath(filePath)
 	ossKey := groupOSSKeyPrefix(groupID) + filePath
 
-	body, err := oss.Download(ossKey)
+	body, err := oss.Download(c.Request.Context(), ossKey)
 	if err != nil {
 		response.NotFound(c, "File not found", err)
 		return
@@ -191,7 +191,7 @@ func (h *Handler) UploadGroup(c *gin.Context) {
 
 	ossKey := groupOSSKeyPrefix(groupID) + filePath + header.Filename
 
-	checksum, err := uploadToOSS(oss, ossKey, file, header)
+	checksum, err := uploadToStorage(ctx, oss, ossKey, file, header)
 	if err != nil {
 		response.InternalError(c, "Failed to upload file", err)
 		return
@@ -260,7 +260,7 @@ func (h *Handler) CreateGroupDirectory(c *gin.Context) {
 
 	ossKey := groupOSSKeyPrefix(req.GroupID) + dirPath
 
-	if err := oss.Upload(ossKey, strings.NewReader(""), "application/x-directory"); err != nil {
+	if err := oss.Upload(c.Request.Context(), ossKey, strings.NewReader(""), 0, "application/x-directory"); err != nil {
 		response.InternalError(c, "Failed to create directory", err)
 		return
 	}
@@ -294,7 +294,7 @@ func (h *Handler) DeleteGroupFile(c *gin.Context) {
 	ossKey := groupOSSKeyPrefix(groupID) + filePath
 
 	if strings.HasSuffix(filePath, "/") {
-		if err := oss.DeletePrefix(ossKey); err != nil {
+		if err := oss.DeletePrefix(ctx, ossKey); err != nil {
 			response.InternalError(c, "Failed to delete directory", err)
 			return
 		}
@@ -302,7 +302,7 @@ func (h *Handler) DeleteGroupFile(c *gin.Context) {
 			Where("group_id = ? AND workspace_type = 'group' AND oss_key LIKE ?", groupID, ossKey+"%").
 			Exec(ctx)
 	} else {
-		if err := oss.Delete(ossKey); err != nil {
+		if err := oss.Delete(ctx, ossKey); err != nil {
 			response.InternalError(c, "Failed to delete file", err)
 			return
 		}

@@ -25,7 +25,7 @@ func (h *Handler) ListSharedFiles(c *gin.Context) {
 	reqPath := sanitizePath(c.DefaultQuery("path", "/"))
 	prefix := sharedOSSPrefix + reqPath
 
-	items, err := oss.List(prefix, "/", 1000)
+	items, err := oss.List(c.Request.Context(), prefix, "/", 1000)
 	if err != nil {
 		response.InternalError(c, "Failed to list shared files", err)
 		return
@@ -75,7 +75,7 @@ func (h *Handler) DownloadSharedFile(c *gin.Context) {
 	filePath = sanitizePath(filePath)
 	ossKey := sharedOSSPrefix + filePath
 
-	body, err := oss.Download(ossKey)
+	body, err := oss.Download(c.Request.Context(), ossKey)
 	if err != nil {
 		response.NotFound(c, "File not found", err)
 		return
@@ -121,13 +121,13 @@ func (h *Handler) PublishToShared(c *gin.Context) {
 	ctx := context.Background()
 
 	// Copy from private to shared
-	if err := oss.Copy(srcOSSKey, destOSSKey); err != nil {
+	if err := oss.Copy(ctx, srcOSSKey, destOSSKey); err != nil {
 		response.InternalError(c, "Failed to publish file", err)
 		return
 	}
 
 	// Get source file size
-	srcSize, _ := oss.GetObjectSize(destOSSKey)
+	srcSize, _ := oss.GetObjectSize(ctx, destOSSKey)
 
 	// Upsert workspace_files record
 	wf := &models.WorkspaceFile{
@@ -183,7 +183,7 @@ func (h *Handler) DeleteSharedFile(c *gin.Context) {
 	ctx := context.Background()
 
 	if strings.HasSuffix(filePath, "/") {
-		if err := oss.DeletePrefix(ossKey); err != nil {
+		if err := oss.DeletePrefix(ctx, ossKey); err != nil {
 			response.InternalError(c, "Failed to delete directory", err)
 			return
 		}
@@ -191,7 +191,7 @@ func (h *Handler) DeleteSharedFile(c *gin.Context) {
 			Where("workspace_type = 'shared' AND oss_key LIKE ?", ossKey+"%").
 			Exec(ctx)
 	} else {
-		if err := oss.Delete(ossKey); err != nil {
+		if err := oss.Delete(ctx, ossKey); err != nil {
 			response.InternalError(c, "Failed to delete file", err)
 			return
 		}

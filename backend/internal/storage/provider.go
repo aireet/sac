@@ -10,29 +10,54 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// OSSProvider lazily creates and caches an OSSClient based on system_settings.
-// It re-creates the client whenever the stored config changes.
-type OSSProvider struct {
+// StorageProvider lazily creates and caches a StorageBackend based on system_settings.
+// It re-creates the backend whenever the stored config changes.
+type StorageProvider struct {
 	db    *bun.DB
 	mu    sync.Mutex
-	cache *OSSClient
-	// fingerprint of the last config used to create the client
+	cache StorageBackend
+	// fingerprint of the last config used to create the backend
 	configHash string
 }
 
-// NewOSSProvider creates a provider that reads OSS config from system_settings.
-func NewOSSProvider(db *bun.DB) *OSSProvider {
-	return &OSSProvider{db: db}
+// NewStorageProvider creates a provider that reads storage config from system_settings.
+func NewStorageProvider(db *bun.DB) *StorageProvider {
+	return &StorageProvider{db: db}
 }
 
-type ossConfig struct {
-	Endpoint        string
-	AccessKeyID     string
-	AccessKeySecret string
-	Bucket          string
+// storageConfig holds all settings needed to create any backend.
+type storageConfig struct {
+	Type StorageType
+	// OSS
+	OSSEndpoint        string
+	OSSAccessKeyID     string
+	OSSAccessKeySecret string
+	OSSBucket          string
+	// S3
+	S3Region          string
+	S3AccessKeyID     string
+	S3SecretAccessKey string
+	S3Bucket          string
+	// S3-compatible (MinIO, RustFS, etc.)
+	S3CompatEndpoint        string
+	S3CompatAccessKeyID     string
+	S3CompatSecretAccessKey string
+	S3CompatBucket          string
+	S3CompatUseSSL          string
 }
 
-func (p *OSSProvider) readConfig(ctx context.Context) (*ossConfig, error) {
+// allSettingKeys lists every system_settings key we may need.
+var allSettingKeys = []string{
+	"storage_type",
+	// OSS
+	"oss_endpoint", "oss_access_key_id", "oss_access_key_secret", "oss_bucket",
+	// S3
+	"s3_region", "s3_access_key_id", "s3_secret_access_key", "s3_bucket",
+	// S3-compatible
+	"s3compat_endpoint", "s3compat_access_key_id", "s3compat_secret_access_key", "s3compat_bucket", "s3compat_use_ssl",
+}
+
+func (p *StorageProvider) readConfig(ctx context.Context) (*storageConfig, error) {
 	type row struct {
 		Key   string `bun:"key"`
 		Value string `bun:"value"`
@@ -42,15 +67,13 @@ func (p *OSSProvider) readConfig(ctx context.Context) (*ossConfig, error) {
 	err := p.db.NewSelect().
 		TableExpr("system_settings").
 		Column("key", "value").
-		Where("key IN (?)", bun.In([]string{
-			"oss_endpoint", "oss_access_key_id", "oss_access_key_secret", "oss_bucket",
-		})).
+		Where("key IN (?)", bun.In(allSettingKeys)).
 		Scan(ctx, &rows)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read OSS settings: %w", err)
+		return nil, fmt.Errorf("failed to read storage settings: %w", err)
 	}
 
-	cfg := &ossConfig{}
+	cfg := &storageConfig{Type: TypeOSS} // default to OSS
 	for _, r := range rows {
 		// Values are stored as JSONB strings (e.g. `"value"` with quotes)
 		var val string
@@ -58,42 +81,104 @@ func (p *OSSProvider) readConfig(ctx context.Context) (*ossConfig, error) {
 			val = r.Value // fallback: use raw value
 		}
 		switch r.Key {
+		case "storage_type":
+			if val != "" {
+				cfg.Type = StorageType(val)
+			}
+		// OSS
 		case "oss_endpoint":
-			cfg.Endpoint = val
+			cfg.OSSEndpoint = val
 		case "oss_access_key_id":
-			cfg.AccessKeyID = val
+			cfg.OSSAccessKeyID = val
 		case "oss_access_key_secret":
-			cfg.AccessKeySecret = val
+			cfg.OSSAccessKeySecret = val
 		case "oss_bucket":
-			cfg.Bucket = val
+			cfg.OSSBucket = val
+		// S3
+		case "s3_region":
+			cfg.S3Region = val
+		case "s3_access_key_id":
+			cfg.S3AccessKeyID = val
+		case "s3_secret_access_key":
+			cfg.S3SecretAccessKey = val
+		case "s3_bucket":
+			cfg.S3Bucket = val
+		// S3-compatible
+		case "s3compat_endpoint":
+			cfg.S3CompatEndpoint = val
+		case "s3compat_access_key_id":
+			cfg.S3CompatAccessKeyID = val
+		case "s3compat_secret_access_key":
+			cfg.S3CompatSecretAccessKey = val
+		case "s3compat_bucket":
+			cfg.S3CompatBucket = val
+		case "s3compat_use_ssl":
+			cfg.S3CompatUseSSL = val
 		}
 	}
 
 	return cfg, nil
 }
 
-func (c *ossConfig) hash() string {
-	return fmt.Sprintf("%s|%s|%s|%s", c.Endpoint, c.AccessKeyID, c.AccessKeySecret, c.Bucket)
+func (c *storageConfig) hash() string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s",
+		c.Type,
+		c.OSSEndpoint, c.OSSAccessKeyID, c.OSSAccessKeySecret, c.OSSBucket,
+		c.S3Region, c.S3AccessKeyID, c.S3SecretAccessKey, c.S3Bucket,
+		c.S3CompatEndpoint, c.S3CompatAccessKeyID, c.S3CompatSecretAccessKey, c.S3CompatBucket, c.S3CompatUseSSL,
+	)
 }
 
-func (c *ossConfig) isComplete() bool {
-	return c.Endpoint != "" && c.AccessKeyID != "" && c.AccessKeySecret != "" && c.Bucket != ""
+// isComplete returns true if the active backend has all required fields.
+func (c *storageConfig) isComplete() bool {
+	switch c.Type {
+	case TypeOSS:
+		return c.OSSEndpoint != "" && c.OSSAccessKeyID != "" && c.OSSAccessKeySecret != "" && c.OSSBucket != ""
+	case TypeS3:
+		return c.S3Region != "" && c.S3AccessKeyID != "" && c.S3SecretAccessKey != "" && c.S3Bucket != ""
+	case TypeS3Compat:
+		return c.S3CompatEndpoint != "" && c.S3CompatAccessKeyID != "" && c.S3CompatSecretAccessKey != "" && c.S3CompatBucket != ""
+	default:
+		return false
+	}
 }
 
-// GetClient returns a cached OSSClient, creating or refreshing it if config changed.
-// Returns nil if OSS is not configured (endpoint empty).
-func (p *OSSProvider) GetClient(ctx context.Context) *OSSClient {
+// createBackend instantiates the concrete StorageBackend for the given config.
+func createBackend(cfg *storageConfig) (StorageBackend, error) {
+	switch cfg.Type {
+	case TypeOSS:
+		return NewOSSBackend(cfg.OSSEndpoint, cfg.OSSAccessKeyID, cfg.OSSAccessKeySecret, cfg.OSSBucket)
+	case TypeS3:
+		return NewS3Backend(cfg.S3Region, cfg.S3AccessKeyID, cfg.S3SecretAccessKey, cfg.S3Bucket)
+	case TypeS3Compat:
+		useSSL := cfg.S3CompatUseSSL == "true" || cfg.S3CompatUseSSL == "1"
+		return NewS3CompatBackend(S3CompatConfig{
+			Endpoint:        cfg.S3CompatEndpoint,
+			AccessKeyID:     cfg.S3CompatAccessKeyID,
+			SecretAccessKey: cfg.S3CompatSecretAccessKey,
+			Bucket:          cfg.S3CompatBucket,
+			UsePathStyle:    true,
+			ForceHTTP:       !useSSL,
+		})
+	default:
+		return nil, fmt.Errorf("unsupported storage type: %s", cfg.Type)
+	}
+}
+
+// GetClient returns a cached StorageBackend, creating or refreshing it if config changed.
+// Returns nil if storage is not configured.
+func (p *StorageProvider) GetClient(ctx context.Context) StorageBackend {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	cfg, err := p.readConfig(ctx)
 	if err != nil {
-		log.Printf("Warning: failed to read OSS config from settings: %v", err)
+		log.Printf("Warning: failed to read storage config from settings: %v", err)
 		return p.cache // return whatever we had
 	}
 
 	if !cfg.isComplete() {
-		return nil // OSS not configured
+		return nil // storage not configured
 	}
 
 	hash := cfg.hash()
@@ -101,21 +186,21 @@ func (p *OSSProvider) GetClient(ctx context.Context) *OSSClient {
 		return p.cache // config unchanged, reuse client
 	}
 
-	// Config changed or first call — create new client
-	client, err := NewOSSClient(cfg.Endpoint, cfg.AccessKeyID, cfg.AccessKeySecret, cfg.Bucket)
+	// Config changed or first call — create new backend
+	backend, err := createBackend(cfg)
 	if err != nil {
-		log.Printf("Warning: failed to create OSS client from settings: %v", err)
+		log.Printf("Warning: failed to create storage backend (%s) from settings: %v", cfg.Type, err)
 		return nil
 	}
 
-	p.cache = client
+	p.cache = backend
 	p.configHash = hash
-	log.Printf("OSS client (re)created from admin settings: endpoint=%s, bucket=%s", cfg.Endpoint, cfg.Bucket)
-	return client
+	log.Printf("Storage backend (%s) (re)created from admin settings", cfg.Type)
+	return backend
 }
 
-// IsConfigured returns true if OSS settings are complete (without creating a client).
-func (p *OSSProvider) IsConfigured(ctx context.Context) bool {
+// IsConfigured returns true if the active storage backend settings are complete.
+func (p *StorageProvider) IsConfigured(ctx context.Context) bool {
 	cfg, err := p.readConfig(ctx)
 	if err != nil {
 		return false
