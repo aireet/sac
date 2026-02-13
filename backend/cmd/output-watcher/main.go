@@ -17,10 +17,9 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-const (
-	watchDir     = "/workspace/output"
-	debounceTime = 500 * time.Millisecond
-)
+const debounceTime = 500 * time.Millisecond
+
+var watchDir = "/workspace/output"
 
 func main() {
 	userID := os.Getenv("USER_ID")
@@ -29,6 +28,10 @@ func main() {
 
 	if userID == "" || agentID == "" || apiURL == "" {
 		log.Fatal("USER_ID, AGENT_ID, and SAC_API_URL environment variables are required")
+	}
+
+	if dir := os.Getenv("WATCH_DIR"); dir != "" {
+		watchDir = dir
 	}
 
 	// Ensure watch directory exists
