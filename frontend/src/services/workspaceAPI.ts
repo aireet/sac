@@ -326,12 +326,14 @@ export interface OutputWatchEvent {
 export const watchOutputFiles = (
   agentId: number,
   onEvent: (event: OutputWatchEvent) => void,
+  onReconnect?: () => void,
 ): (() => void) => {
   const token = localStorage.getItem('token')
   const baseUrl = api.defaults.baseURL
   const url = `${baseUrl}/workspace/output/watch?agent_id=${agentId}`
 
   const controller = new AbortController()
+  let isFirstConnect = true
 
   const connect = () => {
     fetch(url, {
@@ -340,6 +342,12 @@ export const watchOutputFiles = (
     })
       .then((resp) => {
         if (!resp.ok || !resp.body) return
+        // On reconnect (not first connect), refresh to catch missed events
+        if (!isFirstConnect && onReconnect) {
+          onReconnect()
+        }
+        isFirstConnect = false
+
         const reader = resp.body.getReader()
         const decoder = new TextDecoder()
         let buffer = ''
@@ -372,6 +380,7 @@ export const watchOutputFiles = (
       .catch(() => {
         // Reconnect on network error unless aborted
         if (!controller.signal.aborted) {
+          isFirstConnect = false
           setTimeout(connect, 1000)
         }
       })

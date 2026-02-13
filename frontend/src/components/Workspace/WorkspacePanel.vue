@@ -902,6 +902,11 @@ const startOutputWatch = () => {
       outputBadgeCount.value++
       spaceTab.value = 'output'
     }
+  }, () => {
+    // onReconnect: refresh file list to catch events missed during disconnect
+    if (spaceTab.value === 'output' && !rootLoading.value) {
+      loadRootFiles()
+    }
   })
 }
 
