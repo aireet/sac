@@ -8,10 +8,11 @@ An open-source platform that makes Claude Code accessible to everyone — not ju
 
 | Layer | Technology |
 |-------|-----------|
-| Backend | Go 1.25, Gin, Bun ORM (pgdialect), gorilla/websocket, client-go v0.35 |
+| Backend | Go 1.25, Gin, Bun ORM (pgdialect), gorilla/websocket, go-redis/v9, client-go v0.35 |
 | Frontend | Vue 3, TypeScript, Naive UI, xterm.js (WebGL), Pinia, Vite |
 | Database | PostgreSQL 17 + TimescaleDB |
-| Storage | Alibaba Cloud OSS (or S3-compatible) |
+| Cache/PubSub | Redis (standalone, via bitnami Helm subchart) |
+| Storage | S3-compatible (Alibaba Cloud OSS, MinIO, AWS S3, etc.) |
 | Infra | K8s StatefulSets, Envoy Gateway v1.6, Helm 3 |
 
 ## Project Structure
@@ -19,21 +20,23 @@ An open-source platform that makes Claude Code accessible to everyone — not ju
 ```
 sac/
 ├── backend/
-│   ├── cmd/{api-gateway, ws-proxy, migrate}/
+│   ├── cmd/{api-gateway, ws-proxy, migrate, output-watcher}/
 │   ├── internal/
 │   │   ├── admin/       # Admin handlers + settings service
 │   │   ├── agent/       # Agent CRUD + K8s StatefulSet lifecycle
 │   │   ├── auth/        # JWT (HS256, 24h) + bcrypt + middleware
-│   │   ├── container/   # K8s client: StatefulSet, Service, exec, file sync
+│   │   ├── container/   # K8s client: StatefulSet, Service, exec, file sync, sidecar
 │   │   ├── database/    # bun ORM + pgdialect connection
+│   │   ├── group/       # Group CRUD + membership (admin + user routes)
 │   │   ├── history/     # Conversation history (TimescaleDB hypertable)
-│   │   ├── models/      # All data models (User, Agent, Session, Skill, etc.)
+│   │   ├── models/      # All data models (User, Agent, Session, Skill, Group, etc.)
+│   │   ├── redis/       # Redis client singleton (Pub/Sub for SSE)
 │   │   ├── session/     # Session lifecycle (create → pod ready → sync → connect)
-│   │   ├── skill/       # Skill CRUD + sync as .md to pod /root/.claude/commands/
-│   │   ├── storage/     # OSS client wrapper + lazy provider from system_settings
+│   │   ├── skill/       # Skill CRUD + versioning + sync as .md to pod
+│   │   ├── storage/     # Pluggable S3-compatible backend (OSS, MinIO, AWS S3)
 │   │   ├── websocket/   # ttyd binary protocol proxy (0x30 input/output)
-│   │   └── workspace/   # File upload/download/sync, quota enforcement
-│   ├── migrations/      # 000001-000012 (bun/migrate)
+│   │   └── workspace/   # File upload/download/sync, quota, output SSE watch
+│   ├── migrations/      # 000001-000017 (bun/migrate)
 │   └── pkg/{config, response}/
 ├── frontend/src/
 │   ├── components/
@@ -42,12 +45,12 @@ sac/
 │   │   ├── Agent/             # AgentSelector + AgentCreator (LLM presets)
 │   │   ├── SkillPanel/        # Dashboard sidebar (status, skills, workspace, history)
 │   │   ├── SkillMarketplace/  # Browse, create, fork, install skills
-│   │   └── Workspace/         # File browser + text/image/binary preview
+│   │   └── Workspace/         # File browser + text/image/binary preview + SSE watch
 │   ├── services/              # Typed API clients (axios + interceptors)
 │   ├── stores/auth.ts         # Pinia auth store
 │   └── views/                 # MainView, LoginView, RegisterView, AdminView
-├── docker/                    # 4 Dockerfiles (api-gateway, ws-proxy, frontend, claude-code)
-├── helm/sac/                  # Helm chart + Envoy Gateway subchart
+├── docker/                    # 5 Dockerfiles (api-gateway, ws-proxy, frontend, claude-code, output-watcher)
+├── helm/sac/                  # Helm chart + Envoy Gateway + Redis subcharts
 │   ├── files/                 # conversation-sync.mjs hook, settings.json
 │   └── templates/             # Deployments, Services, RBAC, HTTPRoutes, ConfigMap
 ├── Makefile                   # Dev, build, deploy, migrate
@@ -60,7 +63,16 @@ sac/
 - Each user-agent pair → 1 StatefulSet + 1 headless Service
 - Naming: `claude-code-{userID}-{agentID}`
 - Pod DNS: `claude-code-{userID}-{agentID}-0.claude-code-{userID}-{agentID}.sac.svc.cluster.local`
+- Containers: main (claude-code + ttyd) + sidecar (output-watcher)
 - Mounted volumes: workspace (emptyDir), settings.json + conversation-sync.mjs (ConfigMap)
+
+### Output Workspace (Sidecar → SSE)
+- Sidecar (`output-watcher`) watches `/workspace/output/` via fsnotify
+- On file change → POST `/api/internal/output/upload` or `/delete`
+- API Gateway uploads to OSS, upserts DB, then `PUBLISH` to Redis channel `sac:output:{userID}:{agentID}`
+- All API Gateway replicas `PSUBSCRIBE sac:output:*` → dispatch to local SSE subscribers
+- Frontend `GET /api/workspace/output/watch?agent_id=X` (SSE) → `loadRootFiles()` on event
+- Graceful degradation: if Redis unavailable, SSE endpoint returns 503, frontend can fall back to manual refresh
 
 ### Session Flow
 1. CreateSession → check/create StatefulSet → wait pod ready (300s timeout)
@@ -102,8 +114,9 @@ make migrate-seed     # Seed admin user (admin/admin123)
 
 ### Build & Deploy
 ```bash
-make docker-build     # Build all 4 images (auto version bump)
+make docker-build     # Build all 5 images (auto version bump)
 make docker-push      # Push to registry
+make helm-dep-update  # Update Helm chart dependencies (Redis subchart)
 make helm-upgrade     # Helm upgrade release
 ```
 
@@ -139,6 +152,11 @@ make helm-upgrade     # Helm upgrade release
 | 010 | workspace_files | File metadata + quotas |
 | 011 | seed_oss_settings | OSS config in system_settings |
 | 012 | workspace_per_agent | Add agent_id to workspace tables |
+| 013 | add_groups | Groups + membership tables |
+| 014 | workspace_group_share | Group workspace quotas |
+| 015 | seed_docker_image_setting | Docker image in system_settings |
+| 016 | skill_version | Skill versioning fields |
+| 017 | storage_backend_settings | Pluggable storage backend config |
 
 ## Troubleshooting
 

@@ -23,27 +23,76 @@ Claude Code is a revolutionary AI agent that can do almost anything, but using i
 
 ## Architecture
 
-```
-Browser ──HTTP──▶ Envoy Gateway ──▶ API Gateway (Go, :8080)
-                                  ──▶ WS Proxy (Go, :8081)
-                                  ──▶ Frontend (Vue 3, :80)
-                                       │
-WS Proxy ──WebSocket──▶ ttyd (:7681) in K8s Pod
-                                       │
-API Gateway ──K8s API──▶ StatefulSet per user/agent
-            ──OSS SDK──▶ Alibaba Cloud OSS (workspace files)
-            ──SQL─────▶ PostgreSQL + TimescaleDB
+```mermaid
+graph TB
+    Browser["🌐 Browser"]
+
+    subgraph Gateway["Envoy Gateway"]
+        direction LR
+    end
+
+    subgraph Services["SAC Services"]
+        API["API Gateway<br/>(Go, :8080)"]
+        WS["WS Proxy<br/>(Go, :8081)"]
+        FE["Frontend<br/>(Vue 3, :80)"]
+    end
+
+    subgraph Data["Data Layer"]
+        PG["PostgreSQL 17<br/>+ TimescaleDB"]
+        Redis["Redis<br/>(Pub/Sub)"]
+        S3["S3-compatible Storage<br/>(OSS / MinIO / AWS S3)"]
+    end
+
+    subgraph K8s["Kubernetes — per user/agent StatefulSet"]
+        direction TB
+        subgraph Pod["claude-code-{uid}-{aid}-0"]
+            Main["main container<br/>ttyd → claude CLI"]
+            Sidecar["sidecar<br/>output-watcher"]
+        end
+    end
+
+    Browser -->|HTTP| Gateway
+    Gateway --> API
+    Gateway -->|WebSocket| WS
+    Gateway --> FE
+
+    WS -->|"WS (ttyd binary)"| Main
+    API -->|K8s API| Pod
+    API --> PG
+    API --> S3
+    API -->|Pub/Sub| Redis
+
+    Sidecar -->|"fsnotify → POST /api/internal/output"| API
+    Redis -.->|"SSE push"| Browser
+
+    Main ---|shared volume| Sidecar
 ```
 
-Each user-agent pair runs as a dedicated StatefulSet:
+```mermaid
+graph LR
+    subgraph Pod["Pod: claude-code-{uid}-{aid}-0"]
+        subgraph Main["main container"]
+            ttyd["ttyd :7681"] --> claude["claude CLI"]
+            Private["/workspace/private"]
+            Public["/workspace/public"]
+            Output["/workspace/output<br/>📄 code, images, docs<br/>produced by Claude Code"]
+            Skills["/root/.claude/commands"]
+        end
+        subgraph Sidecar["sidecar: output-watcher"]
+            Watcher["fsnotify watcher"]
+        end
+    end
 
+    claude -.->|"writes files<br/>(code, images, docs)"| Output
+    OSS["S3 Storage"] -->|"sync on session start"| Private
+    OSS -->|"sync on session start"| Public
+    Output -->|"detect new/changed/deleted files"| Watcher
+    Watcher -->|"POST upload/delete"| API["API Gateway"]
+    API -->|"PUBLISH"| Redis["Redis"]
+    Redis -->|"SSE → Browser"| Browser["🌐 Browser"]
 ```
-claude-code-{userID}-{agentID}-0
-  └── ttyd → claude (CLI)
-      ├── /workspace/private    ← synced from OSS (per-agent)
-      ├── /workspace/public     ← synced from OSS (shared)
-      └── /root/.claude/commands ← skill .md files
-```
+
+> **Output Workspace**: When Claude Code generates files — source code, images, documents, or any artifact — they land in `/workspace/output`. The sidecar (`output-watcher`) detects these file changes via fsnotify and uploads them to S3 storage through the internal API. The API then publishes an event to Redis, which pushes an SSE notification to the browser so the user sees new files appear in real time without polling.
 
 ## Features
 
@@ -66,8 +115,10 @@ claude-code-{userID}-{agentID}-0
 - One-click execution from the sidebar
 
 ### Workspace Files
-- Per-agent private storage backed by Alibaba Cloud OSS
+- Per-agent private storage backed by S3-compatible storage (OSS, MinIO, AWS S3)
 - Shared public workspace (admin-managed)
+- Group workspace with per-group quotas
+- Output workspace (Working tab) — sidecar-populated, real-time SSE push via Redis Pub/Sub
 - Upload, download, create directories, delete
 - In-browser preview: text (editable), images, binary info
 - Quota enforcement (1GB / 1000 files per agent by default)
@@ -91,10 +142,11 @@ claude-code-{userID}-{agentID}-0
 | Layer | Technology |
 |-------|-----------|
 | Frontend | Vue 3, TypeScript, Naive UI, xterm.js, Pinia, Vite |
-| Backend | Go, Gin, Bun ORM, gorilla/websocket |
+| Backend | Go, Gin, Bun ORM, gorilla/websocket, go-redis/v9 |
 | Database | PostgreSQL 17 + TimescaleDB |
-| Storage | Alibaba Cloud OSS (or S3-compatible) |
-| Container | Kubernetes, StatefulSet per agent, ttyd |
+| Cache/PubSub | Redis (standalone, bitnami Helm subchart) |
+| Storage | S3-compatible (Alibaba Cloud OSS, MinIO, AWS S3, etc.) |
+| Container | Kubernetes, StatefulSet per agent (main + sidecar), ttyd |
 | Ingress | Any ingress controller (optional Envoy Gateway subchart included) |
 | Deploy | Helm 3, Docker multi-stage builds |
 
@@ -104,7 +156,7 @@ claude-code-{userID}-{agentID}-0
 
 - Kubernetes cluster
 - PostgreSQL 17+ with TimescaleDB extension
-- Alibaba Cloud OSS bucket (or S3-compatible storage)
+- S3-compatible storage (Alibaba Cloud OSS, MinIO, AWS S3, etc.)
 - Docker registry access
 - Helm 3
 - Any ingress controller that can route:
@@ -116,7 +168,7 @@ claude-code-{userID}-{agentID}-0
 ### 1. Build Images
 
 ```bash
-make docker-build    # builds all 4 images (auto-bumps version)
+make docker-build    # builds all 5 images (auto-bumps version)
 make docker-push     # pushes to registry
 ```
 
@@ -125,6 +177,7 @@ This builds:
 - `ws-proxy` — WebSocket terminal proxy
 - `frontend` — Vue 3 SPA served by nginx
 - `cc` — Claude Code container with ttyd
+- `output-watcher` — Sidecar that watches /workspace/output and syncs to OSS
 
 ### 2. Configure
 
@@ -144,15 +197,22 @@ database:
 auth:
   jwtSecret: your-jwt-secret
 
+redis:
+  enabled: true          # built-in Redis; set false to use external
+  externalURL: ""        # redis://host:port (when enabled=false)
+
 envoyGateway:
   host: sac.your-domain.com
 ```
 
-OSS settings are configured at runtime via the admin panel (System Settings).
+Storage settings are configured at runtime via the admin panel (System Settings).
 
 ### 3. Deploy
 
 ```bash
+# Update Helm dependencies (Redis subchart)
+make helm-dep-update
+
 # First install
 make helm-deploy
 
@@ -174,7 +234,7 @@ make migrate-seed
 
 Open `http://sac.your-domain.com` in your browser. Log in with `admin` / `admin123`, then:
 
-1. Configure OSS in Admin → System Settings
+1. Configure storage in Admin → System Settings
 2. Create your first agent (configure LLM provider)
 3. Start a session — a dedicated pod will be created
 4. Use the terminal or chat mode to interact with Claude Code
@@ -215,20 +275,24 @@ sac/
 │   ├── cmd/
 │   │   ├── api-gateway/          # HTTP API server
 │   │   ├── ws-proxy/             # WebSocket terminal proxy
+│   │   ├── output-watcher/       # Sidecar: fsnotify → API upload
 │   │   └── migrate/              # Database migration CLI
 │   ├── internal/
 │   │   ├── admin/                # Admin panel handlers + settings
 │   │   ├── agent/                # Agent CRUD + K8s lifecycle
 │   │   ├── auth/                 # JWT auth + bcrypt passwords
-│   │   ├── container/            # K8s StatefulSet management
+│   │   ├── container/            # K8s StatefulSet management + sidecar
 │   │   ├── database/             # PostgreSQL connection (bun ORM)
+│   │   ├── group/                # Group CRUD + membership
 │   │   ├── history/              # Conversation history (TimescaleDB)
 │   │   ├── models/               # Data models
+│   │   ├── redis/                # Redis client singleton (Pub/Sub)
 │   │   ├── session/              # Session lifecycle
-│   │   ├── skill/                # Skill CRUD + pod sync
-│   │   ├── storage/              # OSS client + provider
-│   │   └── websocket/            # ttyd WebSocket proxy
-│   ├── migrations/               # 12 database migrations
+│   │   ├── skill/                # Skill CRUD + versioning + pod sync
+│   │   ├── storage/              # Pluggable S3-compatible backend
+│   │   ├── websocket/            # ttyd WebSocket proxy
+│   │   └── workspace/            # File ops, quota, output SSE watch
+│   ├── migrations/               # 17 database migrations
 │   └── pkg/
 │       ├── config/               # Environment-based configuration
 │       └── response/             # Standardized HTTP responses
@@ -240,7 +304,7 @@ sac/
 │       │   ├── Agent/            # Agent selector + creator
 │       │   ├── SkillPanel/       # Agent dashboard sidebar
 │       │   ├── SkillMarketplace/ # Skill browse/create/fork
-│       │   └── Workspace/        # File browser with preview
+│       │   └── Workspace/        # File browser + preview + SSE watch
 │       ├── services/             # API client layer
 │       ├── stores/               # Pinia auth store
 │       ├── views/                # Login, Register, Main, Admin
@@ -249,11 +313,12 @@ sac/
 │   ├── api-gateway/              # Go multi-stage Dockerfile
 │   ├── ws-proxy/                 # Go multi-stage Dockerfile
 │   ├── frontend/                 # Vue build + nginx
-│   └── claude-code/              # Ubuntu + ttyd + Claude Code CLI
+│   ├── claude-code/              # Ubuntu + ttyd + Claude Code CLI
+│   └── output-watcher/           # Sidecar Dockerfile
 ├── helm/sac/                     # Helm chart
 │   ├── templates/                # K8s manifests
 │   ├── files/                    # Hook scripts + settings
-│   └── charts/                   # Envoy Gateway subchart
+│   └── charts/                   # Envoy Gateway + Redis subcharts
 ├── Makefile                      # Dev, build, deploy commands
 └── .version                      # Current version
 ```
@@ -309,7 +374,12 @@ GET    /api/conversations
 GET    /api/conversations/sessions
 GET    /api/conversations/export
 
-# Workspace
+# Groups
+GET    /api/groups
+GET    /api/groups/:id
+GET    /api/groups/:id/members
+
+# Workspace (private)
 GET    /api/workspace/status
 POST   /api/workspace/upload
 GET    /api/workspace/files
@@ -317,11 +387,30 @@ GET    /api/workspace/files/download
 DELETE /api/workspace/files
 POST   /api/workspace/directories
 GET    /api/workspace/quota
+
+# Workspace (public)
 GET    /api/workspace/public/files
 GET    /api/workspace/public/files/download
 POST   /api/workspace/public/upload
 POST   /api/workspace/public/directories
 DELETE /api/workspace/public/files
+
+# Workspace (group)
+GET    /api/workspace/group/files
+GET    /api/workspace/group/files/download
+POST   /api/workspace/group/upload
+POST   /api/workspace/group/directories
+DELETE /api/workspace/group/files
+GET    /api/workspace/group/quota
+
+# Workspace (output — read-only + SSE)
+GET    /api/workspace/output/files
+GET    /api/workspace/output/files/download
+GET    /api/workspace/output/watch          # SSE stream
+
+# Workspace sync
+POST   /api/workspace/sync
+GET    /api/workspace/sync-stream           # SSE stream
 
 # WebSocket
 WS     /ws/:sessionId?token=<jwt>&agent_id=<id>
@@ -345,6 +434,16 @@ POST   /api/admin/users/:id/agents/:agentId/restart
 PUT    /api/admin/users/:id/agents/:agentId/resources
 GET    /api/admin/conversations
 GET    /api/admin/conversations/export
+
+# Admin groups
+GET    /api/admin/groups
+POST   /api/admin/groups
+PUT    /api/admin/groups/:id
+DELETE /api/admin/groups/:id
+GET    /api/admin/groups/:id/members
+POST   /api/admin/groups/:id/members
+DELETE /api/admin/groups/:id/members/:userId
+PUT    /api/admin/groups/:id/members/:userId
 ```
 </details>
 
@@ -366,6 +465,8 @@ All backend configuration is via environment variables (with `.env` file support
 | `K8S_NAMESPACE` | `sac` | Kubernetes namespace |
 | `DOCKER_REGISTRY` | — | Container image registry |
 | `DOCKER_IMAGE` | — | Claude Code container image |
+| `SIDECAR_IMAGE` | — | Output watcher sidecar image |
+| `REDIS_URL` | `redis://redis.sac:6379` | Redis URL for Pub/Sub (SSE push) |
 
 ## License
 

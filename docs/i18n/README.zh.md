@@ -23,27 +23,76 @@ Claude Code 是一个革命性的 AI Agent，它几乎能做一切，但使用�
 
 ## 架构
 
-```
-浏览器 ──HTTP──▶ Envoy Gateway ──▶ API Gateway (Go, :8080)
-                                 ──▶ WS Proxy (Go, :8081)
-                                 ──▶ Frontend (Vue 3, :80)
-                                      │
-WS Proxy ──WebSocket──▶ ttyd (:7681) K8s Pod 内
-                                      │
-API Gateway ──K8s API──▶ 每个用户/Agent 一个 StatefulSet
-            ──OSS SDK──▶ 阿里云 OSS（工作区文件）
-            ──SQL─────▶ PostgreSQL + TimescaleDB
+```mermaid
+graph TB
+    Browser["🌐 浏览器"]
+
+    subgraph Gateway["Envoy Gateway"]
+        direction LR
+    end
+
+    subgraph Services["SAC 服务"]
+        API["API Gateway<br/>(Go, :8080)"]
+        WS["WS Proxy<br/>(Go, :8081)"]
+        FE["Frontend<br/>(Vue 3, :80)"]
+    end
+
+    subgraph Data["数据层"]
+        PG["PostgreSQL 17<br/>+ TimescaleDB"]
+        Redis["Redis<br/>(Pub/Sub)"]
+        S3["S3 兼容存储<br/>(OSS / MinIO / AWS S3)"]
+    end
+
+    subgraph K8s["Kubernetes — 每用户/Agent 一个 StatefulSet"]
+        direction TB
+        subgraph Pod["claude-code-{uid}-{aid}-0"]
+            Main["主容器<br/>ttyd → claude CLI"]
+            Sidecar["Sidecar<br/>output-watcher"]
+        end
+    end
+
+    Browser -->|HTTP| Gateway
+    Gateway --> API
+    Gateway -->|WebSocket| WS
+    Gateway --> FE
+
+    WS -->|"WS (ttyd 二进制协议)"| Main
+    API -->|K8s API| Pod
+    API --> PG
+    API --> S3
+    API -->|Pub/Sub| Redis
+
+    Sidecar -->|"fsnotify → POST /api/internal/output"| API
+    Redis -.->|"SSE 推送"| Browser
+
+    Main ---|共享卷| Sidecar
 ```
 
-每个用户-Agent 组合运行为一个独立的 StatefulSet：
+```mermaid
+graph LR
+    subgraph Pod["Pod: claude-code-{uid}-{aid}-0"]
+        subgraph Main["主容器"]
+            ttyd["ttyd :7681"] --> claude["claude CLI"]
+            Private["/workspace/private"]
+            Public["/workspace/public"]
+            Output["/workspace/output<br/>📄 代码、图片、文档<br/>Claude Code 的文件产出"]
+            Skills["/root/.claude/commands"]
+        end
+        subgraph Sidecar["Sidecar: output-watcher"]
+            Watcher["fsnotify 监听"]
+        end
+    end
 
+    claude -.->|"写入文件<br/>（代码、图片、文档）"| Output
+    OSS["S3 存储"] -->|"会话启动时同步"| Private
+    OSS -->|"会话启动时同步"| Public
+    Output -->|"检测文件新增/变更/删除"| Watcher
+    Watcher -->|"POST 上传/删除"| API["API Gateway"]
+    API -->|"PUBLISH"| Redis["Redis"]
+    Redis -->|"SSE → 浏览器"| Browser["🌐 浏览器"]
 ```
-claude-code-{userID}-{agentID}-0
-  └── ttyd → claude (CLI)
-      ├── /workspace/private    ← 从 OSS 同步（Agent 级私有）
-      ├── /workspace/public     ← 从 OSS 同步（共享）
-      └── /root/.claude/commands ← 技能 .md 文件
-```
+
+> **Output 工作区**：当 Claude Code 生成文件 — 源代码、图片、文档或任何产物 — 它们会落入 `/workspace/output`。Sidecar（`output-watcher`）通过 fsnotify 检测这些文件变更，并通过内部 API 上传到 S3 存储。API 随后向 Redis 发布事件，Redis 将 SSE 通知推送到浏览器，用户无需轮询即可实时看到新文件出现。
 
 ## 功能特性
 
@@ -66,8 +115,10 @@ claude-code-{userID}-{agentID}-0
 - 侧边栏一键执行
 
 ### 工作区文件
-- 基于阿里云 OSS 的 Agent 级私有存储
+- 基于 S3 兼容存储的 Agent 级私有存储（阿里云 OSS、MinIO、AWS S3 等）
 - 共享公共工作区（管理员管理）
+- 团队工作区，支持按组配额
+- Output 工作区（Working 标签）— Sidecar 填充，通过 Redis Pub/Sub 实时 SSE 推送
 - 上传、下载、创建目录、删除
 - 浏览器内预览：文本（可编辑）、图片、二进制信息
 - 配额限制（默认每 Agent 1GB / 1000 个文件）
@@ -91,10 +142,11 @@ claude-code-{userID}-{agentID}-0
 | 层级 | 技术 |
 |------|------|
 | 前端 | Vue 3, TypeScript, Naive UI, xterm.js, Pinia, Vite |
-| 后端 | Go, Gin, Bun ORM, gorilla/websocket |
+| 后端 | Go, Gin, Bun ORM, gorilla/websocket, go-redis/v9 |
 | 数据库 | PostgreSQL 17 + TimescaleDB |
-| 存储 | 阿里云 OSS（或 S3 兼容存储） |
-| 容器 | Kubernetes, 每 Agent 一个 StatefulSet, ttyd |
+| 缓存/消息 | Redis（standalone，bitnami Helm 子 Chart） |
+| 存储 | S3 兼容（阿里云 OSS、MinIO、AWS S3 等） |
+| 容器 | Kubernetes, 每 Agent 一个 StatefulSet（主容器 + Sidecar）, ttyd |
 | 入口网关 | 任意 Ingress 控制器（可选内置 Envoy Gateway 子 Chart） |
 | 部署 | Helm 3, Docker 多阶段构建 |
 
@@ -104,7 +156,7 @@ claude-code-{userID}-{agentID}-0
 
 - Kubernetes 集群
 - PostgreSQL 17+ 并启用 TimescaleDB 扩展
-- 阿里云 OSS 存储桶（或 S3 兼容存储）
+- S3 兼容存储（阿里云 OSS、MinIO、AWS S3 等）
 - Docker 镜像仓库访问权限
 - Helm 3
 - 任意 Ingress 控制器，配置以下路由即可：
@@ -116,7 +168,7 @@ claude-code-{userID}-{agentID}-0
 ### 1. 构建镜像
 
 ```bash
-make docker-build    # 构建全部 4 个镜像（自动递增版本号）
+make docker-build    # 构建全部 5 个镜像（自动递增版本号）
 make docker-push     # 推送到镜像仓库
 ```
 
@@ -125,6 +177,7 @@ make docker-push     # 推送到镜像仓库
 - `ws-proxy` — WebSocket 终端代理
 - `frontend` — Vue 3 SPA（nginx 托管）
 - `cc` — Claude Code 容器（含 ttyd）
+- `output-watcher` — Sidecar，监听 /workspace/output 并同步到 OSS
 
 ### 2. 配置
 
@@ -144,15 +197,22 @@ database:
 auth:
   jwtSecret: your-jwt-secret
 
+redis:
+  enabled: true          # 内置 Redis；设为 false 使用外部 Redis
+  externalURL: ""        # redis://host:port（enabled=false 时生效）
+
 envoyGateway:
   host: sac.your-domain.com
 ```
 
-OSS 设置在运行时通过管理面板（系统设置）配置。
+存储设置在运行时通过管理面板（系统设置）配置。
 
 ### 3. 部署
 
 ```bash
+# 更新 Helm 依赖（Redis 子 Chart）
+make helm-dep-update
+
 # 首次安装
 make helm-deploy
 
@@ -174,7 +234,7 @@ make migrate-seed
 
 在浏览器中打开 `http://sac.your-domain.com`，使用 `admin` / `admin123` 登录，然后：
 
-1. 在管理面板 → 系统设置中配置 OSS
+1. 在管理面板 → 系统设置中配置存储
 2. 创建你的第一个 Agent（配置 LLM 提供商）
 3. 启动一个会话 — 系统将创建一个专属 Pod
 4. 使用终端或聊天模式与 Claude Code 交互
@@ -215,20 +275,24 @@ sac/
 │   ├── cmd/
 │   │   ├── api-gateway/          # HTTP API 服务
 │   │   ├── ws-proxy/             # WebSocket 终端代理
+│   │   ├── output-watcher/       # Sidecar: fsnotify → API 上传
 │   │   └── migrate/              # 数据库迁移工具
 │   ├── internal/
 │   │   ├── admin/                # 管理面板处理器 + 设置
 │   │   ├── agent/                # Agent CRUD + K8s 生命周期
 │   │   ├── auth/                 # JWT 认证 + bcrypt 密码
-│   │   ├── container/            # K8s StatefulSet 管理
+│   │   ├── container/            # K8s StatefulSet 管理 + Sidecar
 │   │   ├── database/             # PostgreSQL 连接 (bun ORM)
+│   │   ├── group/                # 团队 CRUD + 成员管理
 │   │   ├── history/              # 对话历史 (TimescaleDB)
 │   │   ├── models/               # 数据模型
+│   │   ├── redis/                # Redis 客户端单例 (Pub/Sub)
 │   │   ├── session/              # 会话生命周期
-│   │   ├── skill/                # 技能 CRUD + Pod 同步
-│   │   ├── storage/              # OSS 客户端 + 提供者
-│   │   └── websocket/            # ttyd WebSocket 代理
-│   ├── migrations/               # 12 个数据库迁移
+│   │   ├── skill/                # 技能 CRUD + 版本管理 + Pod 同步
+│   │   ├── storage/              # 可插拔 S3 兼容存储后端
+│   │   ├── websocket/            # ttyd WebSocket 代理
+│   │   └── workspace/            # 文件操作、配额、Output SSE 推送
+│   ├── migrations/               # 17 个数据库迁移
 │   └── pkg/
 │       ├── config/               # 基于环境变量的配置
 │       └── response/             # 标准化 HTTP 响应
@@ -240,7 +304,7 @@ sac/
 │       │   ├── Agent/            # Agent 选择器 + 创建器
 │       │   ├── SkillPanel/       # Agent 仪表板侧边栏
 │       │   ├── SkillMarketplace/ # 技能浏览/创建/Fork
-│       │   └── Workspace/        # 文件浏览器 + 预览
+│       │   └── Workspace/        # 文件浏览器 + 预览 + SSE 监听
 │       ├── services/             # API 客户端层
 │       ├── stores/               # Pinia 认证 Store
 │       ├── views/                # 登录、注册、主界面、管理面板
@@ -249,11 +313,12 @@ sac/
 │   ├── api-gateway/              # Go 多阶段 Dockerfile
 │   ├── ws-proxy/                 # Go 多阶段 Dockerfile
 │   ├── frontend/                 # Vue 构建 + nginx
-│   └── claude-code/              # Ubuntu + ttyd + Claude Code CLI
+│   ├── claude-code/              # Ubuntu + ttyd + Claude Code CLI
+│   └── output-watcher/           # Sidecar Dockerfile
 ├── helm/sac/                     # Helm Chart
 │   ├── templates/                # K8s 资源清单
 │   ├── files/                    # Hook 脚本 + 设置文件
-│   └── charts/                   # Envoy Gateway 子 Chart
+│   └── charts/                   # Envoy Gateway + Redis 子 Chart
 ├── Makefile                      # 开发、构建、部署命令
 └── .version                      # 当前版本号
 ```
@@ -309,7 +374,12 @@ GET    /api/conversations
 GET    /api/conversations/sessions
 GET    /api/conversations/export
 
-# 工作区
+# 团队
+GET    /api/groups
+GET    /api/groups/:id
+GET    /api/groups/:id/members
+
+# 工作区（私有）
 GET    /api/workspace/status
 POST   /api/workspace/upload
 GET    /api/workspace/files
@@ -317,11 +387,30 @@ GET    /api/workspace/files/download
 DELETE /api/workspace/files
 POST   /api/workspace/directories
 GET    /api/workspace/quota
+
+# 工作区（公共）
 GET    /api/workspace/public/files
 GET    /api/workspace/public/files/download
 POST   /api/workspace/public/upload
 POST   /api/workspace/public/directories
 DELETE /api/workspace/public/files
+
+# 工作区（团队）
+GET    /api/workspace/group/files
+GET    /api/workspace/group/files/download
+POST   /api/workspace/group/upload
+POST   /api/workspace/group/directories
+DELETE /api/workspace/group/files
+GET    /api/workspace/group/quota
+
+# 工作区（Output — 只读 + SSE）
+GET    /api/workspace/output/files
+GET    /api/workspace/output/files/download
+GET    /api/workspace/output/watch          # SSE 流
+
+# 工作区同步
+POST   /api/workspace/sync
+GET    /api/workspace/sync-stream           # SSE 流
 
 # WebSocket
 WS     /ws/:sessionId?token=<jwt>&agent_id=<id>
@@ -345,6 +434,16 @@ POST   /api/admin/users/:id/agents/:agentId/restart
 PUT    /api/admin/users/:id/agents/:agentId/resources
 GET    /api/admin/conversations
 GET    /api/admin/conversations/export
+
+# 管理员团队
+GET    /api/admin/groups
+POST   /api/admin/groups
+PUT    /api/admin/groups/:id
+DELETE /api/admin/groups/:id
+GET    /api/admin/groups/:id/members
+POST   /api/admin/groups/:id/members
+DELETE /api/admin/groups/:id/members/:userId
+PUT    /api/admin/groups/:id/members/:userId
 ```
 </details>
 
@@ -366,6 +465,8 @@ GET    /api/admin/conversations/export
 | `K8S_NAMESPACE` | `sac` | Kubernetes 命名空间 |
 | `DOCKER_REGISTRY` | — | 容器镜像仓库 |
 | `DOCKER_IMAGE` | — | Claude Code 容器镜像 |
+| `SIDECAR_IMAGE` | — | Output Watcher Sidecar 镜像 |
+| `REDIS_URL` | `redis://redis.sac:6379` | Redis URL，用于 Pub/Sub（SSE 推送） |
 
 ## 开源协议
 
