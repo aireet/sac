@@ -85,6 +85,22 @@ envoyGateway:
   # Service type: NodePort or LoadBalancer
   serviceType: NodePort
 
+# --- Redis ---
+redis:
+  enabled: true
+  externalURL: ""
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
 # --- gateway-helm subchart values ---
 gateway-helm:
   global:

@@ -27,11 +27,11 @@
             </n-space>
           </template>
         </n-tab-pane>
-        <n-tab-pane name="shared">
+        <n-tab-pane name="output">
           <template #tab>
             <n-space :size="4" align="center">
-              <n-icon size="14"><ShareSocialOutline /></n-icon>
-              <span>Shared</span>
+              <n-icon size="14"><ConstructOutline /></n-icon>
+              <span>Working</span>
             </n-space>
           </template>
         </n-tab-pane>
@@ -244,7 +244,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, h, type Component } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, h, type Component } from 'vue'
 import {
   NTabs, NTabPane, NSpace, NIcon, NText, NButton, NUpload, NSpin,
   NEmpty, NPopconfirm, NModal, NInput, NProgress, NTree, NSelect, NTooltip,
@@ -255,7 +255,7 @@ import {
   LockClosedOutline, GlobeOutline, RefreshOutline, DocumentOutline,
   DownloadOutline, TrashOutline, FolderOutline, CodeSlashOutline,
   DocumentTextOutline, ImageOutline, SettingsOutline, CloseOutline,
-  PeopleOutline, ShareSocialOutline, SyncOutline,
+  PeopleOutline, ConstructOutline, SyncOutline,
 } from '@vicons/ionicons5'
 import {
   listFiles, uploadFile, downloadFile, deleteFile, createDirectory, getQuota,
@@ -263,8 +263,8 @@ import {
   createPublicDirectory,
   listGroupFiles, uploadGroupFile, downloadGroupFile, deleteGroupFile,
   createGroupDirectory, getGroupQuota,
-  listSharedFiles, downloadSharedFile, deleteSharedFile,
-  syncWorkspaceToPodStream,
+  listOutputFiles, downloadOutputFile,
+  syncWorkspaceToPodStream, watchOutputFiles,
   type WorkspaceFile, type WorkspaceQuota, type GroupWorkspaceQuota, type SpaceTab,
 } from '../../services/workspaceAPI'
 import { listGroups, type Group } from '../../services/groupAPI'
@@ -321,7 +321,7 @@ const canEdit = computed(() => {
   if (spaceTab.value === 'private') return true
   if (spaceTab.value === 'public') return isAdmin.value
   if (spaceTab.value === 'group') return !!selectedGroupId.value // group members can edit
-  return false // shared is read-only
+  return false // output is read-only
 })
 
 const quotaPercent = computed(() => {
@@ -476,8 +476,8 @@ const listFilesForTab = async (path: string) => {
     case 'group':
       if (!selectedGroupId.value) throw new Error('No group selected')
       return listGroupFiles(selectedGroupId.value, path)
-    case 'shared':
-      return listSharedFiles(path)
+    case 'output':
+      return listOutputFiles(props.agentId, path)
   }
 }
 
@@ -625,8 +625,8 @@ const handleDownloadFile = (file: WorkspaceFile) => {
     case 'group':
       if (selectedGroupId.value) downloadGroupFile(selectedGroupId.value, file.path)
       break
-    case 'shared':
-      downloadSharedFile(file.path)
+    case 'output':
+      downloadOutputFile(props.agentId, file.path)
       break
   }
 }
@@ -645,9 +645,7 @@ const handleDeleteFile = async (file: WorkspaceFile) => {
         if (!selectedGroupId.value) return
         await deleteGroupFile(selectedGroupId.value, deletePath)
         break
-      case 'shared':
-        await deleteSharedFile(deletePath)
-        break
+      // output is read-only, no delete
     }
     message.success(`Deleted ${file.name}`)
     // Reload parent directory
@@ -882,9 +880,41 @@ watch(() => props.agentId, () => {
   loadQuota()
 })
 
+// --- Output tab SSE watch (replaces 3s polling) ---
+let outputWatchAbort: (() => void) | null = null
+
+const startOutputWatch = () => {
+  stopOutputWatch()
+  outputWatchAbort = watchOutputFiles(props.agentId, () => {
+    if (spaceTab.value === 'output' && !rootLoading.value) {
+      loadRootFiles()
+    }
+  })
+}
+
+const stopOutputWatch = () => {
+  if (outputWatchAbort) {
+    outputWatchAbort()
+    outputWatchAbort = null
+  }
+}
+
+watch(spaceTab, (newTab) => {
+  if (newTab === 'output') {
+    startOutputWatch()
+  } else {
+    stopOutputWatch()
+  }
+})
+
 onMounted(() => {
   loadRootFiles()
   loadQuota()
+  if (spaceTab.value === 'output') startOutputWatch()
+})
+
+onUnmounted(() => {
+  stopOutputWatch()
 })
 </script>
 

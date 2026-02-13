@@ -227,17 +227,17 @@ export const getGroupQuota = async (groupId: number): Promise<GroupWorkspaceQuot
   return response.data
 }
 
-// ---- Shared workspace (read-only browsing + publish) ----
+// ---- Output workspace (read-only, populated by sidecar) ----
 
-export const listSharedFiles = async (path = '/'): Promise<ListFilesResponse> => {
-  const response = await api.get('/workspace/shared/files', { params: { path } })
+export const listOutputFiles = async (agentId: number, path = '/'): Promise<ListFilesResponse> => {
+  const response = await api.get('/workspace/output/files', { params: { agent_id: agentId, path } })
   return response.data
 }
 
-export const downloadSharedFile = (path: string): void => {
+export const downloadOutputFile = (agentId: number, path: string): void => {
   const token = localStorage.getItem('token')
   const baseUrl = api.defaults.baseURL
-  const url = `${baseUrl}/workspace/shared/files/download?path=${encodeURIComponent(path)}`
+  const url = `${baseUrl}/workspace/output/files/download?agent_id=${agentId}&path=${encodeURIComponent(path)}`
   fetch(url, { headers: { Authorization: `Bearer ${token}` } })
     .then((r) => r.blob())
     .then((blob) => {
@@ -252,21 +252,13 @@ export const downloadSharedFile = (path: string): void => {
     })
 }
 
-export const fetchSharedFileBlob = async (path: string): Promise<Blob> => {
+export const fetchOutputFileBlob = async (agentId: number, path: string): Promise<Blob> => {
   const token = localStorage.getItem('token')
   const baseUrl = api.defaults.baseURL
-  const url = `${baseUrl}/workspace/shared/files/download?path=${encodeURIComponent(path)}`
+  const url = `${baseUrl}/workspace/output/files/download?agent_id=${agentId}&path=${encodeURIComponent(path)}`
   const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
   if (!r.ok) throw new Error(`Download failed: ${r.status}`)
   return r.blob()
-}
-
-export const publishToShared = async (agentId: number, path: string, destPath?: string): Promise<void> => {
-  await api.post('/workspace/shared/publish', { agent_id: agentId, path, dest_path: destPath })
-}
-
-export const deleteSharedFile = async (path: string): Promise<void> => {
-  await api.delete('/workspace/shared/files', { params: { path } })
 }
 
 // ---- Sync workspace to pod ----
@@ -318,6 +310,78 @@ export const syncWorkspaceToPodStream = async (
   }
 }
 
+// ---- Output workspace SSE watch ----
+
+export interface OutputWatchEvent {
+  action: string // "upload" | "delete"
+  path: string
+  name: string
+  size: number
+}
+
+/**
+ * Opens an SSE connection to watch output workspace file changes.
+ * Returns an abort function to close the connection.
+ */
+export const watchOutputFiles = (
+  agentId: number,
+  onEvent: (event: OutputWatchEvent) => void,
+): (() => void) => {
+  const token = localStorage.getItem('token')
+  const baseUrl = api.defaults.baseURL
+  const url = `${baseUrl}/workspace/output/watch?agent_id=${agentId}`
+
+  const controller = new AbortController()
+
+  const connect = () => {
+    fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    })
+      .then((resp) => {
+        if (!resp.ok || !resp.body) return
+        const reader = resp.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+
+        const pump = (): Promise<void> =>
+          reader.read().then(({ done, value }) => {
+            if (done) {
+              // Stream ended — reconnect after delay unless aborted
+              if (!controller.signal.aborted) {
+                setTimeout(connect, 1000)
+              }
+              return
+            }
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || ''
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const event = JSON.parse(line.slice(6)) as OutputWatchEvent
+                  onEvent(event)
+                } catch { /* skip malformed */ }
+              }
+            }
+            return pump()
+          })
+
+        return pump()
+      })
+      .catch(() => {
+        // Reconnect on network error unless aborted
+        if (!controller.signal.aborted) {
+          setTimeout(connect, 1000)
+        }
+      })
+  }
+
+  connect()
+
+  return () => controller.abort()
+}
+
 // ---- Type exports ----
 
-export type SpaceTab = 'private' | 'public' | 'group' | 'shared'
+export type SpaceTab = 'private' | 'public' | 'group' | 'output'

@@ -26,9 +26,13 @@ type Config struct {
 	// Docker Registry
 	DockerRegistry string
 	DockerImage    string
+	SidecarImage   string
 
 	// Auth
 	JWTSecret string
+
+	// Redis
+	RedisURL string
 }
 
 func Load() (*Config, error) {
@@ -54,9 +58,13 @@ func Load() (*Config, error) {
 		// Docker Registry
 		DockerRegistry: getEnv("DOCKER_REGISTRY", "docker-register-registry-vpc.cn-shanghai.cr.aliyuncs.com"),
 		DockerImage:    getEnv("DOCKER_IMAGE", "prod/sac/cc:0.0.3"),
+		SidecarImage:   getEnv("SIDECAR_IMAGE", "prod/sac/output-watcher:0.0.1"),
 
 		// Auth
 		JWTSecret: getEnv("JWT_SECRET", "sac-dev-jwt-secret-change-in-production"),
+
+		// Redis
+		RedisURL: getEnv("REDIS_URL", "redis://redis.sac:6379"),
 	}, nil
 }
 

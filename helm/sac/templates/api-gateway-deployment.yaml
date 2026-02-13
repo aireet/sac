@@ -50,6 +50,12 @@ spec:
               value: {{ .Values.apiGateway.env.DOCKER_REGISTRY | quote }}
             - name: DOCKER_IMAGE
               value: {{ .Values.apiGateway.env.DOCKER_IMAGE | quote }}
+            - name: REDIS_URL
+              {{- if .Values.redis.enabled }}
+              value: "redis://{{ .Release.Name }}-redis-master.{{ .Release.Namespace }}.svc.cluster.local:6379"
+              {{- else }}
+              value: {{ .Values.redis.externalURL | quote }}
+              {{- end }}
           resources:
             {{- toYaml .Values.apiGateway.resources | nindent 12 }}
           livenessProbe:

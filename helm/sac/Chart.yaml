@@ -9,3 +9,7 @@ dependencies:
   - name: gateway-helm
     version: v1.6.3
     condition: envoyGateway.enabled
+  - name: redis
+    version: 20.x.x
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled

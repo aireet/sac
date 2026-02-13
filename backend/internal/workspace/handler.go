@@ -27,11 +27,12 @@ type Handler struct {
 	db       *bun.DB
 	provider *storage.StorageProvider
 	syncSvc  *SyncService
+	hub      *OutputHub
 }
 
 // NewHandler creates a new workspace handler.
-func NewHandler(db *bun.DB, provider *storage.StorageProvider, syncSvc *SyncService) *Handler {
-	return &Handler{db: db, provider: provider, syncSvc: syncSvc}
+func NewHandler(db *bun.DB, provider *storage.StorageProvider, syncSvc *SyncService, hub *OutputHub) *Handler {
+	return &Handler{db: db, provider: provider, syncSvc: syncSvc, hub: hub}
 }
 
 // RegisterRoutes registers workspace routes on a protected router group.
@@ -64,11 +65,10 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		ws.DELETE("/group/files", h.requireOSS(), h.DeleteGroupFile)
 		ws.GET("/group/quota", h.requireOSS(), h.GetGroupQuota)
 
-		// Shared workspace (read-only browsing + publish)
-		ws.GET("/shared/files", h.requireOSS(), h.ListSharedFiles)
-		ws.GET("/shared/files/download", h.requireOSS(), h.DownloadSharedFile)
-		ws.POST("/shared/publish", h.requireOSS(), h.PublishToShared)
-		ws.DELETE("/shared/files", h.requireOSS(), h.DeleteSharedFile)
+		// Output workspace (read-only, populated by sidecar)
+		ws.GET("/output/files", h.requireOSS(), h.ListOutputFiles)
+		ws.GET("/output/files/download", h.requireOSS(), h.DownloadOutputFile)
+		ws.GET("/output/watch", h.WatchOutput)
 
 		// Sync workspace files from OSS to pod
 		ws.POST("/sync", h.SyncToPod)

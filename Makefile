@@ -1,7 +1,7 @@
 .PHONY: dev stop build build-api build-ws kill-port frontend backend telepresence status \
        docker-build docker-push docker-build-api docker-build-ws docker-build-fe docker-build-cc \
-       docker-push-api docker-push-ws docker-push-fe docker-push-cc \
-       helm-deploy helm-upgrade helm-dry-run helm-uninstall
+       docker-build-ow docker-push-api docker-push-ws docker-push-fe docker-push-cc docker-push-ow \
+       helm-deploy helm-upgrade helm-dry-run helm-uninstall helm-dep-update
 
 # Ports
 API_PORT  := 8080
@@ -113,11 +113,11 @@ version:
 	@echo "Current version: $(VERSION)"
 
 ## Build all Docker images (auto bumps version)
-docker-build: version-bump docker-build-api docker-build-ws docker-build-fe docker-build-cc
+docker-build: version-bump docker-build-api docker-build-ws docker-build-fe docker-build-cc docker-build-ow
 	@echo "==> All images built with tag: $$(cat .version)"
 
 ## Push all Docker images
-docker-push: docker-push-api docker-push-ws docker-push-fe docker-push-cc
+docker-push: docker-push-api docker-push-ws docker-push-fe docker-push-cc docker-push-ow
 	@echo "==> All images pushed with tag: $$(cat .version)"
 
 docker-build-api:
@@ -156,6 +156,15 @@ docker-push-cc:
 	@echo "==> Pushing Claude Code image ($$(cat .version))"
 	@docker push $(REGISTRY)/cc:$$(cat .version)
 
+docker-build-ow:
+	@echo "==> Building Output Watcher image ($$(cat .version))"
+	@docker build -f docker/output-watcher/Dockerfile \
+		-t $(REGISTRY)/output-watcher:$$(cat .version) .
+
+docker-push-ow:
+	@echo "==> Pushing Output Watcher image ($$(cat .version))"
+	@docker push $(REGISTRY)/output-watcher:$$(cat .version)
+
 ## Build + Push all images in one step (auto bumps version)
 docker-all: docker-build docker-push
 
@@ -193,6 +202,11 @@ helm-dry-run:
 helm-uninstall:
 	@echo "==> Uninstalling SAC Helm release"
 	@KUBECONFIG=$(KUBECONFIG) helm uninstall sac --namespace $(NAMESPACE)
+
+## Update Helm chart dependencies
+helm-dep-update:
+	@echo "==> Updating Helm dependencies"
+	@helm dependency update helm/sac
 
 # ============================================================
 # Dev Targets

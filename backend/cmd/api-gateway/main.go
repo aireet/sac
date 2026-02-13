@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/signal"
@@ -13,6 +14,7 @@ import (
 	"g.echo.tech/dev/sac/internal/database"
 	"g.echo.tech/dev/sac/internal/group"
 	"g.echo.tech/dev/sac/internal/history"
+	sacredis "g.echo.tech/dev/sac/internal/redis"
 	"g.echo.tech/dev/sac/internal/session"
 	"g.echo.tech/dev/sac/internal/skill"
 	"g.echo.tech/dev/sac/internal/storage"
@@ -63,7 +65,7 @@ func main() {
 	jwtService := auth.NewJWTService(cfg.JWTSecret)
 	settingsService := admin.NewSettingsService(database.DB)
 
-	containerMgr, err := container.NewManager(cfg.KubeconfigPath, cfg.Namespace, cfg.DockerRegistry, cfg.DockerImage)
+	containerMgr, err := container.NewManager(cfg.KubeconfigPath, cfg.Namespace, cfg.DockerRegistry, cfg.DockerImage, cfg.SidecarImage)
 	if err != nil {
 		log.Fatalf("Failed to create container manager: %v", err)
 	}
@@ -72,12 +74,28 @@ func main() {
 	storageProvider := storage.NewStorageProvider(database.DB)
 	workspaceSyncSvc := workspace.NewSyncService(database.DB, storageProvider, containerMgr)
 
+	// Initialize Redis (optional — SSE output watch degrades gracefully)
+	var outputHub *workspace.OutputHub
+	if err := sacredis.Initialize(cfg.RedisURL); err != nil {
+		log.Printf("Warning: Redis not available, output SSE disabled: %v", err)
+	} else {
+		defer sacredis.Close()
+		outputHub = workspace.NewOutputHub(sacredis.Client)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go outputHub.Start(ctx)
+	}
+
 	// Shared history handler
 	historyHandler := history.NewHandler(database.DB)
+
+	// Workspace handler (needed for both internal and protected routes)
+	workspaceHandler := workspace.NewHandler(database.DB, storageProvider, workspaceSyncSvc, outputHub)
 
 	// Internal API routes (no JWT, Pod-internal calls)
 	internalGroup := router.Group("/api/internal")
 	historyHandler.RegisterInternalRoutes(internalGroup)
+	workspaceHandler.RegisterInternalRoutes(internalGroup)
 
 	// Public routes (no auth required)
 	publicGroup := router.Group("/api")
@@ -110,7 +128,6 @@ func main() {
 		agentHandler.RegisterRoutes(protectedGroup)
 
 		// Workspace routes (always registered; requireOSS middleware returns 503 if not configured)
-		workspaceHandler := workspace.NewHandler(database.DB, storageProvider, workspaceSyncSvc)
 		workspaceHandler.RegisterRoutes(protectedGroup)
 
 		// Group routes (read-only for authenticated users)
