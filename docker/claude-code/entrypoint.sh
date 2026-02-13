@@ -8,7 +8,7 @@ echo "Session ID: ${SESSION_ID}"
 
 # Initialize Claude Code config directory and workspace
 mkdir -p /root/.claude
-mkdir -p /workspace/private /workspace/public
+mkdir -p /workspace/private /workspace/public /workspace/output
 
 # Accept Claude Code terms of service non-interactively
 touch /root/.claude/.accepted-tos

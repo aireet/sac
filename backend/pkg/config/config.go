@@ -64,7 +64,7 @@ func Load() (*Config, error) {
 		JWTSecret: getEnv("JWT_SECRET", "sac-dev-jwt-secret-change-in-production"),
 
 		// Redis
-		RedisURL: getEnv("REDIS_URL", "redis://redis.sac:6379"),
+		RedisURL: getEnv("REDIS_URL", ""),
 	}, nil
 }
 

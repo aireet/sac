@@ -304,8 +304,8 @@ import WorkspacePanel from '../components/Workspace/WorkspacePanel.vue'
 import { getAgent, getAgents, getAgentStatuses, type Agent, type AgentStatus } from '../services/agentAPI'
 import { createSession, waitForSessionReady } from '../services/sessionAPI'
 import {
-  fetchFileBlob, fetchPublicFileBlob, fetchGroupFileBlob, fetchSharedFileBlob,
-  downloadFile, downloadPublicFile, downloadGroupFile, downloadSharedFile,
+  fetchFileBlob, fetchPublicFileBlob, fetchGroupFileBlob, fetchOutputFileBlob,
+  downloadFile, downloadPublicFile, downloadGroupFile, downloadOutputFile,
   uploadFile, uploadPublicFile, uploadGroupFile,
   syncWorkspaceToPodStream,
   type WorkspaceFile, type SpaceTab,
@@ -371,7 +371,7 @@ const editorSaving = ref(false)
 
 const editorDirty = computed(() => editorCategory.value === 'text' && editorContent.value !== editorOriginalContent.value)
 const editorCanSave = computed(() => {
-  if (editorSpaceTab.value === 'shared') return false
+  if (editorSpaceTab.value === 'output') return false
   if (editorSpaceTab.value === 'public' && !authStore.isAdmin) return false
   return true
 })
@@ -408,8 +408,8 @@ const handleOpenFile = async (file: WorkspaceFile, spaceTab: SpaceTab, groupId?:
       case 'group':
         blob = await fetchGroupFileBlob(groupId!, file.path)
         break
-      case 'shared':
-        blob = await fetchSharedFileBlob(file.path)
+      case 'output':
+        blob = await fetchOutputFileBlob(selectedAgentId.value, file.path)
         break
     }
 
@@ -463,8 +463,8 @@ const handleEditorSave = async () => {
       case 'group':
         await uploadGroupFile(editorGroupId.value!, f, dirPath)
         break
-      case 'shared':
-        // shared is read-only, save should not be reachable
+      case 'output':
+        // output is read-only, save should not be reachable
         break
     }
     editorOriginalContent.value = editorContent.value
@@ -489,8 +489,8 @@ const handleEditorDownload = () => {
     case 'group':
       if (editorGroupId.value) downloadGroupFile(editorGroupId.value, editorFile.value.path)
       break
-    case 'shared':
-      downloadSharedFile(editorFile.value.path)
+    case 'output':
+      downloadOutputFile(selectedAgentId.value, editorFile.value.path)
       break
   }
 }

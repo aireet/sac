@@ -29,10 +29,11 @@ type Manager struct {
 	namespace      string
 	dockerImage    string
 	dockerRegistry string
+	sidecarImage   string
 }
 
 // NewManager creates a new container manager
-func NewManager(kubeconfigPath, namespace, dockerRegistry, dockerImage string) (*Manager, error) {
+func NewManager(kubeconfigPath, namespace, dockerRegistry, dockerImage string, extraOpts ...string) (*Manager, error) {
 	var config *rest.Config
 	var err error
 
@@ -64,12 +65,18 @@ func NewManager(kubeconfigPath, namespace, dockerRegistry, dockerImage string) (
 		namespace = "default"
 	}
 
+	sidecarImage := ""
+	if len(extraOpts) > 0 {
+		sidecarImage = extraOpts[0]
+	}
+
 	return &Manager{
 		clientset:      clientset,
 		restConfig:     config,
 		namespace:      namespace,
 		dockerImage:    dockerImage,
 		dockerRegistry: dockerRegistry,
+		sidecarImage:   sidecarImage,
 	}, nil
 }
 
@@ -428,6 +435,37 @@ func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID 
 		log.Printf("Headless Service %s created successfully", name)
 	}
 
+	// Build sidecar container (output-watcher)
+	var sidecarContainers []corev1.Container
+	if m.sidecarImage != "" {
+		sidecarImageFull := fmt.Sprintf("%s/%s", m.dockerRegistry, m.sidecarImage)
+		sidecarContainers = append(sidecarContainers, corev1.Container{
+			Name:  "output-watcher",
+			Image: sidecarImageFull,
+			Env: []corev1.EnvVar{
+				{Name: "USER_ID", Value: userID},
+				{Name: "AGENT_ID", Value: fmt.Sprintf("%d", agentID)},
+				{Name: "SAC_API_URL", Value: "http://api-gateway.sac.svc.cluster.local:8080"},
+			},
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("50m"),
+					corev1.ResourceMemory: resource.MustParse("32Mi"),
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("100m"),
+					corev1.ResourceMemory: resource.MustParse("64Mi"),
+				},
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{
+					Name:      "workspace",
+					MountPath: "/workspace",
+				},
+			},
+		})
+	}
+
 	// Step 2: Create StatefulSet with hooks volume mounts
 	replicas := int32(1)
 	defaultMode := int32(0755)
@@ -448,7 +486,7 @@ func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID 
 					Labels: labels,
 				},
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
+					Containers: append([]corev1.Container{
 						{
 							Name:  "claude-code",
 							Image: imageFullPath,
@@ -486,7 +524,7 @@ func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID 
 								},
 							},
 						},
-					},
+					}, sidecarContainers...),
 					Volumes: []corev1.Volume{
 						{
 							Name: "workspace",

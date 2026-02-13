@@ -76,7 +76,9 @@ func main() {
 
 	// Initialize Redis (optional — SSE output watch degrades gracefully)
 	var outputHub *workspace.OutputHub
-	if err := sacredis.Initialize(cfg.RedisURL); err != nil {
+	if cfg.RedisURL == "" {
+		log.Printf("Warning: REDIS_URL not set, output SSE disabled")
+	} else if err := sacredis.Initialize(cfg.RedisURL); err != nil {
 		log.Printf("Warning: Redis not available, output SSE disabled: %v", err)
 	} else {
 		defer sacredis.Close()

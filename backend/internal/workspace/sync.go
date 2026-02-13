@@ -18,7 +18,7 @@ const (
 	privateWorkDir    = "/workspace/private"
 	publicWorkDir     = "/workspace/public"
 	groupWorkBaseDir  = "/workspace/group"
-	sharedWorkDir     = "/workspace/shared"
+	outputWorkDir     = "/workspace/output"
 	claudeCommandsDir = "/root/.claude/commands"
 )
 
@@ -57,7 +57,7 @@ func (s *SyncService) SyncWorkspaceToPod(ctx context.Context, userID string, age
 	// Create workspace directories
 	mkdirCmd := []string{"bash", "-c", fmt.Sprintf(
 		"mkdir -p %s %s %s %s %s",
-		privateWorkDir, publicWorkDir, groupWorkBaseDir, sharedWorkDir, claudeCommandsDir,
+		privateWorkDir, publicWorkDir, groupWorkBaseDir, outputWorkDir, claudeCommandsDir,
 	)}
 	if _, _, err := s.containerManager.ExecInPod(ctx, pod, mkdirCmd, nil); err != nil {
 		return fmt.Errorf("failed to create workspace dirs: %w", err)
@@ -88,17 +88,6 @@ func (s *SyncService) SyncWorkspaceToPod(ctx context.Context, userID string, age
 
 	// Sync group workspaces for all groups the user belongs to
 	s.syncGroupWorkspacesToPod(ctx, oss, pod, userID)
-
-	// Sync shared workspace (read-only)
-	if err := s.syncPrefix(ctx, oss, pod, "shared/", sharedWorkDir, ""); err != nil {
-		log.Printf("Warning: shared workspace sync error: %v", err)
-	}
-
-	// Make shared workspace read-only
-	chmodShared := []string{"bash", "-c", fmt.Sprintf("chmod -R a-w %s 2>/dev/null || true", sharedWorkDir)}
-	if _, _, err := s.containerManager.ExecInPod(ctx, pod, chmodShared, nil); err != nil {
-		log.Printf("Warning: failed to set shared workspace read-only: %v", err)
-	}
 
 	log.Printf("Workspace sync completed for user %s, agent %d", userID, agentID)
 	return nil
@@ -393,67 +382,6 @@ func (s *SyncService) DeleteGroupFileFromPods(ctx context.Context, groupID int64
 	}
 }
 
-// SyncSharedFileToPods syncs a shared file to ALL active pods (read-only).
-func (s *SyncService) SyncSharedFileToPods(ctx context.Context, ossKey, relPath string) {
-	oss := s.provider.GetClient(ctx)
-	if oss == nil {
-		return
-	}
-
-	pods, err := s.getAllActivePods(ctx)
-	if err != nil || len(pods) == 0 {
-		return
-	}
-
-	body, err := oss.Download(ctx, ossKey)
-	if err != nil {
-		log.Printf("Warning: shared sync download failed for %s: %v", ossKey, err)
-		return
-	}
-	content, err := io.ReadAll(body)
-	body.Close()
-	if err != nil {
-		log.Printf("Warning: shared sync read failed for %s: %v", ossKey, err)
-		return
-	}
-
-	destPath := sharedWorkDir + "/" + relPath
-
-	for _, pod := range pods {
-		dir := destPath[:strings.LastIndex(destPath, "/")]
-		mkdirCmd := []string{"bash", "-c", fmt.Sprintf("mkdir -p %s && chmod a+rx %s", dir, dir)}
-		s.containerManager.ExecInPod(ctx, pod, mkdirCmd, nil)
-
-		if err := s.containerManager.WriteFileInPod(ctx, pod, destPath, string(content)); err != nil {
-			log.Printf("Warning: shared sync write %s to pod %s failed: %v", destPath, pod, err)
-		} else {
-			// Make shared file read-only
-			chmodCmd := []string{"bash", "-c", fmt.Sprintf("chmod a-w %s", destPath)}
-			s.containerManager.ExecInPod(ctx, pod, chmodCmd, nil)
-			log.Printf("Synced shared file %s to pod %s", destPath, pod)
-		}
-	}
-}
-
-// DeleteSharedFileFromPods removes a shared file from ALL active pods.
-func (s *SyncService) DeleteSharedFileFromPods(ctx context.Context, relPath string) {
-	pods, err := s.getAllActivePods(ctx)
-	if err != nil || len(pods) == 0 {
-		return
-	}
-
-	destPath := sharedWorkDir + "/" + relPath
-
-	for _, pod := range pods {
-		rmCmd := []string{"bash", "-c", fmt.Sprintf("rm -rf %s", destPath)}
-		if _, _, err := s.containerManager.ExecInPod(ctx, pod, rmCmd, nil); err != nil {
-			log.Printf("Warning: delete shared %s from pod %s failed: %v", destPath, pod, err)
-		} else {
-			log.Printf("Deleted shared file %s from pod %s", destPath, pod)
-		}
-	}
-}
-
 // SyncProgress represents the progress of a full workspace sync.
 type SyncProgress struct {
 	Synced int    `json:"synced"`
@@ -505,7 +433,7 @@ func (s *SyncService) SyncWorkspaceToPodWithProgress(ctx context.Context, userID
 	// Create workspace directories
 	mkdirCmd := []string{"bash", "-c", fmt.Sprintf(
 		"mkdir -p %s %s %s %s %s",
-		privateWorkDir, publicWorkDir, groupWorkBaseDir, sharedWorkDir, claudeCommandsDir,
+		privateWorkDir, publicWorkDir, groupWorkBaseDir, outputWorkDir, claudeCommandsDir,
 	)}
 	if _, _, err := s.containerManager.ExecInPod(ctx, pod, mkdirCmd, nil); err != nil {
 		return fmt.Errorf("failed to create workspace dirs: %w", err)
@@ -543,10 +471,6 @@ func (s *SyncService) SyncWorkspaceToPodWithProgress(ctx context.Context, userID
 		}
 	}
 
-	if tasks, err := s.collectTasks(ctx, oss, "shared/", sharedWorkDir); err == nil {
-		allTasks = append(allTasks, tasks...)
-	}
-
 	total := len(allTasks)
 	progressFn(SyncProgress{Synced: 0, Total: total})
 
@@ -575,11 +499,9 @@ func (s *SyncService) SyncWorkspaceToPodWithProgress(ctx context.Context, userID
 		progressFn(SyncProgress{Synced: synced, Total: total, File: fileName})
 	}
 
-	// Make public/shared workspace read-only
-	for _, dir := range []string{publicWorkDir, sharedWorkDir} {
-		chmodCmd := []string{"bash", "-c", fmt.Sprintf("chmod -R a-w %s 2>/dev/null || true", dir)}
-		s.containerManager.ExecInPod(ctx, pod, chmodCmd, nil)
-	}
+	// Make public workspace read-only
+	chmodCmd := []string{"bash", "-c", fmt.Sprintf("chmod -R a-w %s 2>/dev/null || true", publicWorkDir)}
+	s.containerManager.ExecInPod(ctx, pod, chmodCmd, nil)
 
 	log.Printf("Workspace sync completed for user %s, agent %d (%d files)", userID, agentID, synced)
 	return nil
