@@ -3,6 +3,15 @@
     <!-- Header: Tabs + Quota -->
     <div class="ws-header">
       <n-tabs v-model:value="spaceTab" type="line" size="small">
+        <n-tab-pane name="output">
+          <template #tab>
+            <n-space :size="4" align="center">
+              <n-icon size="14"><ConstructOutline /></n-icon>
+              <span>Working</span>
+              <span v-if="outputBadgeCount > 0" class="output-badge">{{ outputBadgeCount }}</span>
+            </n-space>
+          </template>
+        </n-tab-pane>
         <n-tab-pane name="private">
           <template #tab>
             <n-space :size="4" align="center">
@@ -24,14 +33,6 @@
             <n-space :size="4" align="center">
               <n-icon size="14"><PeopleOutline /></n-icon>
               <span>Group</span>
-            </n-space>
-          </template>
-        </n-tab-pane>
-        <n-tab-pane name="output">
-          <template #tab>
-            <n-space :size="4" align="center">
-              <n-icon size="14"><ConstructOutline /></n-icon>
-              <span>Working</span>
             </n-space>
           </template>
         </n-tab-pane>
@@ -284,7 +285,7 @@ const dialog = useDialog()
 const authStore = useAuthStore()
 
 // --- State ---
-const spaceTab = ref<SpaceTab>('private')
+const spaceTab = ref<SpaceTab>('output')
 const treeData = ref<TreeOption[]>([])
 const expandedKeys = ref<string[]>([])
 const checkedKeys = ref<string[]>([])
@@ -298,6 +299,7 @@ const showNewFolder = ref(false)
 const newFolderName = ref('')
 const showNewFile = ref(false)
 const newFileName = ref('')
+const outputBadgeCount = ref(0)
 
 // Group state
 const groups = ref<Group[]>([])
@@ -876,18 +878,29 @@ watch(() => props.agentId, () => {
   checkedKeys.value = []
   activeDir.value = '/'
   searchQuery.value = ''
+  outputBadgeCount.value = 0
   loadRootFiles()
   loadQuota()
+  startOutputWatch()
 })
 
-// --- Output tab SSE watch (replaces 3s polling) ---
+// --- Output SSE watch (always active, auto-switch on event) ---
 let outputWatchAbort: (() => void) | null = null
 
 const startOutputWatch = () => {
   stopOutputWatch()
-  outputWatchAbort = watchOutputFiles(props.agentId, () => {
-    if (spaceTab.value === 'output' && !rootLoading.value) {
-      loadRootFiles()
+  outputWatchAbort = watchOutputFiles(props.agentId, (event) => {
+    // Show notification
+    const action = event.action === 'upload' ? 'New file' : 'File removed'
+    message.info(`${action}: ${event.name}`, { duration: 3000 })
+
+    if (spaceTab.value === 'output') {
+      // Already on Working tab, just refresh
+      if (!rootLoading.value) loadRootFiles()
+    } else {
+      // Increment badge and auto-switch to Working tab
+      outputBadgeCount.value++
+      spaceTab.value = 'output'
     }
   })
 }
@@ -899,18 +912,17 @@ const stopOutputWatch = () => {
   }
 }
 
+// Clear badge when switching to output tab
 watch(spaceTab, (newTab) => {
   if (newTab === 'output') {
-    startOutputWatch()
-  } else {
-    stopOutputWatch()
+    outputBadgeCount.value = 0
   }
 })
 
 onMounted(() => {
   loadRootFiles()
   loadQuota()
-  if (spaceTab.value === 'output') startOutputWatch()
+  startOutputWatch()
 })
 
 onUnmounted(() => {
@@ -1047,5 +1059,20 @@ onUnmounted(() => {
   color: rgba(255, 255, 255, 0.35);
   margin-right: 4px;
   white-space: nowrap;
+}
+
+.output-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #f0a020;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
 }
 </style>
