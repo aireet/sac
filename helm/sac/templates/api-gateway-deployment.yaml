@@ -50,6 +50,8 @@ spec:
               value: {{ .Values.apiGateway.env.DOCKER_REGISTRY | quote }}
             - name: DOCKER_IMAGE
               value: {{ .Values.apiGateway.env.DOCKER_IMAGE | quote }}
+            - name: SIDECAR_IMAGE
+              value: {{ .Values.apiGateway.env.SIDECAR_IMAGE | default "" | quote }}
             - name: REDIS_URL
               {{- if .Values.redis.enabled }}
               value: "redis://{{ .Release.Name }}-redis-master.{{ .Release.Namespace }}.svc.cluster.local:6379"

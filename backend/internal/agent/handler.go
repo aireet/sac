@@ -167,10 +167,10 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 	}
 
 	var req struct {
-		Name         string         `json:"name"`
-		Description  string         `json:"description"`
-		Icon         string         `json:"icon"`
-		Instructions string         `json:"instructions"`
+		Name         *string        `json:"name"`
+		Description  *string        `json:"description"`
+		Icon         *string        `json:"icon"`
+		Instructions *string        `json:"instructions"`
 		Config       map[string]any `json:"config"`
 	}
 
@@ -191,16 +191,26 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 		return
 	}
 
-	// Update fields
-	_, err = h.db.NewUpdate().
-		Model(&models.Agent{}).
-		Set("name = ?", req.Name).
-		Set("description = ?", req.Description).
-		Set("icon = ?", req.Icon).
-		Set("instructions = ?", req.Instructions).
-		Set("config = ?", req.Config).
-		Where("id = ?", agentID).
-		Exec(c.Request.Context())
+	// Only update fields that were provided
+	q := h.db.NewUpdate().Model(&models.Agent{}).Where("id = ?", agentID)
+	if req.Name != nil {
+		q = q.Set("name = ?", *req.Name)
+	}
+	if req.Description != nil {
+		q = q.Set("description = ?", *req.Description)
+	}
+	if req.Icon != nil {
+		q = q.Set("icon = ?", *req.Icon)
+	}
+	if req.Instructions != nil {
+		q = q.Set("instructions = ?", *req.Instructions)
+	}
+	if req.Config != nil {
+		q = q.Set("config = ?", req.Config)
+	}
+	q = q.Set("updated_at = ?", time.Now())
+
+	_, err = q.Exec(c.Request.Context())
 
 	if err != nil {
 		response.InternalError(c, "Failed to update agent", err)

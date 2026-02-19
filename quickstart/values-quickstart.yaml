@@ -1,0 +1,89 @@
+global:
+  registry: sac-local
+  namespace: sac
+  imagePullPolicy: Never
+
+apiGateway:
+  replicaCount: 1
+  image:
+    name: api-gateway
+    tag: quickstart
+  port: 8080
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+  env:
+    DB_NAME: sac
+    K8S_NAMESPACE: sac
+    DOCKER_REGISTRY: sac-local
+    DOCKER_IMAGE: cc:quickstart
+    SIDECAR_IMAGE: output-watcher:quickstart
+
+wsProxy:
+  replicaCount: 1
+  image:
+    name: ws-proxy
+    tag: quickstart
+  port: 8081
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+frontend:
+  replicaCount: 1
+  image:
+    name: frontend
+    tag: quickstart
+  port: 80
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
+database:
+  host: postgres.sac.svc.cluster.local
+  port: "5432"
+  user: sac
+  password: sac-quickstart-pass
+  name: sac
+
+auth:
+  jwtSecret: sac-quickstart-jwt-secret-not-for-production
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  name: sac
+
+envoyGateway:
+  enabled: false
+
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 128Mi
+
+gateway-helm:
+  enabled: false

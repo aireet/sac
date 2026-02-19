@@ -360,10 +360,11 @@ async function handleSaveClaudeMD() {
   try {
     await updateAgent(selectedAgentId.value, { instructions: claudeMDText.value })
     await restartAgent(selectedAgentId.value)
-    message.success('Instructions saved, agent restarting...')
     showClaudeMDEditor.value = false
     // Refresh agent data
     selectedAgent.value = await getAgent(selectedAgentId.value)
+    // Reconnect terminal to the restarted agent
+    await handleRestartFromPanel()
   } catch (error) {
     message.error(extractApiError(error, 'Failed to save instructions'))
   } finally {
@@ -749,40 +750,37 @@ const handleRestartFromPanel = async () => {
   terminalRef.value?.cleanup()
   sessionId.value = ''
 
-  const loadingMsg = message.loading('Restarting agent, waiting for pod to come back...', { duration: 0 })
+  const loadingMsg = message.loading('Restarting agent...', { duration: 0 })
 
-  // Wait a moment for K8s to process the force-delete, then poll until Running
-  await new Promise(r => setTimeout(r, 1500))
+  try {
+    // Wait for K8s to process the StatefulSet deletion
+    loadingMsg.content = 'Waiting for pod to terminate...'
+    await new Promise(r => setTimeout(r, 3000))
 
-  let retries = 30 // 60s total (30 × 2s)
-  const timer = setInterval(async () => {
-    await pollStatuses()
-    retries--
+    // Poll until old pod is gone (not Running), then create new session
+    let waitRetries = 20 // 40s max wait for old pod to die
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(async () => {
+        await pollStatuses()
+        waitRetries--
+        const status = podStatuses.value.get(selectedAgentId.value)
+        if (!status || status.status !== 'Running' || waitRetries <= 0) {
+          clearInterval(timer)
+          resolve()
+        }
+      }, 2000)
+    })
 
-    const status = podStatuses.value.get(selectedAgentId.value)
-    const phase = status?.status
-
-    if (phase === 'Running') {
-      clearInterval(timer)
-      loadingMsg.content = 'Pod is back, reconnecting...'
-      try {
-        await createSessionForAgent(selectedAgentId.value)
-        loadingMsg.destroy()
-      } catch {
-        loadingMsg.type = 'error'
-        loadingMsg.content = 'Failed to reconnect after restart'
-        setTimeout(() => loadingMsg.destroy(), 3000)
-      }
-      return
-    }
-
-    if (retries <= 0) {
-      clearInterval(timer)
-      loadingMsg.type = 'warning'
-      loadingMsg.content = 'Pod did not come back within 60s. Try selecting the agent again.'
-      setTimeout(() => loadingMsg.destroy(), 5000)
-    }
-  }, 2000)
+    // Now create a fresh session (this handles pod creation + wait + sync)
+    loadingMsg.content = 'Creating new session...'
+    await createSessionForAgent(selectedAgentId.value)
+    loadingMsg.destroy()
+  } catch (error) {
+    console.error('Restart reconnect failed:', error)
+    loadingMsg.type = 'error'
+    loadingMsg.content = extractApiError(error, 'Failed to reconnect after restart')
+    setTimeout(() => loadingMsg.destroy(), 3000)
+  }
 }
 
 const handleLogout = () => {
