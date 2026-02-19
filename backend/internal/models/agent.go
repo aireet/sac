@@ -56,6 +56,7 @@ type Agent struct {
 	CPULimit      *string     `bun:"cpu_limit" json:"cpu_limit"`
 	MemoryRequest *string     `bun:"memory_request" json:"memory_request"`
 	MemoryLimit   *string     `bun:"memory_limit" json:"memory_limit"`
+	Instructions  string      `bun:"instructions" json:"instructions"`
 	CreatedAt     time.Time   `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt     time.Time   `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 

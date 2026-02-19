@@ -40,6 +40,9 @@ RUN npm config set registry https://registry.npmmirror.com && npm install -g @an
 RUN wget https://github.com/tsl0922/ttyd/releases/download/1.7.4/ttyd.x86_64 -O /usr/local/bin/ttyd \
     && chmod +x /usr/local/bin/ttyd
 
+# Install Python packages for data visualization
+RUN pip3 install --no-cache-dir plotly pandas numpy
+
 # Create workspace directory
 RUN mkdir -p /workspace
 WORKDIR /workspace

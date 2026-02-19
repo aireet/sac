@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"time"
 
 	"g.echo.tech/dev/sac/internal/admin"
@@ -228,6 +230,8 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		if err := h.syncService.SyncAllSkillsToAgent(ctx, userIDStr, req.AgentID); err != nil {
 			log.Printf("Warning: failed to sync skills to agent %d: %v", req.AgentID, err)
 		}
+		// Write merged CLAUDE.md (system instructions + agent instructions) to pod
+		h.writeClaudeMD(ctx, userIDStr, req.AgentID, agent.Instructions)
 	} else {
 		// Existing pod — files already on disk from last sync. Run background
 		// sync to pick up any changes without blocking session creation.
@@ -241,6 +245,8 @@ func (h *Handler) CreateSession(c *gin.Context) {
 			if err := h.syncService.SyncAllSkillsToAgent(bgCtx, userIDStr, req.AgentID); err != nil {
 				log.Printf("Warning: background skill sync failed: %v", err)
 			}
+			// Write merged CLAUDE.md (system instructions + agent instructions) to pod
+			h.writeClaudeMD(bgCtx, userIDStr, req.AgentID, agent.Instructions)
 			log.Printf("Background sync completed for user %s agent %d", userIDStr, req.AgentID)
 		}()
 	}
@@ -377,5 +383,49 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		sessions.GET("", h.ListSessions)
 		sessions.GET("/:sessionId", h.GetSession)
 		sessions.DELETE("/:sessionId", h.DeleteSession)
+	}
+}
+
+// getGroupTemplates returns non-empty CLAUDE.md templates from all groups the user belongs to, sorted by group name.
+func (h *Handler) getGroupTemplates(ctx context.Context, userID int64) []string {
+	var templates []string
+	err := h.db.NewSelect().
+		TableExpr("groups AS g").
+		ColumnExpr("g.claude_md_template").
+		Join("JOIN group_members AS gm ON gm.group_id = g.id").
+		Where("gm.user_id = ?", userID).
+		Where("g.claude_md_template != ''").
+		OrderExpr("g.name ASC").
+		Scan(ctx, &templates)
+	if err != nil {
+		log.Printf("Warning: failed to get group templates for user %d: %v", userID, err)
+		return nil
+	}
+	return templates
+}
+
+// writeClaudeMD writes the merged CLAUDE.md (system + group templates + agent instructions) to the pod.
+func (h *Handler) writeClaudeMD(ctx context.Context, userIDStr string, agentID int64, agentInstructions string) {
+	sysInstructions := h.settingsService.GetAgentSystemInstructions(ctx)
+	userID, _ := strconv.ParseInt(userIDStr, 10, 64)
+	groupTemplates := h.getGroupTemplates(ctx, userID)
+
+	if sysInstructions == "" && len(groupTemplates) == 0 && agentInstructions == "" {
+		return
+	}
+
+	var parts []string
+	if sysInstructions != "" {
+		parts = append(parts, sysInstructions)
+	}
+	parts = append(parts, groupTemplates...)
+	if agentInstructions != "" {
+		parts = append(parts, agentInstructions)
+	}
+
+	content := strings.Join(parts, "\n\n---\n\n")
+	podName := fmt.Sprintf("claude-code-%s-%d-0", userIDStr, agentID)
+	if err := h.containerManager.WriteFileInPod(ctx, podName, "/workspace/CLAUDE.md", content); err != nil {
+		log.Printf("Warning: failed to write CLAUDE.md to pod %s: %v", podName, err)
 	}
 }

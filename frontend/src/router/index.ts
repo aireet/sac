@@ -25,6 +25,12 @@ const router = createRouter({
       component: () => import('../views/AdminView.vue'),
       meta: { requiresAdmin: true },
     },
+    {
+      path: '/s/:code',
+      name: 'shared',
+      component: () => import('../views/SharedView.vue'),
+      meta: { public: true },
+    },
   ],
 })
 
@@ -34,6 +40,9 @@ router.beforeEach((to) => {
   const isLoggedIn = !!token
 
   // Public pages
+  if (to.meta.public) {
+    return true
+  }
   if (to.path === '/login' || to.path === '/register') {
     if (isLoggedIn) return '/'
     return true

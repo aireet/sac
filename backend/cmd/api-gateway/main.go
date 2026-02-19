@@ -74,12 +74,12 @@ func main() {
 	storageProvider := storage.NewStorageProvider(database.DB)
 	workspaceSyncSvc := workspace.NewSyncService(database.DB, storageProvider, containerMgr)
 
-	// Initialize Redis (optional — SSE output watch degrades gracefully)
+	// Initialize Redis (optional — output watch degrades gracefully)
 	var outputHub *workspace.OutputHub
 	if cfg.RedisURL == "" {
-		log.Printf("Warning: REDIS_URL not set, output SSE disabled")
+		log.Printf("Warning: REDIS_URL not set, output watch disabled")
 	} else if err := sacredis.Initialize(cfg.RedisURL); err != nil {
-		log.Printf("Warning: Redis not available, output SSE disabled: %v", err)
+		log.Printf("Warning: Redis not available, output watch disabled: %v", err)
 	} else {
 		defer sacredis.Close()
 		outputHub = workspace.NewOutputHub(sacredis.Client)
@@ -92,7 +92,7 @@ func main() {
 	historyHandler := history.NewHandler(database.DB)
 
 	// Workspace handler (needed for both internal and protected routes)
-	workspaceHandler := workspace.NewHandler(database.DB, storageProvider, workspaceSyncSvc, outputHub)
+	workspaceHandler := workspace.NewHandler(database.DB, storageProvider, workspaceSyncSvc, outputHub, jwtService)
 
 	// Internal API routes (no JWT, Pod-internal calls)
 	internalGroup := router.Group("/api/internal")
@@ -102,7 +102,8 @@ func main() {
 	// Public routes (no auth required)
 	publicGroup := router.Group("/api")
 	authHandler := auth.NewHandler(database.DB, jwtService)
-	authHandler.RegisterRoutes(publicGroup, nil) // register public routes only
+	authHandler.RegisterRoutes(publicGroup, nil)       // register public routes only
+	workspaceHandler.RegisterPublicRoutes(publicGroup) // WS endpoints with token in query param
 
 	// Protected routes (JWT auth required)
 	protectedGroup := router.Group("/api")

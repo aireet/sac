@@ -62,6 +62,15 @@
       </n-space>
     </n-card>
 
+    <!-- CLAUDE.md Editor Section -->
+    <n-button
+      block
+      style="margin: 8px 0"
+      @click="emit('editClaudeMD')"
+    >
+      CLAUDE.md
+    </n-button>
+
     <n-divider style="margin: 12px 0" />
 
     <!-- Lower Section: Installed Skills -->
@@ -294,7 +303,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import {
   NCard,
   NSpace,
@@ -315,11 +324,14 @@ import {
   NEmpty,
   NPopconfirm,
   NSpin,
+  NCollapse,
+  NCollapseItem,
   useMessage,
 } from 'naive-ui'
-import { RefreshOutline, CloseOutline, ChatbubblesOutline, SyncOutline } from '@vicons/ionicons5'
+import { RefreshOutline, CloseOutline, ChatbubblesOutline, SyncOutline, SaveOutline } from '@vicons/ionicons5'
 import { type Skill, syncAgentSkills } from '../../services/skillAPI'
 import {
+  updateAgent,
   restartAgent,
   uninstallSkill,
   getConversations,
@@ -344,12 +356,38 @@ const emit = defineEmits<{
   restart: []
   skillsChanged: []
   openMarketplace: []
+  agentUpdated: []
+  editClaudeMD: []
 }>()
 
 const message = useMessage()
 
 // --- Agent Info Section ---
 const restarting = ref(false)
+
+// --- CLAUDE.md Instructions ---
+const instructionsText = ref(props.agent?.instructions || '')
+const savingInstructions = ref(false)
+
+watch(() => props.agent?.instructions, (val) => {
+  instructionsText.value = val || ''
+})
+
+const handleSaveInstructions = async () => {
+  savingInstructions.value = true
+  try {
+    await updateAgent(props.agentId, { instructions: instructionsText.value })
+    emit('agentUpdated')
+    await restartAgent(props.agentId)
+    message.success('Instructions saved, agent restarting...')
+    emit('restart')
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to save instructions'))
+    console.error(error)
+  } finally {
+    savingInstructions.value = false
+  }
+}
 
 const statusTagType = computed((): 'success' | 'warning' | 'error' | 'default' => {
   const status = props.podStatus?.status

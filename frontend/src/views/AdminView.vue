@@ -413,9 +413,32 @@
                 </n-space>
               </n-spin>
             </n-modal>
-          </n-tab-pane>
 
-          <!-- Conversations Tab -->
+            <!-- Group Template Modal -->
+            <n-modal
+              v-model:show="showGroupTemplate"
+              preset="card"
+              :title="`CLAUDE.md Template: ${selectedTemplateGroup?.name || ''}`"
+              style="width: calc(100vw - 48px); height: calc(100vh - 48px); max-width: 100vw"
+              content-style="display: flex; flex-direction: column; flex: 1; overflow: hidden;"
+            >
+              <n-space vertical :size="12" style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+                <n-text depth="3" style="flex-shrink: 0;">
+                  This template will be merged into CLAUDE.md for all members of this group.
+                </n-text>
+                <n-input
+                  v-model:value="groupTemplateText"
+                  type="textarea"
+                  placeholder="Enter group CLAUDE.md template..."
+                  :autosize="false"
+                  style="font-family: monospace; flex: 1;"
+                />
+                <n-button type="primary" block :loading="savingGroupTemplate" @click="saveGroupTemplate" style="flex-shrink: 0;">
+                  Save Template
+                </n-button>
+              </n-space>
+            </n-modal>
+          </n-tab-pane>
           <n-tab-pane name="conversations" tab="Conversations">
             <n-card style="margin-bottom: 16px">
               <n-space :size="12" align="center" :wrap="true">
@@ -536,6 +559,7 @@ import {
   addAdminGroupMember,
   removeAdminGroupMember,
   updateAdminGroupMemberRole,
+  updateAdminGroupTemplate,
   type SystemSetting,
   type AdminUser,
   type UserSetting,
@@ -1082,6 +1106,10 @@ const groupMembers = ref<AdminGroupMember[]>([])
 const loadingGroupMembers = ref(false)
 const newMemberUserId = ref<number | null>(null)
 const newMemberRole = ref('member')
+const showGroupTemplate = ref(false)
+const selectedTemplateGroup = ref<AdminGroup | null>(null)
+const groupTemplateText = ref('')
+const savingGroupTemplate = ref(false)
 
 const userOptionsForOwner = computed(() =>
   users.value.map(u => ({ label: `${u.username} (${u.display_name || u.email})`, value: u.id }))
@@ -1115,7 +1143,7 @@ const groupColumns = computed<DataTableColumns<AdminGroup>>(() => [
   {
     title: 'Actions',
     key: 'actions',
-    width: 240,
+    width: 300,
     render(row) {
       return h(NSpace, { size: 4 }, {
         default: () => [
@@ -1124,6 +1152,11 @@ const groupColumns = computed<DataTableColumns<AdminGroup>>(() => [
             type: 'info',
             onClick: () => openGroupMembers(row),
           }, { default: () => 'Members' }),
+          h(NButton, {
+            size: 'small',
+            type: 'warning',
+            onClick: () => openGroupTemplate(row),
+          }, { default: () => 'Template' }),
           h(NButton, {
             size: 'small',
             onClick: () => openEditGroup(row),
@@ -1312,6 +1345,27 @@ async function handleUpdateMemberRole(member: AdminGroupMember, role: string) {
     await loadGroupMembers(selectedGroup.value.id)
   } catch (error) {
     message.error(extractApiError(error, 'Failed to update role'))
+  }
+}
+
+function openGroupTemplate(group: AdminGroup) {
+  selectedTemplateGroup.value = group
+  groupTemplateText.value = group.claude_md_template || ''
+  showGroupTemplate.value = true
+}
+
+async function saveGroupTemplate() {
+  if (!selectedTemplateGroup.value) return
+  savingGroupTemplate.value = true
+  try {
+    await updateAdminGroupTemplate(selectedTemplateGroup.value.id, groupTemplateText.value)
+    message.success('Template saved')
+    showGroupTemplate.value = false
+    await loadGroups()
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to save template'))
+  } finally {
+    savingGroupTemplate.value = false
   }
 }
 

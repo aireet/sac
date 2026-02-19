@@ -142,7 +142,7 @@ func (h *Handler) DownloadGroupFile(c *gin.Context) {
 
 	fileName := path.Base(filePath)
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
-	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Type", contentTypeByFilename(fileName))
 	io.Copy(c.Writer, body)
 }
 

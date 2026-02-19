@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"path"
 	"strconv"
 	"strings"
@@ -15,6 +16,8 @@ import (
 	"g.echo.tech/dev/sac/internal/models"
 	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
 
 const outputOSSPrefix = "output"
@@ -115,7 +118,7 @@ func (h *Handler) InternalOutputUpload(c *gin.Context) {
 		return
 	}
 
-	// Notify SSE subscribers via Redis
+	// Notify subscribers via Redis
 	if h.hub != nil {
 		h.hub.Publish(ctx, userID, agentID, OutputEvent{
 			Action: "upload",
@@ -165,7 +168,7 @@ func (h *Handler) InternalOutputDelete(c *gin.Context) {
 			Exec(ctx)
 	}
 
-	// Notify SSE subscribers via Redis
+	// Notify subscribers via Redis
 	if h.hub != nil {
 		h.hub.Publish(ctx, req.UserID, req.AgentID, OutputEvent{
 			Action: "delete",
@@ -260,17 +263,13 @@ func (h *Handler) DownloadOutputFile(c *gin.Context) {
 
 	fileName := path.Base(filePath)
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
-	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Type", contentTypeByFilename(fileName))
 	io.Copy(c.Writer, body)
 }
 
-// WatchOutput is an SSE endpoint that pushes output workspace file events to the client.
-func (h *Handler) WatchOutput(c *gin.Context) {
-	if h.hub == nil {
-		response.ServiceUnavailable(c, "Output watch not available (Redis not configured)")
-		return
-	}
-
+// DeleteOutputFile deletes a file from the output workspace (user-facing, JWT required).
+func (h *Handler) DeleteOutputFile(c *gin.Context) {
+	oss := h.getOSS(c)
 	userID, _ := c.Get("userID")
 	userIDInt := userID.(int64)
 
@@ -279,28 +278,302 @@ func (h *Handler) WatchOutput(c *gin.Context) {
 		return
 	}
 
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
+	filePath := c.Query("path")
+	if filePath == "" {
+		response.BadRequest(c, "path parameter required")
+		return
+	}
+	filePath = sanitizePath(filePath)
+	ossKey := outputOSSKeyPrefix(userIDInt, agentID) + filePath
 
-	ch, unsub := h.hub.Subscribe(userIDInt, agentID)
+	ctx := context.Background()
+
+	if strings.HasSuffix(filePath, "/") {
+		if err := oss.DeletePrefix(ctx, ossKey); err != nil {
+			response.InternalError(c, "Failed to delete directory", err)
+			return
+		}
+		_, _ = h.db.NewDelete().Model((*models.WorkspaceFile)(nil)).
+			Where("user_id = ? AND agent_id = ? AND workspace_type = 'output' AND oss_key LIKE ?", userIDInt, agentID, ossKey+"%").
+			Exec(ctx)
+	} else {
+		if err := oss.Delete(ctx, ossKey); err != nil {
+			response.InternalError(c, "Failed to delete file", err)
+			return
+		}
+		_, _ = h.db.NewDelete().Model((*models.WorkspaceFile)(nil)).
+			Where("oss_key = ?", ossKey).
+			Exec(ctx)
+	}
+
+	// Also clean up any shared links for this file
+	_, _ = h.db.NewDelete().Model((*models.SharedLink)(nil)).
+		Where("user_id = ? AND agent_id = ? AND file_path = ?", userIDInt, agentID, filePath).
+		Exec(ctx)
+
+	// Notify subscribers via Redis
+	if h.hub != nil {
+		h.hub.Publish(ctx, userIDInt, agentID, OutputEvent{
+			Action: "delete",
+			Path:   filePath,
+			Name:   path.Base(filePath),
+		})
+	}
+
+	response.Success(c, "File deleted")
+}
+
+// ---- Shared Links ----
+
+// CreateShare creates a short link for an output workspace file.
+func (h *Handler) CreateShare(c *gin.Context) {
+	userID, _ := c.Get("userID")
+	userIDInt := userID.(int64)
+
+	var req struct {
+		AgentID int64  `json:"agent_id" binding:"required"`
+		Path    string `json:"path" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "agent_id and path are required", err)
+		return
+	}
+
+	filePath := sanitizePath(req.Path)
+	ossKey := outputOSSKeyPrefix(userIDInt, req.AgentID) + filePath
+	fileName := path.Base(filePath)
+
+	ctx := context.Background()
+
+	// Check if already shared
+	var existing models.SharedLink
+	err := h.db.NewSelect().Model(&existing).
+		Where("user_id = ? AND agent_id = ? AND file_path = ?", userIDInt, req.AgentID, filePath).
+		Scan(ctx)
+	if err == nil {
+		// Already shared, return existing link
+		response.OK(c, gin.H{
+			"short_code": existing.ShortCode,
+			"url":        "/s/" + existing.ShortCode,
+		})
+		return
+	}
+
+	// Verify file exists in OSS
+	backend := h.provider.GetClient(ctx)
+	if backend == nil {
+		response.ServiceUnavailable(c, "Storage not configured")
+		return
+	}
+	body, err := backend.Download(ctx, ossKey)
+	if err != nil {
+		response.NotFound(c, "File not found in output workspace", err)
+		return
+	}
+	body.Close()
+
+	// Generate short code
+	shortCode := uuid.New().String()[:8]
+
+	link := &models.SharedLink{
+		ShortCode: shortCode,
+		UserID:    userIDInt,
+		AgentID:   req.AgentID,
+		FilePath:  filePath,
+		OSSKey:    ossKey,
+		FileName:  fileName,
+		CreatedAt: time.Now(),
+	}
+
+	_, err = h.db.NewInsert().Model(link).Exec(ctx)
+	if err != nil {
+		response.InternalError(c, "Failed to create share link", err)
+		return
+	}
+
+	response.Created(c, gin.H{
+		"short_code": shortCode,
+		"url":        "/s/" + shortCode,
+	})
+}
+
+// DeleteShare removes a shared link.
+func (h *Handler) DeleteShare(c *gin.Context) {
+	userID, _ := c.Get("userID")
+	userIDInt := userID.(int64)
+
+	code := c.Param("code")
+	if code == "" {
+		response.BadRequest(c, "code parameter required")
+		return
+	}
+
+	ctx := context.Background()
+	result, err := h.db.NewDelete().Model((*models.SharedLink)(nil)).
+		Where("short_code = ? AND user_id = ?", code, userIDInt).
+		Exec(ctx)
+	if err != nil {
+		response.InternalError(c, "Failed to delete share link", err)
+		return
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		response.NotFound(c, "Share link not found")
+		return
+	}
+
+	response.Success(c, "Share link deleted")
+}
+
+// GetSharedFileMeta returns metadata for a shared file (public, no auth).
+func (h *Handler) GetSharedFileMeta(c *gin.Context) {
+	code := c.Param("code")
+	if code == "" {
+		response.BadRequest(c, "code parameter required")
+		return
+	}
+
+	ctx := context.Background()
+	var link models.SharedLink
+	err := h.db.NewSelect().Model(&link).Where("short_code = ?", code).Scan(ctx)
+	if err != nil {
+		response.NotFound(c, "Link not found or expired")
+		return
+	}
+
+	contentType := contentTypeByFilename(link.FileName)
+
+	// Try to get file size from workspace_files
+	var sizeBytes int64
+	_ = h.db.NewSelect().
+		TableExpr("workspace_files").
+		Column("size_bytes").
+		Where("oss_key = ?", link.OSSKey).
+		Scan(ctx, &sizeBytes)
+
+	response.OK(c, gin.H{
+		"file_name":    link.FileName,
+		"content_type": contentType,
+		"size_bytes":   sizeBytes,
+	})
+}
+
+// DownloadSharedFile streams a shared file (public, no auth).
+func (h *Handler) DownloadSharedFile(c *gin.Context) {
+	code := c.Param("code")
+	if code == "" {
+		response.BadRequest(c, "code parameter required")
+		return
+	}
+
+	ctx := context.Background()
+	var link models.SharedLink
+	err := h.db.NewSelect().Model(&link).Where("short_code = ?", code).Scan(ctx)
+	if err != nil {
+		response.NotFound(c, "Link not found or expired")
+		return
+	}
+
+	backend := h.provider.GetClient(ctx)
+	if backend == nil {
+		response.ServiceUnavailable(c, "Storage not configured")
+		return
+	}
+
+	body, err := backend.Download(ctx, link.OSSKey)
+	if err != nil {
+		response.NotFound(c, "File no longer available", err)
+		return
+	}
+	defer body.Close()
+
+	c.Header("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, link.FileName))
+	c.Header("Content-Type", contentTypeByFilename(link.FileName))
+	io.Copy(c.Writer, body)
+}
+
+// wsUpgrader upgrades HTTP connections to WebSocket.
+var wsUpgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// WatchOutput is a WebSocket endpoint that pushes output workspace file events to the client.
+// JWT is read from the "token" query parameter (WebSocket upgrade doesn't support Authorization header).
+func (h *Handler) WatchOutput(c *gin.Context) {
+	if h.hub == nil {
+		response.ServiceUnavailable(c, "Output watch not available (Redis not configured)")
+		return
+	}
+
+	// Manual JWT validation from query param
+	tokenStr := c.Query("token")
+	if tokenStr == "" {
+		response.Unauthorized(c, "token query parameter required")
+		return
+	}
+	claims, err := h.jwt.ValidateToken(tokenStr)
+	if err != nil {
+		response.Unauthorized(c, "Invalid or expired token")
+		return
+	}
+	userID := claims.UserID
+
+	agentIDStr := c.Query("agent_id")
+	agentID, err := strconv.ParseInt(agentIDStr, 10, 64)
+	if err != nil || agentID <= 0 {
+		response.BadRequest(c, "invalid agent_id")
+		return
+	}
+
+	conn, err := wsUpgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		log.Printf("WatchOutput: websocket upgrade failed: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	const (
+		pingInterval = 30 * time.Second
+		pongTimeout  = 60 * time.Second
+	)
+
+	conn.SetReadDeadline(time.Now().Add(pongTimeout))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(pongTimeout))
+		return nil
+	})
+
+	// Drain reads (required by gorilla/websocket to process pong frames)
+	go func() {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				break
+			}
+		}
+	}()
+
+	ch, unsub := h.hub.Subscribe(userID, agentID)
 	defer unsub()
 
-	flusher := c.Writer
-	ctx := c.Request.Context()
+	ticker := time.NewTicker(pingInterval)
+	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ctx.Done():
-			return
 		case event := <-ch:
 			data, err := json.Marshal(event)
 			if err != nil {
 				log.Printf("WatchOutput: marshal error: %v", err)
 				continue
 			}
-			fmt.Fprintf(flusher, "data: %s\n\n", data)
-			flusher.Flush()
+			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+				return
+			}
+		case <-ticker.C:
+			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
 		}
 	}
 }

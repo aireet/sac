@@ -175,6 +175,7 @@ export interface AdminGroup {
   name: string
   description: string
   owner_id: number
+  claude_md_template: string
   owner?: { id: number; username: string; display_name: string }
   member_count: number
   created_at: string
@@ -223,4 +224,8 @@ export async function removeAdminGroupMember(groupId: number, userId: number): P
 
 export async function updateAdminGroupMemberRole(groupId: number, userId: number, role: string): Promise<void> {
   await api.put(`/admin/groups/${groupId}/members/${userId}`, { role })
+}
+
+export async function updateAdminGroupTemplate(groupId: number, template: string): Promise<void> {
+  await api.put(`/admin/groups/${groupId}/template`, { claude_md_template: template })
 }

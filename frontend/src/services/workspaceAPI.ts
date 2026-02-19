@@ -1,4 +1,4 @@
-import api from './api'
+import api, { getApiWsBaseUrl } from './api'
 
 export interface WorkspaceFile {
   name: string
@@ -261,6 +261,10 @@ export const fetchOutputFileBlob = async (agentId: number, path: string): Promis
   return r.blob()
 }
 
+export const deleteOutputFile = async (agentId: number, path: string): Promise<void> => {
+  await api.delete('/workspace/output/files', { params: { agent_id: agentId, path } })
+}
+
 // ---- Sync workspace to pod ----
 
 export const syncWorkspaceToPod = async (agentId: number): Promise<void> => {
@@ -310,7 +314,7 @@ export const syncWorkspaceToPodStream = async (
   }
 }
 
-// ---- Output workspace SSE watch ----
+// ---- Output workspace WebSocket watch ----
 
 export interface OutputWatchEvent {
   action: string // "upload" | "delete"
@@ -320,7 +324,7 @@ export interface OutputWatchEvent {
 }
 
 /**
- * Opens an SSE connection to watch output workspace file changes.
+ * Opens a WebSocket connection to watch output workspace file changes.
  * Returns an abort function to close the connection.
  */
 export const watchOutputFiles = (
@@ -328,67 +332,99 @@ export const watchOutputFiles = (
   onEvent: (event: OutputWatchEvent) => void,
   onReconnect?: () => void,
 ): (() => void) => {
-  const token = localStorage.getItem('token')
-  const baseUrl = api.defaults.baseURL
-  const url = `${baseUrl}/workspace/output/watch?agent_id=${agentId}`
-
-  const controller = new AbortController()
+  let ws: WebSocket | null = null
+  let closed = false
   let isFirstConnect = true
 
   const connect = () => {
-    fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: controller.signal,
-    })
-      .then((resp) => {
-        if (!resp.ok || !resp.body) return
-        // On reconnect (not first connect), refresh to catch missed events
-        if (!isFirstConnect && onReconnect) {
-          onReconnect()
-        }
-        isFirstConnect = false
+    if (closed) return
+    const token = localStorage.getItem('token')
+    const wsBase = getApiWsBaseUrl()
+    const url = `${wsBase}/api/workspace/output/watch?agent_id=${agentId}&token=${token}`
 
-        const reader = resp.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ''
+    ws = new WebSocket(url)
 
-        const pump = (): Promise<void> =>
-          reader.read().then(({ done, value }) => {
-            if (done) {
-              // Stream ended — reconnect after delay unless aborted
-              if (!controller.signal.aborted) {
-                setTimeout(connect, 1000)
-              }
-              return
-            }
-            buffer += decoder.decode(value, { stream: true })
-            const lines = buffer.split('\n')
-            buffer = lines.pop() || ''
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                try {
-                  const event = JSON.parse(line.slice(6)) as OutputWatchEvent
-                  onEvent(event)
-                } catch { /* skip malformed */ }
-              }
-            }
-            return pump()
-          })
+    ws.onopen = () => {
+      if (!isFirstConnect && onReconnect) {
+        onReconnect()
+      }
+      isFirstConnect = false
+    }
 
-        return pump()
-      })
-      .catch(() => {
-        // Reconnect on network error unless aborted
-        if (!controller.signal.aborted) {
-          isFirstConnect = false
-          setTimeout(connect, 1000)
-        }
-      })
+    ws.onmessage = (msg) => {
+      try {
+        const event = JSON.parse(msg.data) as OutputWatchEvent
+        onEvent(event)
+      } catch { /* skip malformed */ }
+    }
+
+    ws.onclose = () => {
+      if (!closed) {
+        setTimeout(connect, 1000)
+      }
+    }
+
+    ws.onerror = () => {
+      ws?.close()
+    }
   }
 
   connect()
 
-  return () => controller.abort()
+  return () => {
+    closed = true
+    ws?.close()
+  }
+}
+
+// ---- Shared links ----
+
+export interface ShareResult {
+  short_code: string
+  url: string
+}
+
+export interface SharedFileMeta {
+  file_name: string
+  content_type: string
+  size_bytes: number
+}
+
+export const shareOutputFile = async (agentId: number, path: string): Promise<ShareResult> => {
+  const response = await api.post('/workspace/output/share', { agent_id: agentId, path })
+  return response.data
+}
+
+export const deleteShare = async (code: string): Promise<void> => {
+  await api.delete(`/workspace/output/share/${code}`)
+}
+
+// Public endpoints (no auth required) — use raw fetch without JWT
+const getPublicApiBaseUrl = () => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL
+  }
+  const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:'
+  const host = window.location.hostname
+  if (host === 'localhost' || host === '127.0.0.1') {
+    return `${protocol}//${host}:8080/api`
+  }
+  return `${protocol}//${window.location.host}/api`
+}
+
+export const getSharedFile = async (code: string): Promise<SharedFileMeta> => {
+  const baseUrl = getPublicApiBaseUrl()
+  const r = await fetch(`${baseUrl}/s/${code}`)
+  if (!r.ok) throw new Error(`Not found: ${r.status}`)
+  const json = await r.json()
+  return json.data ?? json
+}
+
+export const fetchSharedFileBlob = async (code: string): Promise<Blob> => {
+  const baseUrl = getPublicApiBaseUrl()
+  const r = await fetch(`${baseUrl}/s/${code}/raw`)
+  if (!r.ok) throw new Error(`Not found: ${r.status}`)
+  return r.blob()
 }
 
 // ---- Type exports ----

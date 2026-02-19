@@ -9,12 +9,13 @@ import (
 type Group struct {
 	bun.BaseModel `bun:"table:groups,alias:g"`
 
-	ID          int64     `bun:"id,pk,autoincrement" json:"id"`
-	Name        string    `bun:"name,notnull,unique" json:"name"`
-	Description string    `bun:"description,notnull,default:''" json:"description"`
-	OwnerID     int64     `bun:"owner_id,notnull" json:"owner_id"`
-	CreatedAt   time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt   time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
+	ID               int64     `bun:"id,pk,autoincrement" json:"id"`
+	Name             string    `bun:"name,notnull,unique" json:"name"`
+	Description      string    `bun:"description,notnull,default:''" json:"description"`
+	OwnerID          int64     `bun:"owner_id,notnull" json:"owner_id"`
+	ClaudeMDTemplate string    `bun:"claude_md_template,notnull,default:''" json:"claude_md_template"`
+	CreatedAt        time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt        time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 
 	// Relations (not stored in DB)
 	Owner   *User          `bun:"rel:belongs-to,join:owner_id=id" json:"owner,omitempty"`

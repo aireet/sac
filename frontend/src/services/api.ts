@@ -50,7 +50,7 @@ api.interceptors.response.use(
 
 export default api
 
-// Re-export the base URL helper for WebSocket usage
+// Re-export the base URL helper for WebSocket usage (ws-proxy on :8081)
 export const getWsBaseUrl = () => {
   if (import.meta.env.VITE_WS_URL) {
     return import.meta.env.VITE_WS_URL
@@ -62,5 +62,12 @@ export const getWsBaseUrl = () => {
     return `${protocol}//${host}:8081`
   }
   // Production / Gateway: same-origin routing (works with any port)
+  return `${protocol}//${window.location.host}`
+}
+
+// WebSocket URL for API gateway endpoints (output watch, etc.)
+// Always same-origin — in dev, Vite proxies /api WS to localhost:8080
+export const getApiWsBaseUrl = () => {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${protocol}//${window.location.host}`
 }

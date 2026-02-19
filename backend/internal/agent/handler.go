@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"g.echo.tech/dev/sac/internal/admin"
@@ -48,6 +49,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		agents.POST("/:id/skills", h.InstallSkill)
 		agents.DELETE("/:id/skills/:skillId", h.UninstallSkill)
 		agents.POST("/:id/sync-skills", h.SyncSkills)
+		agents.GET("/:id/claude-md-preview", h.PreviewClaudeMD)
 	}
 }
 
@@ -122,10 +124,11 @@ func (h *Handler) CreateAgent(c *gin.Context) {
 	}
 
 	var req struct {
-		Name        string         `json:"name" binding:"required"`
-		Description string         `json:"description"`
-		Icon        string         `json:"icon"`
-		Config      map[string]any `json:"config"`
+		Name         string         `json:"name" binding:"required"`
+		Description  string         `json:"description"`
+		Icon         string         `json:"icon"`
+		Instructions string         `json:"instructions"`
+		Config       map[string]any `json:"config"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -134,11 +137,12 @@ func (h *Handler) CreateAgent(c *gin.Context) {
 	}
 
 	agent := &models.Agent{
-		Name:        req.Name,
-		Description: req.Description,
-		Icon:        req.Icon,
-		Config:      req.Config,
-		CreatedBy:   userID,
+		Name:         req.Name,
+		Description:  req.Description,
+		Icon:         req.Icon,
+		Instructions: req.Instructions,
+		Config:       req.Config,
+		CreatedBy:    userID,
 	}
 
 	_, err = h.db.NewInsert().
@@ -163,10 +167,11 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 	}
 
 	var req struct {
-		Name        string         `json:"name"`
-		Description string         `json:"description"`
-		Icon        string         `json:"icon"`
-		Config      map[string]any `json:"config"`
+		Name         string         `json:"name"`
+		Description  string         `json:"description"`
+		Icon         string         `json:"icon"`
+		Instructions string         `json:"instructions"`
+		Config       map[string]any `json:"config"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -192,6 +197,7 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 		Set("name = ?", req.Name).
 		Set("description = ?", req.Description).
 		Set("icon = ?", req.Icon).
+		Set("instructions = ?", req.Instructions).
 		Set("config = ?", req.Config).
 		Where("id = ?", agentID).
 		Exec(c.Request.Context())
@@ -548,4 +554,55 @@ func (h *Handler) SyncSkills(c *gin.Context) {
 	}
 
 	response.Success(c, "Skills synced successfully")
+}
+
+// PreviewClaudeMD returns the CLAUDE.md content split into read-only and editable parts.
+func (h *Handler) PreviewClaudeMD(c *gin.Context) {
+	userID := c.GetInt64("userID")
+	agentID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid agent ID")
+		return
+	}
+
+	var agent models.Agent
+	err = h.db.NewSelect().
+		Model(&agent).
+		Where("id = ? AND created_by = ?", agentID, userID).
+		Scan(c.Request.Context())
+	if err != nil {
+		response.NotFound(c, "Agent not found", err)
+		return
+	}
+
+	sysInstructions := h.settingsService.GetAgentSystemInstructions(c.Request.Context())
+	groupTemplates := h.getGroupTemplates(c.Request.Context(), userID)
+
+	var readonlyParts []string
+	if sysInstructions != "" {
+		readonlyParts = append(readonlyParts, sysInstructions)
+	}
+	readonlyParts = append(readonlyParts, groupTemplates...)
+
+	response.OK(c, gin.H{
+		"readonly":     strings.Join(readonlyParts, "\n\n---\n\n"),
+		"instructions": agent.Instructions,
+	})
+}
+
+func (h *Handler) getGroupTemplates(ctx context.Context, userID int64) []string {
+	var templates []string
+	err := h.db.NewSelect().
+		TableExpr("groups AS g").
+		ColumnExpr("g.claude_md_template").
+		Join("JOIN group_members AS gm ON gm.group_id = g.id").
+		Where("gm.user_id = ?", userID).
+		Where("g.claude_md_template != ''").
+		OrderExpr("g.name ASC").
+		Scan(ctx, &templates)
+	if err != nil {
+		log.Printf("Warning: failed to get group templates for user %d: %v", userID, err)
+		return nil
+	}
+	return templates
 }

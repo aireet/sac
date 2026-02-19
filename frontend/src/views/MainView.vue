@@ -148,6 +148,8 @@
                 @restart="handleRestartFromPanel"
                 @skills-changed="handleSkillsChanged"
                 @open-marketplace="viewMode = 'marketplace'"
+                @agent-updated="handleAgentUpdated"
+                @edit-claude-m-d="openClaudeMDEditor"
               />
             </n-tab-pane>
           </n-tabs>
@@ -156,62 +158,58 @@
         <!-- Center Content -->
         <div class="center-content">
           <template v-if="viewMode === 'terminal'">
-            <!-- File Editor Overlay (over terminal) -->
-            <div v-if="editorFile" class="editor-overlay">
-              <div class="editor-header">
-                <n-breadcrumb separator="/">
-                  <n-breadcrumb-item @click="closeEditor">
-                    <n-icon :size="14"><ArrowBackOutline /></n-icon>
-                    <span style="margin-left: 4px">Back</span>
-                  </n-breadcrumb-item>
-                  <n-breadcrumb-item v-for="(seg, i) in editorPathSegments" :key="i">
-                    {{ seg }}
-                  </n-breadcrumb-item>
-                </n-breadcrumb>
-                <n-space :size="8" align="center">
-                  <n-tag v-if="editorDirty" size="small" type="warning">Unsaved</n-tag>
+            <!-- File Preview Overlay (over terminal) -->
+            <FilePreview
+              v-if="editorFile"
+              :file="editorFile"
+              :category="editorCategory"
+              :content="editorContent"
+              :blob-url="editorBlobUrl"
+              :loading="editorLoading"
+              :saving="editorSaving"
+              :dirty="editorDirty"
+              :can-save="editorCanSave"
+              :csv-columns="csvColumns"
+              :csv-data="csvData"
+              @update:content="editorContent = $event"
+              @save="handleEditorSave"
+              @download="handleEditorDownload"
+              @close="closeEditor"
+            />
+
+            <!-- CLAUDE.md Full Editor (over terminal) -->
+            <div v-else-if="showClaudeMDEditor" class="claudemd-editor-overlay">
+              <div class="claudemd-editor-header">
+                <n-text strong style="font-size: 16px">CLAUDE.md — {{ selectedAgent?.name }}</n-text>
+                <n-space :size="8">
                   <n-button
-                    v-if="editorCategory === 'text' && editorCanSave"
                     size="small"
                     type="primary"
-                    :disabled="!editorDirty"
-                    :loading="editorSaving"
-                    @click="handleEditorSave"
+                    :loading="savingClaudeMD"
+                    @click="handleSaveClaudeMD"
                   >
-                    Save
+                    Save &amp; Restart
                   </n-button>
-                  <n-button size="small" quaternary @click="handleEditorDownload">
-                    <template #icon><n-icon :size="14"><DownloadOutline /></n-icon></template>
-                    Download
+                  <n-button size="small" quaternary @click="showClaudeMDEditor = false">
+                    Close
                   </n-button>
-                  <n-button size="small" quaternary @click="closeEditor">Close</n-button>
                 </n-space>
               </div>
-              <div class="editor-body">
-                <n-spin :show="editorLoading" style="height: 100%">
-                  <!-- Text editor -->
-                  <textarea
-                    v-if="editorCategory === 'text'"
-                    v-model="editorContent"
-                    class="editor-textarea"
-                    spellcheck="false"
-                    :readonly="!editorCanSave"
-                  />
-                  <!-- Image preview -->
-                  <div v-else-if="editorCategory === 'image'" class="image-preview">
-                    <img :src="editorBlobUrl" :alt="editorFile.name" />
-                  </div>
-                  <!-- Binary fallback -->
-                  <div v-else class="binary-preview">
-                    <n-icon :size="64" depth="3"><DocumentOutline /></n-icon>
-                    <n-text style="font-size: 16px; margin-top: 12px">{{ editorFile.name }}</n-text>
-                    <n-text depth="3" style="margin-top: 4px">{{ formatBytes(editorFile.size) }}</n-text>
-                    <n-button style="margin-top: 16px" @click="handleEditorDownload">
-                      <template #icon><n-icon><DownloadOutline /></n-icon></template>
-                      Download File
-                    </n-button>
-                  </div>
-                </n-spin>
+              <div class="claudemd-editor-body">
+                <div v-if="claudeMDReadonly" class="claudemd-readonly-section">
+                  <div class="claudemd-section-label">System &amp; Group Instructions (read-only)</div>
+                  <pre class="claudemd-readonly-content">{{ claudeMDReadonly }}</pre>
+                </div>
+                <div v-if="claudeMDReadonly" class="claudemd-divider">
+                  <span>--- Agent Instructions (editable) ---</span>
+                </div>
+                <div v-else class="claudemd-section-label" style="padding: 12px 16px 0;">Agent Instructions</div>
+                <textarea
+                  v-model="claudeMDText"
+                  class="claudemd-raw-textarea"
+                  placeholder="Enter agent instructions..."
+                  spellcheck="false"
+                />
               </div>
             </div>
 
@@ -284,15 +282,11 @@ import {
   NEmpty,
   NTooltip,
   NTag,
-  NBreadcrumb,
-  NBreadcrumbItem,
-  NSpin,
   darkTheme,
   useMessage,
 } from 'naive-ui'
 import {
   Add, StorefrontOutline, TerminalOutline, ChatbubblesOutline, SettingsOutline, LogOutOutline,
-  ArrowBackOutline, DownloadOutline, DocumentOutline,
 } from '@vicons/ionicons5'
 import Terminal from '../components/Terminal/Terminal.vue'
 import ChatInput from '../components/ChatInput/ChatInput.vue'
@@ -301,7 +295,8 @@ import SkillMarketplace from '../components/SkillMarketplace/SkillMarketplace.vu
 import AgentSelector from '../components/Agent/AgentSelector.vue'
 import AgentCreator from '../components/Agent/AgentCreator.vue'
 import WorkspacePanel from '../components/Workspace/WorkspacePanel.vue'
-import { getAgent, getAgents, getAgentStatuses, type Agent, type AgentStatus } from '../services/agentAPI'
+import FilePreview from '../components/Workspace/FilePreview.vue'
+import { getAgent, getAgents, getAgentStatuses, updateAgent, restartAgent, previewClaudeMD, type Agent, type AgentStatus } from '../services/agentAPI'
 import { createSession, waitForSessionReady } from '../services/sessionAPI'
 import {
   fetchFileBlob, fetchPublicFileBlob, fetchGroupFileBlob, fetchOutputFileBlob,
@@ -310,7 +305,7 @@ import {
   syncWorkspaceToPodStream,
   type WorkspaceFile, type SpaceTab,
 } from '../services/workspaceAPI'
-import { getFileCategory, MAX_TEXT_PREVIEW_BYTES, MAX_IMAGE_PREVIEW_BYTES } from '../utils/fileTypes'
+import { getFileCategory, type FileCategory, MAX_TEXT_PREVIEW_BYTES, MAX_CSV_PREVIEW_BYTES, MAX_CSV_PREVIEW_ROWS, MAX_IMAGE_PREVIEW_BYTES } from '../utils/fileTypes'
 import { listGroups, type Group } from '../services/groupAPI'
 import { extractApiError } from '../utils/error'
 import { useAuthStore } from '../stores/auth'
@@ -334,6 +329,47 @@ const editingAgent = ref<Agent | null>(null)
 const viewMode = ref<'terminal' | 'marketplace'>('terminal')
 const inputMode = ref<'chat' | 'terminal'>('terminal')
 const userGroups = ref<Group[]>([])
+
+// CLAUDE.md editor
+const showClaudeMDEditor = ref(false)
+const claudeMDReadonly = ref('')
+const claudeMDText = ref('')
+const savingClaudeMD = ref(false)
+const loadingClaudeMD = ref(false)
+
+async function openClaudeMDEditor() {
+  if (!selectedAgentId.value) return
+  showClaudeMDEditor.value = true
+  loadingClaudeMD.value = true
+  try {
+    const data = await previewClaudeMD(selectedAgentId.value)
+    claudeMDReadonly.value = data.readonly
+    claudeMDText.value = data.instructions
+  } catch (error) {
+    claudeMDReadonly.value = ''
+    claudeMDText.value = selectedAgent.value?.instructions || ''
+    message.error(extractApiError(error, 'Failed to load CLAUDE.md'))
+  } finally {
+    loadingClaudeMD.value = false
+  }
+}
+
+async function handleSaveClaudeMD() {
+  if (!selectedAgentId.value) return
+  savingClaudeMD.value = true
+  try {
+    await updateAgent(selectedAgentId.value, { instructions: claudeMDText.value })
+    await restartAgent(selectedAgentId.value)
+    message.success('Instructions saved, agent restarting...')
+    showClaudeMDEditor.value = false
+    // Refresh agent data
+    selectedAgent.value = await getAgent(selectedAgentId.value)
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to save instructions'))
+  } finally {
+    savingClaudeMD.value = false
+  }
+}
 
 // Right panel resize
 const rightPanelWidth = ref(480)
@@ -362,23 +398,19 @@ const startResize = (e: MouseEvent) => {
 const editorFile = ref<WorkspaceFile | null>(null)
 const editorSpaceTab = ref<SpaceTab>('private')
 const editorGroupId = ref<number | undefined>(undefined)
-const editorCategory = ref<'text' | 'image' | 'binary'>('binary')
+const editorCategory = ref<FileCategory>('binary')
 const editorContent = ref('')
 const editorOriginalContent = ref('')
 const editorBlobUrl = ref('')
 const editorLoading = ref(false)
 const editorSaving = ref(false)
-
+const csvColumns = ref<Array<{ title: string; key: string }>>([])
+const csvData = ref<Array<Record<string, string>>>([])
 const editorDirty = computed(() => editorCategory.value === 'text' && editorContent.value !== editorOriginalContent.value)
 const editorCanSave = computed(() => {
   if (editorSpaceTab.value === 'output') return false
   if (editorSpaceTab.value === 'public' && !authStore.isAdmin) return false
   return true
-})
-
-const editorPathSegments = computed(() => {
-  if (!editorFile.value) return []
-  return editorFile.value.path.replace(/^\//, '').split('/')
 })
 
 const handleOpenFile = async (file: WorkspaceFile, spaceTab: SpaceTab, groupId?: number) => {
@@ -422,6 +454,26 @@ const handleOpenFile = async (file: WorkspaceFile, spaceTab: SpaceTab, groupId?:
         editorContent.value = text
         editorOriginalContent.value = text
       }
+    } else if (editorCategory.value === 'csv') {
+      if (file.size > MAX_CSV_PREVIEW_BYTES) {
+        editorCategory.value = 'binary'
+        message.warning('CSV too large to preview')
+      } else {
+        const text = await blob.text()
+        editorContent.value = text
+        editorOriginalContent.value = text
+        const parsed = parseCsv(text, file.name.endsWith('.tsv'))
+        csvColumns.value = parsed.columns
+        if (parsed.data.length > MAX_CSV_PREVIEW_ROWS) {
+          csvData.value = parsed.data.slice(0, MAX_CSV_PREVIEW_ROWS)
+          message.info(`Showing first ${MAX_CSV_PREVIEW_ROWS} of ${parsed.data.length} rows`)
+        } else {
+          csvData.value = parsed.data
+        }
+      }
+    } else if (editorCategory.value === 'html') {
+      const text = await blob.text()
+      editorContent.value = text
     } else if (editorCategory.value === 'image') {
       if (file.size > MAX_IMAGE_PREVIEW_BYTES) {
         editorCategory.value = 'binary'
@@ -437,6 +489,27 @@ const handleOpenFile = async (file: WorkspaceFile, spaceTab: SpaceTab, groupId?:
   } finally {
     editorLoading.value = false
   }
+}
+
+const parseCsv = (text: string, isTsv = false) => {
+  const sep = isTsv ? '\t' : ','
+  const lines = text.split('\n').filter(l => l.trim())
+  if (lines.length === 0) return { columns: [], data: [] }
+  const headers = lines[0]!.split(sep).map(h => h.trim().replace(/^"|"$/g, ''))
+  const columns = headers.map((h, i) => ({
+    title: h || `col_${i}`,
+    key: `c${i}`,
+    ellipsis: { tooltip: true },
+    resizable: true,
+    minWidth: 80,
+  }))
+  const data = lines.slice(1).map((line, rowIdx) => {
+    const cells = line.split(sep).map(c => c.trim().replace(/^"|"$/g, ''))
+    const row: Record<string, string | number> = { _key: rowIdx }
+    headers.forEach((_, i) => { row[`c${i}`] = cells[i] ?? '' })
+    return row
+  })
+  return { columns, data }
 }
 
 const handleEditorSave = async () => {
@@ -503,14 +576,6 @@ const closeEditor = () => {
     URL.revokeObjectURL(editorBlobUrl.value)
     editorBlobUrl.value = ''
   }
-}
-
-const formatBytes = (bytes: number): string => {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
 // Agent list for header dropdown
@@ -669,6 +734,16 @@ const handleSkillsChanged = async () => {
   }
 }
 
+const handleAgentUpdated = async () => {
+  if (selectedAgentId.value > 0) {
+    try {
+      selectedAgent.value = await getAgent(selectedAgentId.value)
+    } catch (error) {
+      console.error('Failed to reload agent:', error)
+    }
+  }
+}
+
 const handleRestartFromPanel = async () => {
   // Immediately disconnect the dead terminal so the user sees a clear state
   terminalRef.value?.cleanup()
@@ -791,6 +866,7 @@ onUnmounted(() => {
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
+  position: relative;
 }
 
 .terminal-area {
@@ -818,80 +894,83 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.editor-overlay {
-  flex: 1;
+.claudemd-editor-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
+  background: #1e1e2e;
 }
 
-.editor-header {
+.claudemd-editor-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   flex-shrink: 0;
 }
 
-.editor-body {
+.claudemd-editor-body {
   flex: 1;
-  min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
-.editor-body :deep(.n-spin-container),
-.editor-body :deep(.n-spin-content) {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
+.claudemd-readonly-section {
+  flex-shrink: 0;
+  max-height: 40%;
+  overflow-y: auto;
+  border-bottom: none;
 }
 
-.editor-textarea {
+.claudemd-section-label {
+  padding: 8px 16px 4px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.35);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.claudemd-readonly-content {
+  margin: 0;
+  padding: 8px 16px 12px;
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.5);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.claudemd-divider {
+  flex-shrink: 0;
+  text-align: center;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.claudemd-divider span {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.claudemd-raw-textarea {
   width: 100%;
-  flex: 1;
-  min-height: 0;
-  resize: none;
+  height: 100%;
+  background: transparent;
+  color: #e0e0e0;
   border: none;
   outline: none;
-  background: #1a1a1a;
-  color: rgba(255, 255, 255, 0.87);
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-  font-size: 13px;
-  line-height: 1.6;
+  resize: none;
   padding: 16px;
-  tab-size: 2;
-}
-
-.editor-textarea:focus {
-  outline: none;
-}
-
-.image-preview {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  overflow: auto;
-}
-
-.image-preview img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  border-radius: 4px;
-}
-
-.binary-preview {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
+  font-family: monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  box-sizing: border-box;
 }
 </style>

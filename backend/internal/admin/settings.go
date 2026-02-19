@@ -76,6 +76,12 @@ func (s *SettingsService) GetDockerImage(ctx context.Context) string {
 	return val
 }
 
+// GetAgentSystemInstructions returns the system-level agent instructions (immutable by users).
+func (s *SettingsService) GetAgentSystemInstructions(ctx context.Context) string {
+	val, _ := s.GetSetting(ctx, "agent_system_instructions")
+	return val
+}
+
 // GetResourceLimits returns the resource configuration for a user.
 func (s *SettingsService) GetResourceLimits(ctx context.Context, userID int64) ResourceConfig {
 	cpuReq, _ := s.GetUserSetting(ctx, userID, "default_cpu_request")

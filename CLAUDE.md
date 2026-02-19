@@ -1,162 +1,184 @@
-# SAC - Sandbox Agent Cluster
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
-An open-source platform that makes Claude Code accessible to everyone — not just developers. It lowers the barrier to using Claude Code for non-technical users, enables teams to share and install expertly crafted skills, and collaboratively build a knowledge base for solving real-world problems. Each user's agent runs in an isolated K8s environment accessible via web browser.
+SAC (Sandbox Agent Cluster) — an open-source platform that makes Claude Code accessible to everyone via web browser. Each user's agent runs in an isolated K8s StatefulSet. Users can share/install skills and collaboratively build a knowledge base.
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
 | Backend | Go 1.25, Gin, Bun ORM (pgdialect), gorilla/websocket, go-redis/v9, client-go v0.35 |
-| Frontend | Vue 3, TypeScript, Naive UI, xterm.js (WebGL), Pinia, Vite |
+| Frontend | Vue 3, TypeScript, Naive UI, xterm.js (WebGL), Pinia, Vite 7 |
 | Database | PostgreSQL 17 + TimescaleDB |
 | Cache/PubSub | Redis (standalone, via bitnami Helm subchart) |
-| Storage | S3-compatible (Alibaba Cloud OSS, MinIO, AWS S3, etc.) |
+| Storage | S3-compatible (Alibaba Cloud OSS, MinIO, AWS S3) |
 | Infra | K8s StatefulSets, Envoy Gateway v1.6, Helm 3 |
 
-## Project Structure
+## Development Commands
 
-```
-sac/
-├── backend/
-│   ├── cmd/{api-gateway, ws-proxy, migrate, output-watcher}/
-│   ├── internal/
-│   │   ├── admin/       # Admin handlers + settings service
-│   │   ├── agent/       # Agent CRUD + K8s StatefulSet lifecycle
-│   │   ├── auth/        # JWT (HS256, 24h) + bcrypt + middleware
-│   │   ├── container/   # K8s client: StatefulSet, Service, exec, file sync, sidecar
-│   │   ├── database/    # bun ORM + pgdialect connection
-│   │   ├── group/       # Group CRUD + membership (admin + user routes)
-│   │   ├── history/     # Conversation history (TimescaleDB hypertable)
-│   │   ├── models/      # All data models (User, Agent, Session, Skill, Group, etc.)
-│   │   ├── redis/       # Redis client singleton (Pub/Sub for SSE)
-│   │   ├── session/     # Session lifecycle (create → pod ready → sync → connect)
-│   │   ├── skill/       # Skill CRUD + versioning + sync as .md to pod
-│   │   ├── storage/     # Pluggable S3-compatible backend (OSS, MinIO, AWS S3)
-│   │   ├── websocket/   # ttyd binary protocol proxy (0x30 input/output)
-│   │   └── workspace/   # File upload/download/sync, quota, output SSE watch
-│   ├── migrations/      # 000001-000017 (bun/migrate)
-│   └── pkg/{config, response}/
-├── frontend/src/
-│   ├── components/
-│   │   ├── Terminal/          # xterm.js WebGL + binary WS + resize
-│   │   ├── ChatInput/         # Chat-mode message bar
-│   │   ├── Agent/             # AgentSelector + AgentCreator (LLM presets)
-│   │   ├── SkillPanel/        # Dashboard sidebar (status, skills, workspace, history)
-│   │   ├── SkillMarketplace/  # Browse, create, fork, install skills
-│   │   └── Workspace/         # File browser + text/image/binary preview + SSE watch
-│   ├── services/              # Typed API clients (axios + interceptors)
-│   ├── stores/auth.ts         # Pinia auth store
-│   └── views/                 # MainView, LoginView, RegisterView, AdminView
-├── docker/                    # 5 Dockerfiles (api-gateway, ws-proxy, frontend, claude-code, output-watcher)
-├── helm/sac/                  # Helm chart + Envoy Gateway + Redis subcharts
-│   ├── files/                 # conversation-sync.mjs hook, settings.json
-│   └── templates/             # Deployments, Services, RBAC, HTTPRoutes, ConfigMap
-├── Makefile                   # Dev, build, deploy, migrate
-└── .version
+```bash
+# Full dev environment (Telepresence + build + start all on 8080, 8081, 5173)
+make dev
+
+# Individual service management
+make restart SVC=api    # Rebuild + restart api-gateway (also: ws, fe)
+make logs SVC=api       # Tail service log (also: ws, fe)
+make stop               # Kill all dev services
+make status             # Show running services
+
+# Build Go binaries only
+make build              # Builds api-gateway + ws-proxy to backend/bin/
+make build-api          # cd backend && go build -o bin/api-gateway ./cmd/api-gateway
+make build-ws           # cd backend && go build -o bin/ws-proxy ./cmd/ws-proxy
+
+# Frontend (from frontend/ directory)
+npm run dev             # Vite dev server (proxies /api→:8080, /ws→:8081)
+npm run build           # vue-tsc -b && vite build
+
+# Database
+make migrate-up         # Run all pending migrations
+make migrate-seed       # Seed admin user (admin/admin123)
+
+# Docker & Deploy
+make docker-build       # Build all 5 images (auto version bump from .version)
+make docker-push        # Push all images to registry
+make helm-dep-update    # Update Helm chart dependencies
+make helm-upgrade       # Helm upgrade release
 ```
 
-## Architecture Key Points
+## Development Rules
+
+1. **Use Telepresence** to connect to K8s cluster — never port-forward
+2. **Bind to 0.0.0.0** — remote dev environment
+3. Go module path: `g.echo.tech/dev/sac`
+4. No vendor directory; use Go module cache
+5. No tests exist yet — manual testing via Telepresence against live cluster
+
+## Architecture
+
+### Four Binaries (backend/cmd/)
+
+| Binary | Port | Purpose |
+|--------|------|---------|
+| `api-gateway` | 8080 | Main REST API — all CRUD, file sync, SSE output watch, Redis pub/sub |
+| `ws-proxy` | 8081 | WebSocket proxy: browser ↔ ttyd in pod (binary protocol) |
+| `migrate` | — | DB migrations (up/down/status/seed) |
+| `output-watcher` | — | Sidecar in pods: watches `/workspace/output/` via fsnotify, POSTs to API |
+
+### Route Layers (api-gateway/main.go)
+
+Routes are registered in this order in `main.go`:
+1. **Internal** (`/api/internal/*`) — no JWT, pod-to-API calls only
+   - `POST /api/internal/conversations/events` — conversation sync from pods
+   - `POST /api/internal/output/upload` and `/delete` — sidecar file events
+2. **Public** — no auth: `/auth/login`, `/auth/register`, `/health`, SSE output watch
+3. **Protected** (`/api/*` + JWT) — agents, sessions, skills, workspace, groups, history
+4. **Admin** (`/api/admin/*` + JWT + role=admin) — settings, user management
 
 ### Per-Agent StatefulSet
+
 - Each user-agent pair → 1 StatefulSet + 1 headless Service
 - Naming: `claude-code-{userID}-{agentID}`
 - Pod DNS: `claude-code-{userID}-{agentID}-0.claude-code-{userID}-{agentID}.sac.svc.cluster.local`
-- Containers: main (claude-code + ttyd) + sidecar (output-watcher)
-- Mounted volumes: workspace (emptyDir), settings.json + conversation-sync.mjs (ConfigMap)
+- Two containers: main (claude-code + ttyd on :7681) + sidecar (output-watcher)
+- Volumes: workspace (emptyDir), settings.json + conversation-sync.mjs (ConfigMap)
+- Pod entrypoint uses `dtach` for session persistence + auto-restart loop for claude CLI
 
-### Output Workspace (Sidecar → SSE)
-- Sidecar (`output-watcher`) watches `/workspace/output/` via fsnotify
-- On file change → POST `/api/internal/output/upload` or `/delete`
-- API Gateway uploads to OSS, upserts DB, then `PUBLISH` to Redis channel `sac:output:{userID}:{agentID}`
-- All API Gateway replicas `PSUBSCRIBE sac:output:*` → dispatch to local SSE subscribers
-- Frontend `GET /api/workspace/output/watch?agent_id=X` (SSE) → `loadRootFiles()` on event
-- Graceful degradation: if Redis unavailable, SSE endpoint returns 503, frontend can fall back to manual refresh
+### Session Lifecycle
 
-### Session Flow
-1. CreateSession → check/create StatefulSet → wait pod ready (300s timeout)
-2. Sync workspace files from OSS (private + public + claude-commands)
-3. Sync installed skills as .md files
-4. Return session ID + Pod IP → frontend connects WS proxy → ttyd
+```
+Frontend: createSession(agentId)
+  → Backend: check/create StatefulSet → wait pod ready (300s timeout)
+  → Sync workspace files from S3 (private + public + claude-commands)
+  → Sync installed skills as .md files to /root/.claude/commands/
+  → Return session ID + Pod IP
+Frontend: waitForSessionReady(sessionId) [poll 60x, 2s intervals]
+  → connectWebSocket → xterm.js terminal
+```
 
-### WebSocket Protocol
-- Browser ↔ WS Proxy (`:8081`) ↔ ttyd (`:7681` in pod)
+### WebSocket Protocol (ws-proxy ↔ ttyd)
+
 - Binary protocol: `0x30` = I/O data, `0x31` = resize, `0x7B` = JSON auth
+- Frontend uses raw `ArrayBuffer` WebSocket, NOT the `WebSocketManager` class in `services/websocket.ts`
 - JWT auth via query param
 
+### Output Workspace Pipeline
+
+```
+Pod sidecar (fsnotify /workspace/output/)
+  → POST /api/internal/output/upload or /delete
+  → API Gateway uploads to S3, upserts DB
+  → PUBLISH to Redis channel sac:output:{userID}:{agentID}
+  → All API Gateway replicas PSUBSCRIBE sac:output:*
+  → Dispatch to local SSE subscribers
+  → Frontend GET /api/workspace/output/watch?agent_id=X (SSE)
+```
+
+Graceful degradation: if Redis unavailable, SSE returns 503, frontend falls back to manual refresh.
+
 ### Conversation Sync
-- `conversation-sync.mjs` hook runs on Stop/SubagentStop/UserPromptSubmit events inside pods
-- Reads JSONL transcript, POSTs to `POST /api/internal/conversations/events` (cluster-internal)
+
+- `conversation-sync.mjs` hook (zero external deps, Node.js 22 built-ins only)
+- Triggers: Stop, SubagentStop, UserPromptSubmit events inside pods
+- Incremental sync via `/tmp/.last_sync_line_{sessionId}` tracking
+- POSTs to `POST /api/internal/conversations/events` (cluster-internal)
 - Stored in `conversation_histories` TimescaleDB hypertable
 
 ### Resource Configuration Hierarchy
-1. System defaults (system_settings table)
-2. Per-user overrides (user_settings table)
-3. Per-agent overrides (agents table columns)
 
-## Development
+1. System defaults (`system_settings` table)
+2. Per-user overrides (`user_settings` table)
+3. Per-agent overrides (`agents` table columns)
 
-### Rules
-1. **Use Telepresence** to connect to K8s cluster — never port-forward
-2. **Bind to 0.0.0.0** — remote dev environment
+### Storage Abstraction (internal/storage/)
 
-### Commands
-```bash
-make dev              # Telepresence + build + start all (8080, 8081, 5173)
-make stop             # Kill all dev services
-make status           # Show running services
-make restart SVC=api  # Rebuild + restart one service (api|ws|fe)
-make logs SVC=api     # Tail service log
-make migrate-up       # Run DB migrations
-make migrate-seed     # Seed admin user (admin/admin123)
-```
-
-### Build & Deploy
-```bash
-make docker-build     # Build all 5 images (auto version bump)
-make docker-push      # Push to registry
-make helm-dep-update  # Update Helm chart dependencies (Redis subchart)
-make helm-upgrade     # Helm upgrade release
-```
+- Interface: `StorageBackend` with Upload/Download/Delete/List/Copy/PresignedURL
+- Backends: `TypeOSS` (Alibaba), `TypeS3` (AWS), `TypeS3Compat` (MinIO, RustFS, R2)
+- Lazy init from `system_settings` table, cached with config fingerprint hash
+- Returns `nil` if not configured (graceful degradation)
 
 ## Coding Conventions
 
 ### Go Backend
+
 - ORM: `bun` with `pgdialect.New()` — NOT `pgdriver.New()` for dialect
-- No vendor directory; use Go module cache
 - Standardized responses via `pkg/response` (OK, BadRequest, NotFound, etc.)
-- Config from env vars with `.env` support (godotenv)
-- Routes: public (no auth) → internal (pod-to-API) → protected (JWT) → admin (JWT + role)
+- Config from env vars with `.env` support (godotenv) — see `pkg/config/config.go`
+- Handler pattern: constructor injection (`NewHandler(db, containerMgr, storage, ...)`)
+- Each handler registers its own routes via `RegisterRoutes(group, authMiddleware)`
 
 ### Frontend
+
 - Vue 3 Composition API with `<script setup lang="ts">`
 - Naive UI components, dark theme throughout
 - API layer: typed services in `services/`, axios instance with JWT interceptor + 401 redirect
-- State: Pinia store for auth, component-level refs for everything else
-- Terminal: raw binary WebSocket (ArrayBuffer), not the WebSocketManager class
+- State: Pinia store for auth only, component-level `ref()` for everything else
+- API base URL auto-detects: localhost → separate ports, production → same-origin via Envoy
+- Vite dev proxy: `/api` → `:8080`, `/ws` → `:8081`, `/api/workspace/output/watch` → WS `:8080`
+- Strict TypeScript: `noUnusedLocals`, `noUnusedParameters`, `erasableSyntaxOnly`
+
+### Key Environment Variables (backend)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `API_GATEWAY_PORT` | 8080 | API server port |
+| `WS_PROXY_PORT` | 8081 | WebSocket proxy port |
+| `DB_HOST/PORT/USER/PASSWORD/NAME` | — | PostgreSQL connection |
+| `JWT_SECRET` | — | HS256 signing key (24h expiry) |
+| `K8S_NAMESPACE` | sac | Kubernetes namespace |
+| `KUBECONFIG_PATH` | ../kubeconfig.yaml | Local kubeconfig (in-cluster auto-detected) |
+| `DOCKER_REGISTRY` | — | Container image registry |
+| `DOCKER_IMAGE` | — | Claude Code pod image |
+| `SIDECAR_IMAGE` | — | Output watcher sidecar image |
+| `REDIS_URL` | — | Redis connection (optional, graceful degradation) |
 
 ## Database Migrations
 
-| # | Name | Purpose |
-|---|------|---------|
-| 001 | init_schema | users, sessions, skills, conversation_logs |
-| 002 | add_agents | agents + agent_skills junction |
-| 003 | remove_agent_system_prompt_model | Move to JSONB config |
-| 004 | add_session_agent_id | Bind sessions to agents |
-| 005 | add_skill_command_name | Kebab-case command names |
-| 006 | add_auth_and_settings | JWT auth, password, roles, system/user settings |
-| 007 | add_agent_resources | Per-agent CPU/memory limits |
-| 008 | enable_timescaledb | TimescaleDB extension |
-| 009 | conversation_history | Hypertable for conversation events |
-| 010 | workspace_files | File metadata + quotas |
-| 011 | seed_oss_settings | OSS config in system_settings |
-| 012 | workspace_per_agent | Add agent_id to workspace tables |
-| 013 | add_groups | Groups + membership tables |
-| 014 | workspace_group_share | Group workspace quotas |
-| 015 | seed_docker_image_setting | Docker image in system_settings |
-| 016 | skill_version | Skill versioning fields |
-| 017 | storage_backend_settings | Pluggable storage backend config |
+18 migrations in `backend/migrations/` (000001–000018), run via `make migrate-up`.
+Latest: `000018_add_agent_instructions` — adds instructions field to agents table.
 
 ## Troubleshooting
 
@@ -164,6 +186,6 @@ make helm-upgrade     # Helm upgrade release
 |-------|-----|
 | bun dialect error | `go get github.com/uptrace/bun/dialect/pgdialect@v1.2.16` |
 | vendor inconsistency | `rm -rf vendor && go mod tidy` |
-| npm modules missing | `rm -rf node_modules && npm install` |
+| npm modules missing | `cd frontend && rm -rf node_modules && npm install` |
 | Pod won't start | Check agent config (API token/URL), `make logs SVC=api` for errors |
 | WS connection fails | Verify Telepresence connected, pod is Running, check WS proxy logs |

@@ -7,7 +7,7 @@
           <template #tab>
             <n-space :size="4" align="center">
               <n-icon size="14"><ConstructOutline /></n-icon>
-              <span>Working</span>
+              <span>Output</span>
               <span v-if="outputBadgeCount > 0" class="output-badge">{{ outputBadgeCount }}</span>
             </n-space>
           </template>
@@ -86,17 +86,17 @@
       <n-input v-model:value="searchQuery" placeholder="Search files..." size="small" clearable style="flex: 1" />
       <n-space :size="4" style="flex-shrink: 0">
         <n-upload
-          v-if="canEdit"
+          v-if="canUpload"
           :show-file-list="false"
           :custom-request="handleUpload"
           :multiple="true"
         >
           <n-button size="small" type="primary">Upload</n-button>
         </n-upload>
-        <n-button v-if="canEdit" size="small" @click="showNewFile = true">
+        <n-button v-if="canUpload" size="small" @click="showNewFile = true">
           New File
         </n-button>
-        <n-button v-if="canEdit" size="small" @click="showNewFolder = true">
+        <n-button v-if="canUpload" size="small" @click="showNewFolder = true">
           New Folder
         </n-button>
         <n-tooltip trigger="hover">
@@ -241,6 +241,24 @@
     </n-modal>
 
     <!-- Group Manager modal -->
+
+    <!-- Share link modal -->
+    <n-modal v-model:show="showShareModal">
+      <n-card title="Share Link" style="width: 480px" :bordered="false" size="small" closable @close="showShareModal = false">
+        <n-space vertical :size="12">
+          <n-input-group>
+            <n-input id="share-url-input" :value="shareUrl" readonly style="flex: 1" />
+            <n-button type="primary" @click="handleCopyShareUrl">Copy</n-button>
+          </n-input-group>
+          <n-text depth="3" style="font-size: 12px">Anyone with this link can view the file without logging in.</n-text>
+        </n-space>
+        <template #footer>
+          <n-space :size="8" justify="end">
+            <n-button size="small" type="error" @click="handleDeleteShare">Delete Link</n-button>
+          </n-space>
+        </template>
+      </n-card>
+    </n-modal>
   </div>
 </template>
 
@@ -248,7 +266,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, h, type Component } from 'vue'
 import {
   NTabs, NTabPane, NSpace, NIcon, NText, NButton, NUpload, NSpin,
-  NEmpty, NPopconfirm, NModal, NInput, NProgress, NTree, NSelect, NTooltip,
+  NEmpty, NPopconfirm, NModal, NInput, NInputGroup, NCard, NProgress, NTree, NSelect, NTooltip,
   useMessage, useDialog,
   type UploadCustomRequestOptions, type TreeOption,
 } from 'naive-ui'
@@ -256,7 +274,7 @@ import {
   LockClosedOutline, GlobeOutline, RefreshOutline, DocumentOutline,
   DownloadOutline, TrashOutline, FolderOutline, CodeSlashOutline,
   DocumentTextOutline, ImageOutline, SettingsOutline, CloseOutline,
-  PeopleOutline, ConstructOutline, SyncOutline,
+  PeopleOutline, ConstructOutline, SyncOutline, ShareSocialOutline,
 } from '@vicons/ionicons5'
 import {
   listFiles, uploadFile, downloadFile, deleteFile, createDirectory, getQuota,
@@ -264,7 +282,7 @@ import {
   createPublicDirectory,
   listGroupFiles, uploadGroupFile, downloadGroupFile, deleteGroupFile,
   createGroupDirectory, getGroupQuota,
-  listOutputFiles, downloadOutputFile,
+  listOutputFiles, downloadOutputFile, deleteOutputFile, shareOutputFile, deleteShare,
   syncWorkspaceToPodStream, watchOutputFiles,
   type WorkspaceFile, type WorkspaceQuota, type GroupWorkspaceQuota, type SpaceTab,
 } from '../../services/workspaceAPI'
@@ -317,13 +335,24 @@ const uploading = ref(false)
 const uploadProgress = ref(0)
 const uploadStatus = ref('')
 
+// Share state
+const showShareModal = ref(false)
+const shareUrl = ref('')
+const shareCode = ref('')
+const sharingFile = ref(false)
+
 // --- Computed ---
 const isAdmin = computed(() => authStore.isAdmin)
 const canEdit = computed(() => {
   if (spaceTab.value === 'private') return true
   if (spaceTab.value === 'public') return isAdmin.value
   if (spaceTab.value === 'group') return !!selectedGroupId.value // group members can edit
-  return false // output is read-only
+  if (spaceTab.value === 'output') return true // allow delete
+  return false
+})
+
+const canUpload = computed(() => {
+  return canEdit.value && spaceTab.value !== 'output'
 })
 
 const quotaPercent = computed(() => {
@@ -399,6 +428,17 @@ const renderSuffix = ({ option }: { option: TreeOption }) => {
 
   if (!file.is_directory) {
     items.push(h('span', { class: 'tree-file-size' }, formatBytes(file.size)))
+
+    // Share button (output tab only)
+    if (spaceTab.value === 'output') {
+      items.push(
+        h(NButton, {
+          size: 'tiny', quaternary: true, circle: true, title: 'Share',
+          onClick: (e: Event) => { e.stopPropagation(); handleShareFile(file) },
+        }, { icon: () => h(NIcon, { size: 14 }, () => h(ShareSocialOutline)) })
+      )
+    }
+
     items.push(
       h(NButton, {
         size: 'tiny', quaternary: true, circle: true, title: 'Download',
@@ -430,7 +470,9 @@ const renderSuffix = ({ option }: { option: TreeOption }) => {
 
 const getNodeProps = ({ option }: { option: TreeOption }) => {
   const file = (option as any).file as WorkspaceFile
+  const hlAction = highlightedFiles.value.get(option.key as string)
   return {
+    class: hlAction === 'upload' ? 'ws-flash-green' : hlAction === 'delete' ? 'ws-flash-red' : undefined,
     onClick: (e: MouseEvent) => {
       // If clicked on the expand arrow, let native handle it
       const target = e.target as HTMLElement
@@ -647,7 +689,9 @@ const handleDeleteFile = async (file: WorkspaceFile) => {
         if (!selectedGroupId.value) return
         await deleteGroupFile(selectedGroupId.value, deletePath)
         break
-      // output is read-only, no delete
+      case 'output':
+        await deleteOutputFile(props.agentId, deletePath)
+        break
     }
     message.success(`Deleted ${file.name}`)
     // Reload parent directory
@@ -846,6 +890,64 @@ const formatBytes = (bytes: number): string => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
+// --- Share ---
+const handleShareFile = async (file: WorkspaceFile) => {
+  sharingFile.value = true
+  try {
+    const result = await shareOutputFile(props.agentId, file.path)
+    shareCode.value = result.short_code
+    shareUrl.value = `${window.location.origin}/s/${result.short_code}`
+    showShareModal.value = true
+  } catch (err) {
+    console.error('Share failed:', err)
+    message.error('Failed to create share link')
+  } finally {
+    sharingFile.value = false
+  }
+}
+
+const handleCopyShareUrl = async () => {
+  const text = shareUrl.value
+  // Try modern clipboard API first
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text)
+      message.success('Link copied to clipboard')
+      return
+    } catch { /* fall through */ }
+  }
+  // Fallback: select the input element directly
+  const input = document.querySelector('#share-url-input input') as HTMLInputElement | null
+  if (input) {
+    input.select()
+    input.setSelectionRange(0, text.length)
+    document.execCommand('copy')
+    message.success('Link copied to clipboard')
+    return
+  }
+  // Last resort: textarea fallback
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.style.cssText = 'position:fixed;left:-9999px'
+  document.body.appendChild(ta)
+  ta.focus()
+  ta.select()
+  document.execCommand('copy')
+  document.body.removeChild(ta)
+  message.success('Link copied to clipboard')
+}
+
+const handleDeleteShare = async () => {
+  try {
+    await deleteShare(shareCode.value)
+    message.success('Share link deleted')
+    showShareModal.value = false
+  } catch (err) {
+    console.error('Delete share failed:', err)
+    message.error('Failed to delete share link')
+  }
+}
+
 // --- Watchers ---
 watch(spaceTab, (newTab) => {
   expandedKeys.value = []
@@ -884,7 +986,22 @@ watch(() => props.agentId, () => {
   startOutputWatch()
 })
 
-// --- Output SSE watch (always active, auto-switch on event) ---
+// --- Output file highlight flash ---
+const highlightedFiles = ref<Map<string, 'upload' | 'delete'>>(new Map())
+
+const flashHighlight = (path: string, action: 'upload' | 'delete') => {
+  // Normalize: strip trailing slash, use the filename portion as tree key
+  const key = path.replace(/^\/+/, '')
+  highlightedFiles.value.set(key, action)
+  // Force reactivity
+  highlightedFiles.value = new Map(highlightedFiles.value)
+  setTimeout(() => {
+    highlightedFiles.value.delete(key)
+    highlightedFiles.value = new Map(highlightedFiles.value)
+  }, 2000)
+}
+
+// --- Output WebSocket watch (always active, auto-switch on event) ---
 let outputWatchAbort: (() => void) | null = null
 
 const startOutputWatch = () => {
@@ -893,6 +1010,9 @@ const startOutputWatch = () => {
     // Show notification
     const action = event.action === 'upload' ? 'New file' : 'File removed'
     message.info(`${action}: ${event.name}`, { duration: 3000 })
+
+    // Flash highlight on the affected file
+    flashHighlight(event.path, event.action as 'upload' | 'delete')
 
     if (spaceTab.value === 'output') {
       // Already on Working tab, just refresh
@@ -1079,5 +1199,23 @@ onUnmounted(() => {
   font-size: 10px;
   font-weight: 600;
   line-height: 1;
+}
+
+:deep(.ws-flash-green) {
+  animation: flash-green 2s ease-out;
+}
+
+:deep(.ws-flash-red) {
+  animation: flash-red 2s ease-out;
+}
+
+@keyframes flash-green {
+  0% { background: rgba(99, 226, 183, 0.4); }
+  100% { background: transparent; }
+}
+
+@keyframes flash-red {
+  0% { background: rgba(232, 88, 88, 0.4); }
+  100% { background: transparent; }
 }
 </style>

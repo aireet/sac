@@ -33,6 +33,15 @@
         />
       </n-form-item>
 
+      <n-form-item label="Instructions" path="instructions">
+        <n-input
+          v-model:value="formData.instructions"
+          type="textarea"
+          placeholder="Custom instructions for this agent (written to CLAUDE.md in the pod). e.g., You are a data analyst, always use Python."
+          :rows="4"
+        />
+      </n-form-item>
+
       <n-form-item label="Icon" path="icon">
         <n-select
           v-model:value="formData.icon"
@@ -174,6 +183,7 @@ const formRef = ref()
 const formData = ref({
   name: '',
   description: '',
+  instructions: '',
   icon: '🤖',
   anthropic_auth_token: '',
   anthropic_base_url: 'https://openrouter.ai/api',
@@ -293,6 +303,7 @@ const resetForm = () => {
   formData.value = {
     name: '',
     description: '',
+    instructions: '',
     icon: '🤖',
     anthropic_auth_token: '',
     anthropic_base_url: 'https://openrouter.ai/api',
@@ -313,6 +324,7 @@ const handleSubmit = async () => {
     const payload = {
       name: formData.value.name,
       description: formData.value.description,
+      instructions: formData.value.instructions,
       icon: formData.value.icon,
       config: {
         anthropic_auth_token: formData.value.anthropic_auth_token,
@@ -354,6 +366,7 @@ watch(() => props.agent, (agent) => {
     formData.value = {
       name: agent.name,
       description: agent.description,
+      instructions: agent.instructions || '',
       icon: agent.icon,
       anthropic_auth_token: agent.config?.anthropic_auth_token || '',
       anthropic_base_url: agent.config?.anthropic_base_url || 'https://openrouter.ai/api',

@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"mime/multipart"
 	"path"
 	"strconv"
 	"strings"
 	"time"
 
+	"g.echo.tech/dev/sac/internal/auth"
 	"g.echo.tech/dev/sac/internal/models"
 	"g.echo.tech/dev/sac/internal/storage"
 	"g.echo.tech/dev/sac/pkg/response"
@@ -22,17 +24,27 @@ import (
 
 const maxUploadSize = 100 << 20 // 100MB
 
+// contentTypeByFilename returns a MIME type based on file extension, falling back to octet-stream.
+func contentTypeByFilename(fileName string) string {
+	ext := path.Ext(fileName)
+	if ct := mime.TypeByExtension(ext); ct != "" {
+		return ct
+	}
+	return "application/octet-stream"
+}
+
 // Handler serves workspace HTTP endpoints.
 type Handler struct {
 	db       *bun.DB
 	provider *storage.StorageProvider
 	syncSvc  *SyncService
 	hub      *OutputHub
+	jwt      *auth.JWTService
 }
 
 // NewHandler creates a new workspace handler.
-func NewHandler(db *bun.DB, provider *storage.StorageProvider, syncSvc *SyncService, hub *OutputHub) *Handler {
-	return &Handler{db: db, provider: provider, syncSvc: syncSvc, hub: hub}
+func NewHandler(db *bun.DB, provider *storage.StorageProvider, syncSvc *SyncService, hub *OutputHub, jwt *auth.JWTService) *Handler {
+	return &Handler{db: db, provider: provider, syncSvc: syncSvc, hub: hub, jwt: jwt}
 }
 
 // RegisterRoutes registers workspace routes on a protected router group.
@@ -68,12 +80,27 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		// Output workspace (read-only, populated by sidecar)
 		ws.GET("/output/files", h.requireOSS(), h.ListOutputFiles)
 		ws.GET("/output/files/download", h.requireOSS(), h.DownloadOutputFile)
-		ws.GET("/output/watch", h.WatchOutput)
+		ws.DELETE("/output/files", h.requireOSS(), h.DeleteOutputFile)
+		// NOTE: output/watch is registered via RegisterPublicRoutes (WS upgrade needs token in query param)
+
+		// Output file sharing
+		ws.POST("/output/share", h.CreateShare)
+		ws.DELETE("/output/share/:code", h.DeleteShare)
 
 		// Sync workspace files from OSS to pod
 		ws.POST("/sync", h.SyncToPod)
 		ws.GET("/sync-stream", h.SyncToPodStream)
 	}
+}
+
+// RegisterPublicRoutes registers workspace routes that handle auth internally (no JWT middleware).
+// Used for WebSocket endpoints where Authorization header isn't available.
+func (h *Handler) RegisterPublicRoutes(rg *gin.RouterGroup) {
+	rg.GET("/workspace/output/watch", h.WatchOutput)
+
+	// Shared file links (public, no auth)
+	rg.GET("/s/:code", h.GetSharedFileMeta)
+	rg.GET("/s/:code/raw", h.requireOSS(), h.DownloadSharedFile)
 }
 
 // requireStorage is a middleware that checks if storage is configured.
@@ -307,7 +334,7 @@ func (h *Handler) DownloadFile(c *gin.Context) {
 
 	fileName := path.Base(filePath)
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
-	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Type", contentTypeByFilename(fileName))
 	io.Copy(c.Writer, body)
 }
 
@@ -479,7 +506,7 @@ func (h *Handler) DownloadPublicFile(c *gin.Context) {
 
 	fileName := path.Base(filePath)
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
-	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Type", contentTypeByFilename(fileName))
 	io.Copy(c.Writer, body)
 }
 

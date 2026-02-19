@@ -19,14 +19,14 @@ type OutputEvent struct {
 	Size   int64  `json:"size"`
 }
 
-// subscriber is a single SSE connection waiting for events.
+// subscriber is a single WebSocket connection waiting for events.
 type subscriber struct {
 	ch  chan OutputEvent
 	key string // "userID:agentID"
 }
 
-// OutputHub manages SSE subscriptions and Redis Pub/Sub for output workspace events.
-// Each Subscribe call creates one channel; only the latest SSE per agent matters.
+// OutputHub manages WebSocket subscriptions and Redis Pub/Sub for output workspace events.
+// Each Subscribe call creates one channel; only the latest connection per agent matters.
 type OutputHub struct {
 	rdb  *redis.Client
 	mu   sync.RWMutex
@@ -69,7 +69,6 @@ func (h *OutputHub) Start(ctx context.Context) {
 					select {
 					case sub.ch <- event:
 					default:
-						// slow reader, drop event
 					}
 				}
 			}
@@ -91,7 +90,7 @@ func (h *OutputHub) Publish(ctx context.Context, userID, agentID int64, event Ou
 	}
 }
 
-// Subscribe registers an SSE connection for a user/agent pair.
+// Subscribe registers a WebSocket connection for a user/agent pair.
 // Returns a channel for reading events and an unsubscribe function.
 func (h *OutputHub) Subscribe(userID, agentID int64) (<-chan OutputEvent, func()) {
 	sub := &subscriber{

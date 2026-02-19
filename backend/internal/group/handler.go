@@ -28,6 +28,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		g.GET("", h.List)
 		g.GET("/:id", h.Get)
 		g.GET("/:id/members", h.ListMembers)
+		g.GET("/:id/template", h.GetTemplate)
+		g.PUT("/:id/template", h.UpdateTemplate)
 	}
 }
 
@@ -44,6 +46,7 @@ func (h *Handler) RegisterAdminRoutes(rg *gin.RouterGroup) {
 		g.POST("/:id/members", h.AddMember)
 		g.DELETE("/:id/members/:userId", h.RemoveMember)
 		g.PUT("/:id/members/:userId", h.UpdateMemberRole)
+		g.PUT("/:id/template", h.UpdateTemplate)
 	}
 }
 
@@ -282,8 +285,9 @@ func (h *Handler) Update(c *gin.Context) {
 	}
 
 	var req struct {
-		Name        *string `json:"name"`
-		Description *string `json:"description"`
+		Name             *string `json:"name"`
+		Description      *string `json:"description"`
+		ClaudeMDTemplate *string `json:"claude_md_template"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request", err)
@@ -298,6 +302,9 @@ func (h *Handler) Update(c *gin.Context) {
 	}
 	if req.Description != nil {
 		q = q.Set("description = ?", *req.Description)
+	}
+	if req.ClaudeMDTemplate != nil {
+		q = q.Set("claude_md_template = ?", *req.ClaudeMDTemplate)
 	}
 	q = q.Set("updated_at = ?", time.Now())
 
@@ -521,6 +528,79 @@ func (h *Handler) isMember(ctx context.Context, groupID, userID int64) bool {
 		Where("group_id = ? AND user_id = ?", groupID, userID).
 		Exists(ctx)
 	return exists
+}
+
+func (h *Handler) isGroupAdmin(ctx context.Context, groupID, userID int64) bool {
+	exists, _ := h.db.NewSelect().Model((*models.GroupMember)(nil)).
+		Where("group_id = ? AND user_id = ? AND role = 'admin'", groupID, userID).
+		Exists(ctx)
+	return exists
+}
+
+// GetTemplate returns the CLAUDE.md template for a group (members can read).
+func (h *Handler) GetTemplate(c *gin.Context) {
+	userID := c.GetInt64("userID")
+	groupID, ok := parseGroupID(c)
+	if !ok {
+		return
+	}
+
+	ctx := context.Background()
+
+	if !h.isMember(ctx, groupID, userID) {
+		response.Forbidden(c, "Not a member of this group")
+		return
+	}
+
+	var group models.Group
+	err := h.db.NewSelect().Model(&group).
+		Column("claude_md_template").
+		Where("id = ?", groupID).
+		Scan(ctx)
+	if err != nil {
+		response.NotFound(c, "Group not found")
+		return
+	}
+
+	response.OK(c, gin.H{"claude_md_template": group.ClaudeMDTemplate})
+}
+
+// UpdateTemplate updates the CLAUDE.md template (group admin or system admin).
+func (h *Handler) UpdateTemplate(c *gin.Context) {
+	groupID, ok := parseGroupID(c)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		ClaudeMDTemplate string `json:"claude_md_template"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request", err)
+		return
+	}
+
+	ctx := context.Background()
+
+	// Allow system admins or group admins
+	role, _ := c.Get("role")
+	userID := c.GetInt64("userID")
+	if role != "admin" && !h.isGroupAdmin(ctx, groupID, userID) {
+		response.Forbidden(c, "Only group admins or system admins can update the template")
+		return
+	}
+
+	_, err := h.db.NewUpdate().Model((*models.Group)(nil)).
+		Set("claude_md_template = ?", req.ClaudeMDTemplate).
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", groupID).
+		Exec(ctx)
+	if err != nil {
+		response.InternalError(c, "Failed to update template", err)
+		return
+	}
+
+	response.Success(c, "Template updated")
 }
 
 func groupIDs(groups []models.Group) []int64 {

@@ -5,6 +5,7 @@ export interface Agent {
   name: string
   description: string
   icon: string
+  instructions: string
   config?: Record<string, any>
   created_by: number
   created_at: string
@@ -33,6 +34,7 @@ export interface CreateAgentRequest {
   name: string
   description?: string
   icon?: string
+  instructions?: string
   config?: Record<string, any>
 }
 
@@ -40,6 +42,7 @@ export interface UpdateAgentRequest {
   name?: string
   description?: string
   icon?: string
+  instructions?: string
   config?: Record<string, any>
 }
 
@@ -75,6 +78,11 @@ export const deleteAgent = async (id: number): Promise<void> => {
 // Restart an agent (delete pod, K8s will recreate it)
 export const restartAgent = async (id: number): Promise<void> => {
   await api.post(`/agents/${id}/restart`)
+}
+
+export const previewClaudeMD = async (id: number): Promise<{ readonly: string; instructions: string }> => {
+  const response = await api.get(`/agents/${id}/claude-md-preview`)
+  return response.data
 }
 
 // Install a skill to an agent

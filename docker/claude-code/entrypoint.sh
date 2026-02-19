@@ -57,6 +57,7 @@ DTACH_SOCKET="/tmp/claude.sock"
 # Wrapper script that dtach will run — auto-restarts claude on exit
 cat > /tmp/claude-loop.sh <<'LOOP'
 #!/bin/bash
+cd /workspace
 while true; do
   claude
   echo "Claude exited. Restarting in 2s..."
