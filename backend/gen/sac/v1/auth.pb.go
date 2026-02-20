@@ -344,6 +344,108 @@ func (x *UserBriefListResponse) GetUsers() []*UserBrief {
 	return nil
 }
 
+type ChangePasswordRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	CurrentPassword string `protobuf:"bytes,1,opt,name=current_password,json=currentPassword,proto3" json:"current_password,omitempty"`
+	NewPassword     string `protobuf:"bytes,2,opt,name=new_password,json=newPassword,proto3" json:"new_password,omitempty"`
+}
+
+func (x *ChangePasswordRequest) Reset() {
+	*x = ChangePasswordRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_sac_v1_auth_proto_msgTypes[5]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *ChangePasswordRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChangePasswordRequest) ProtoMessage() {}
+
+func (x *ChangePasswordRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sac_v1_auth_proto_msgTypes[5]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChangePasswordRequest.ProtoReflect.Descriptor instead.
+func (*ChangePasswordRequest) Descriptor() ([]byte, []int) {
+	return file_sac_v1_auth_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ChangePasswordRequest) GetCurrentPassword() string {
+	if x != nil {
+		return x.CurrentPassword
+	}
+	return ""
+}
+
+func (x *ChangePasswordRequest) GetNewPassword() string {
+	if x != nil {
+		return x.NewPassword
+	}
+	return ""
+}
+
+type RegistrationModeResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Mode string `protobuf:"bytes,1,opt,name=mode,proto3" json:"mode,omitempty"`
+}
+
+func (x *RegistrationModeResponse) Reset() {
+	*x = RegistrationModeResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_sac_v1_auth_proto_msgTypes[6]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *RegistrationModeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegistrationModeResponse) ProtoMessage() {}
+
+func (x *RegistrationModeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sac_v1_auth_proto_msgTypes[6]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegistrationModeResponse.ProtoReflect.Descriptor instead.
+func (*RegistrationModeResponse) Descriptor() ([]byte, []int) {
+	return file_sac_v1_auth_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *RegistrationModeResponse) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
 var File_sac_v1_auth_proto protoreflect.FileDescriptor
 
 var file_sac_v1_auth_proto_rawDesc = []byte{
@@ -389,9 +491,19 @@ var file_sac_v1_auth_proto_rawDesc = []byte{
 	0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x27, 0x0a, 0x05, 0x75, 0x73, 0x65, 0x72, 0x73,
 	0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x73, 0x61, 0x63, 0x2e, 0x76, 0x31, 0x2e,
 	0x55, 0x73, 0x65, 0x72, 0x42, 0x72, 0x69, 0x65, 0x66, 0x52, 0x05, 0x75, 0x73, 0x65, 0x72, 0x73,
-	0x42, 0x26, 0x5a, 0x24, 0x67, 0x2e, 0x65, 0x63, 0x68, 0x6f, 0x2e, 0x74, 0x65, 0x63, 0x68, 0x2f,
-	0x64, 0x65, 0x76, 0x2f, 0x73, 0x61, 0x63, 0x2f, 0x67, 0x65, 0x6e, 0x2f, 0x73, 0x61, 0x63, 0x2f,
-	0x76, 0x31, 0x3b, 0x73, 0x61, 0x63, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x22, 0x65, 0x0a, 0x15, 0x43, 0x68, 0x61, 0x6e, 0x67, 0x65, 0x50, 0x61, 0x73, 0x73, 0x77, 0x6f,
+	0x72, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x29, 0x0a, 0x10, 0x63, 0x75, 0x72,
+	0x72, 0x65, 0x6e, 0x74, 0x5f, 0x70, 0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x18, 0x01, 0x20,
+	0x01, 0x28, 0x09, 0x52, 0x0f, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x50, 0x61, 0x73, 0x73,
+	0x77, 0x6f, 0x72, 0x64, 0x12, 0x21, 0x0a, 0x0c, 0x6e, 0x65, 0x77, 0x5f, 0x70, 0x61, 0x73, 0x73,
+	0x77, 0x6f, 0x72, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x6e, 0x65, 0x77, 0x50,
+	0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x22, 0x2e, 0x0a, 0x18, 0x52, 0x65, 0x67, 0x69, 0x73,
+	0x74, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x4d, 0x6f, 0x64, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f,
+	0x6e, 0x73, 0x65, 0x12, 0x12, 0x0a, 0x04, 0x6d, 0x6f, 0x64, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x04, 0x6d, 0x6f, 0x64, 0x65, 0x42, 0x26, 0x5a, 0x24, 0x67, 0x2e, 0x65, 0x63, 0x68,
+	0x6f, 0x2e, 0x74, 0x65, 0x63, 0x68, 0x2f, 0x64, 0x65, 0x76, 0x2f, 0x73, 0x61, 0x63, 0x2f, 0x67,
+	0x65, 0x6e, 0x2f, 0x73, 0x61, 0x63, 0x2f, 0x76, 0x31, 0x3b, 0x73, 0x61, 0x63, 0x76, 0x31, 0x62,
+	0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -406,21 +518,23 @@ func file_sac_v1_auth_proto_rawDescGZIP() []byte {
 	return file_sac_v1_auth_proto_rawDescData
 }
 
-var file_sac_v1_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_sac_v1_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_sac_v1_auth_proto_goTypes = []interface{}{
-	(*RegisterRequest)(nil),       // 0: sac.v1.RegisterRequest
-	(*LoginRequest)(nil),          // 1: sac.v1.LoginRequest
-	(*User)(nil),                  // 2: sac.v1.User
-	(*AuthResponse)(nil),          // 3: sac.v1.AuthResponse
-	(*UserBriefListResponse)(nil), // 4: sac.v1.UserBriefListResponse
-	(*timestamppb.Timestamp)(nil), // 5: google.protobuf.Timestamp
-	(*UserBrief)(nil),             // 6: sac.v1.UserBrief
+	(*RegisterRequest)(nil),          // 0: sac.v1.RegisterRequest
+	(*LoginRequest)(nil),             // 1: sac.v1.LoginRequest
+	(*User)(nil),                     // 2: sac.v1.User
+	(*AuthResponse)(nil),             // 3: sac.v1.AuthResponse
+	(*UserBriefListResponse)(nil),    // 4: sac.v1.UserBriefListResponse
+	(*ChangePasswordRequest)(nil),    // 5: sac.v1.ChangePasswordRequest
+	(*RegistrationModeResponse)(nil), // 6: sac.v1.RegistrationModeResponse
+	(*timestamppb.Timestamp)(nil),    // 7: google.protobuf.Timestamp
+	(*UserBrief)(nil),                // 8: sac.v1.UserBrief
 }
 var file_sac_v1_auth_proto_depIdxs = []int32{
-	5, // 0: sac.v1.User.created_at:type_name -> google.protobuf.Timestamp
-	5, // 1: sac.v1.User.updated_at:type_name -> google.protobuf.Timestamp
+	7, // 0: sac.v1.User.created_at:type_name -> google.protobuf.Timestamp
+	7, // 1: sac.v1.User.updated_at:type_name -> google.protobuf.Timestamp
 	2, // 2: sac.v1.AuthResponse.user:type_name -> sac.v1.User
-	6, // 3: sac.v1.UserBriefListResponse.users:type_name -> sac.v1.UserBrief
+	8, // 3: sac.v1.UserBriefListResponse.users:type_name -> sac.v1.UserBrief
 	4, // [4:4] is the sub-list for method output_type
 	4, // [4:4] is the sub-list for method input_type
 	4, // [4:4] is the sub-list for extension type_name
@@ -495,6 +609,30 @@ func file_sac_v1_auth_proto_init() {
 				return nil
 			}
 		}
+		file_sac_v1_auth_proto_msgTypes[5].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*ChangePasswordRequest); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_sac_v1_auth_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*RegistrationModeResponse); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -502,7 +640,7 @@ func file_sac_v1_auth_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_sac_v1_auth_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

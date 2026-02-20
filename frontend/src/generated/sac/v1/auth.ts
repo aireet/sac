@@ -39,3 +39,12 @@ export interface AuthResponse {
 export interface UserBriefListResponse {
   users: UserBrief[];
 }
+
+export interface ChangePasswordRequest {
+  current_password: string;
+  new_password: string;
+}
+
+export interface RegistrationModeResponse {
+  mode: string;
+}

@@ -1267,6 +1267,53 @@ func (x *AgentWithStatusListResponse) GetAgents() []*AgentWithStatus {
 	return nil
 }
 
+type ResetPasswordRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	NewPassword string `protobuf:"bytes,1,opt,name=new_password,json=newPassword,proto3" json:"new_password,omitempty"`
+}
+
+func (x *ResetPasswordRequest) Reset() {
+	*x = ResetPasswordRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_sac_v1_admin_proto_msgTypes[19]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *ResetPasswordRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResetPasswordRequest) ProtoMessage() {}
+
+func (x *ResetPasswordRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sac_v1_admin_proto_msgTypes[19]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResetPasswordRequest.ProtoReflect.Descriptor instead.
+func (*ResetPasswordRequest) Descriptor() ([]byte, []int) {
+	return file_sac_v1_admin_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ResetPasswordRequest) GetNewPassword() string {
+	if x != nil {
+		return x.NewPassword
+	}
+	return ""
+}
+
 var File_sac_v1_admin_proto protoreflect.FileDescriptor
 
 var file_sac_v1_admin_proto_rawDesc = []byte{
@@ -1445,10 +1492,13 @@ var file_sac_v1_admin_proto_rawDesc = []byte{
 	0x6f, 0x6e, 0x73, 0x65, 0x12, 0x2f, 0x0a, 0x06, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x73, 0x18, 0x01,
 	0x20, 0x03, 0x28, 0x0b, 0x32, 0x17, 0x2e, 0x73, 0x61, 0x63, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x67,
 	0x65, 0x6e, 0x74, 0x57, 0x69, 0x74, 0x68, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x06, 0x61,
-	0x67, 0x65, 0x6e, 0x74, 0x73, 0x42, 0x26, 0x5a, 0x24, 0x67, 0x2e, 0x65, 0x63, 0x68, 0x6f, 0x2e,
-	0x74, 0x65, 0x63, 0x68, 0x2f, 0x64, 0x65, 0x76, 0x2f, 0x73, 0x61, 0x63, 0x2f, 0x67, 0x65, 0x6e,
-	0x2f, 0x73, 0x61, 0x63, 0x2f, 0x76, 0x31, 0x3b, 0x73, 0x61, 0x63, 0x76, 0x31, 0x62, 0x06, 0x70,
-	0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x67, 0x65, 0x6e, 0x74, 0x73, 0x22, 0x39, 0x0a, 0x14, 0x52, 0x65, 0x73, 0x65, 0x74, 0x50, 0x61,
+	0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x21, 0x0a,
+	0x0c, 0x6e, 0x65, 0x77, 0x5f, 0x70, 0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x18, 0x01, 0x20,
+	0x01, 0x28, 0x09, 0x52, 0x0b, 0x6e, 0x65, 0x77, 0x50, 0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64,
+	0x42, 0x26, 0x5a, 0x24, 0x67, 0x2e, 0x65, 0x63, 0x68, 0x6f, 0x2e, 0x74, 0x65, 0x63, 0x68, 0x2f,
+	0x64, 0x65, 0x76, 0x2f, 0x73, 0x61, 0x63, 0x2f, 0x67, 0x65, 0x6e, 0x2f, 0x73, 0x61, 0x63, 0x2f,
+	0x76, 0x31, 0x3b, 0x73, 0x61, 0x63, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -1463,7 +1513,7 @@ func file_sac_v1_admin_proto_rawDescGZIP() []byte {
 	return file_sac_v1_admin_proto_rawDescData
 }
 
-var file_sac_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_sac_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_sac_v1_admin_proto_goTypes = []interface{}{
 	(*SystemSetting)(nil),                 // 0: sac.v1.SystemSetting
 	(*UpdateSettingRequest)(nil),          // 1: sac.v1.UpdateSettingRequest
@@ -1484,25 +1534,26 @@ var file_sac_v1_admin_proto_goTypes = []interface{}{
 	(*SystemSettingListResponse)(nil),     // 16: sac.v1.SystemSettingListResponse
 	(*UserSettingListResponse)(nil),       // 17: sac.v1.UserSettingListResponse
 	(*AgentWithStatusListResponse)(nil),   // 18: sac.v1.AgentWithStatusListResponse
-	(*structpb.Value)(nil),                // 19: google.protobuf.Value
-	(*timestamppb.Timestamp)(nil),         // 20: google.protobuf.Timestamp
-	(*Agent)(nil),                         // 21: sac.v1.Agent
+	(*ResetPasswordRequest)(nil),          // 19: sac.v1.ResetPasswordRequest
+	(*structpb.Value)(nil),                // 20: google.protobuf.Value
+	(*timestamppb.Timestamp)(nil),         // 21: google.protobuf.Timestamp
+	(*Agent)(nil),                         // 22: sac.v1.Agent
 }
 var file_sac_v1_admin_proto_depIdxs = []int32{
-	19, // 0: sac.v1.SystemSetting.value:type_name -> google.protobuf.Value
-	20, // 1: sac.v1.SystemSetting.created_at:type_name -> google.protobuf.Timestamp
-	20, // 2: sac.v1.SystemSetting.updated_at:type_name -> google.protobuf.Timestamp
-	19, // 3: sac.v1.UpdateSettingRequest.value:type_name -> google.protobuf.Value
-	19, // 4: sac.v1.UserSetting.value:type_name -> google.protobuf.Value
-	20, // 5: sac.v1.UserSetting.created_at:type_name -> google.protobuf.Timestamp
-	20, // 6: sac.v1.UserSetting.updated_at:type_name -> google.protobuf.Timestamp
-	19, // 7: sac.v1.SetUserSettingRequest.value:type_name -> google.protobuf.Value
+	20, // 0: sac.v1.SystemSetting.value:type_name -> google.protobuf.Value
+	21, // 1: sac.v1.SystemSetting.created_at:type_name -> google.protobuf.Timestamp
+	21, // 2: sac.v1.SystemSetting.updated_at:type_name -> google.protobuf.Timestamp
+	20, // 3: sac.v1.UpdateSettingRequest.value:type_name -> google.protobuf.Value
+	20, // 4: sac.v1.UserSetting.value:type_name -> google.protobuf.Value
+	21, // 5: sac.v1.UserSetting.created_at:type_name -> google.protobuf.Timestamp
+	21, // 6: sac.v1.UserSetting.updated_at:type_name -> google.protobuf.Timestamp
+	20, // 7: sac.v1.SetUserSettingRequest.value:type_name -> google.protobuf.Value
 	5,  // 8: sac.v1.AdminUser.groups:type_name -> sac.v1.AdminGroupBrief
-	20, // 9: sac.v1.AdminUser.created_at:type_name -> google.protobuf.Timestamp
-	20, // 10: sac.v1.AdminUser.updated_at:type_name -> google.protobuf.Timestamp
-	21, // 11: sac.v1.AgentWithStatus.agent:type_name -> sac.v1.Agent
+	21, // 9: sac.v1.AdminUser.created_at:type_name -> google.protobuf.Timestamp
+	21, // 10: sac.v1.AdminUser.updated_at:type_name -> google.protobuf.Timestamp
+	22, // 11: sac.v1.AgentWithStatus.agent:type_name -> sac.v1.Agent
 	11, // 12: sac.v1.BatchUpdateImageResponse.errors:type_name -> sac.v1.BatchUpdateError
-	20, // 13: sac.v1.AdminConversation.timestamp:type_name -> google.protobuf.Timestamp
+	21, // 13: sac.v1.AdminConversation.timestamp:type_name -> google.protobuf.Timestamp
 	13, // 14: sac.v1.AdminConversationListResponse.conversations:type_name -> sac.v1.AdminConversation
 	6,  // 15: sac.v1.AdminUserListResponse.users:type_name -> sac.v1.AdminUser
 	0,  // 16: sac.v1.SystemSettingListResponse.settings:type_name -> sac.v1.SystemSetting
@@ -1750,6 +1801,18 @@ func file_sac_v1_admin_proto_init() {
 				return nil
 			}
 		}
+		file_sac_v1_admin_proto_msgTypes[19].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*ResetPasswordRequest); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	file_sac_v1_admin_proto_msgTypes[1].OneofWrappers = []interface{}{}
 	file_sac_v1_admin_proto_msgTypes[8].OneofWrappers = []interface{}{}
@@ -1759,7 +1822,7 @@ func file_sac_v1_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_sac_v1_admin_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   19,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -101,7 +101,7 @@ func main() {
 
 	// Public routes (no auth required)
 	publicGroup := router.Group("/api")
-	authHandler := auth.NewHandler(database.DB, jwtService)
+	authHandler := auth.NewHandler(database.DB, jwtService, settingsService)
 	authHandler.RegisterRoutes(publicGroup, nil)       // register public routes only
 	workspaceHandler.RegisterPublicRoutes(publicGroup) // WS endpoints with token in query param
 

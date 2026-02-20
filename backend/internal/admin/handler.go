@@ -16,6 +16,7 @@ import (
 	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/uptrace/bun"
+	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -770,6 +771,51 @@ func (h *Handler) ExportConversations(c *gin.Context) {
 	w.Flush()
 }
 
+func (h *Handler) ResetUserPassword(c *gin.Context) {
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid user ID", err)
+		return
+	}
+
+	req := &sacv1.ResetPasswordRequest{}
+	if !protobind.Bind(c, req) {
+		return
+	}
+
+	if len(req.NewPassword) < 6 {
+		response.BadRequest(c, "password must be at least 6 characters")
+		return
+	}
+
+	ctx := context.Background()
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	hashedPassword := string(hashed)
+	if err != nil {
+		response.InternalError(c, "Failed to hash password", err)
+		return
+	}
+
+	res, err := h.db.NewUpdate().Model((*models.User)(nil)).
+		Set("password_hash = ?", hashedPassword).
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", userID).
+		Exec(ctx)
+	if err != nil {
+		response.InternalError(c, "Failed to reset password", err)
+		return
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		response.NotFound(c, "User not found")
+		return
+	}
+
+	log.Printf("Admin reset password for user %d", userID)
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Password reset successfully"})
+}
+
 // RegisterRoutes registers admin routes on the given admin router group.
 // The caller must provide a group that already has AdminMiddleware applied.
 func (h *Handler) RegisterRoutes(adminGroup *gin.RouterGroup) {
@@ -786,6 +832,7 @@ func (h *Handler) RegisterRoutes(adminGroup *gin.RouterGroup) {
 	adminGroup.PUT("/users/:id/agents/:agentId/resources", h.UpdateAgentResources)
 	adminGroup.PUT("/users/:id/agents/:agentId/image", h.UpdateAgentImage)
 	adminGroup.POST("/agents/batch-update-image", h.BatchUpdateImage)
+	adminGroup.PUT("/users/:id/password", h.ResetUserPassword)
 	adminGroup.GET("/conversations", h.GetConversations)
 	adminGroup.GET("/conversations/export", h.ExportConversations)
 }

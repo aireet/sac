@@ -28,7 +28,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isLoggedIn = computed(() => !!token.value)
   const isAdmin = computed(() => user.value?.role === 'admin')
-  const userId = computed(() => user.value?.id ?? 0)
+  const userId = computed(() => Number(user.value?.id ?? 0))
 
   async function login(username: string, password: string) {
     const response = await api.post('/auth/login', { username, password })
@@ -59,6 +59,13 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('user')
   }
 
+  async function changePassword(currentPassword: string, newPassword: string) {
+    await api.put('/auth/password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    })
+  }
+
   return {
     token,
     user,
@@ -68,6 +75,7 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     register,
     fetchCurrentUser,
+    changePassword,
     logout,
   }
 })

@@ -106,6 +106,16 @@
             <n-button
               size="small"
               quaternary
+              @click="showChangePassword = true"
+              title="Change Password"
+            >
+              <template #icon>
+                <n-icon><KeyOutline /></n-icon>
+              </template>
+            </n-button>
+            <n-button
+              size="small"
+              quaternary
               @click="handleLogout"
             >
               <template #icon>
@@ -259,6 +269,32 @@
       :agent="editingAgent"
       @success="handleAgentCreated"
     />
+
+    <!-- Change Password Modal -->
+    <n-modal
+      v-model:show="showChangePassword"
+      preset="card"
+      title="Change Password"
+      style="width: 400px; max-width: 90vw"
+    >
+      <n-space vertical :size="16">
+        <div>
+          <n-text depth="3" style="display: block; margin-bottom: 4px">Current Password</n-text>
+          <n-input v-model:value="pwForm.current" type="password" show-password-on="click" placeholder="Enter current password" />
+        </div>
+        <div>
+          <n-text depth="3" style="display: block; margin-bottom: 4px">New Password</n-text>
+          <n-input v-model:value="pwForm.newPw" type="password" show-password-on="click" placeholder="At least 6 characters" />
+        </div>
+        <div>
+          <n-text depth="3" style="display: block; margin-bottom: 4px">Confirm New Password</n-text>
+          <n-input v-model:value="pwForm.confirm" type="password" show-password-on="click" placeholder="Re-enter new password" />
+        </div>
+        <n-button type="primary" block :loading="changingPassword" @click="handleChangePassword">
+          Change Password
+        </n-button>
+      </n-space>
+    </n-modal>
   </n-config-provider>
 </template>
 
@@ -282,11 +318,12 @@ import {
   NEmpty,
   NTooltip,
   NTag,
+  NModal,
   darkTheme,
   useMessage,
 } from 'naive-ui'
 import {
-  Add, StorefrontOutline, TerminalOutline, ChatbubblesOutline, SettingsOutline, LogOutOutline,
+  Add, StorefrontOutline, TerminalOutline, ChatbubblesOutline, SettingsOutline, LogOutOutline, KeyOutline,
 } from '@vicons/ionicons5'
 import Terminal from '../components/Terminal/Terminal.vue'
 import ChatInput from '../components/ChatInput/ChatInput.vue'
@@ -786,6 +823,37 @@ const handleRestartFromPanel = async () => {
 const handleLogout = () => {
   authStore.logout()
   router.push('/login')
+}
+
+// --- Change Password ---
+const showChangePassword = ref(false)
+const changingPassword = ref(false)
+const pwForm = ref({ current: '', newPw: '', confirm: '' })
+
+const handleChangePassword = async () => {
+  if (!pwForm.value.current || !pwForm.value.newPw) {
+    message.warning('Please fill in all fields')
+    return
+  }
+  if (pwForm.value.newPw.length < 6) {
+    message.warning('New password must be at least 6 characters')
+    return
+  }
+  if (pwForm.value.newPw !== pwForm.value.confirm) {
+    message.warning('Passwords do not match')
+    return
+  }
+  changingPassword.value = true
+  try {
+    await authStore.changePassword(pwForm.value.current, pwForm.value.newPw)
+    message.success('Password changed successfully')
+    showChangePassword.value = false
+    pwForm.value = { current: '', newPw: '', confirm: '' }
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to change password'))
+  } finally {
+    changingPassword.value = false
+  }
 }
 
 // Load agents list for header dropdown

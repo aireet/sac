@@ -126,3 +126,7 @@ message UserSettingListResponse {
 message AgentWithStatusListResponse {
   repeated AgentWithStatus agents = 1;
 }
+
+message ResetPasswordRequest {
+  string new_password = 1;
+}

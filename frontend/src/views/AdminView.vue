@@ -160,6 +160,24 @@
 
             <!-- User Settings Modal -->
             <n-modal
+              v-model:show="showResetPassword"
+              preset="card"
+              :title="`Reset Password: ${resetPasswordUser?.username || ''}`"
+              style="width: 400px; max-width: 90vw"
+            >
+              <n-space vertical :size="16">
+                <div>
+                  <n-text depth="3" style="display: block; margin-bottom: 4px">New Password</n-text>
+                  <n-input v-model:value="resetPasswordValue" type="password" show-password-on="click" placeholder="At least 6 characters" />
+                </div>
+                <n-button type="primary" block :loading="resettingPassword" :disabled="resetPasswordValue.length < 6" @click="handleResetPassword">
+                  Reset Password
+                </n-button>
+              </n-space>
+            </n-modal>
+
+            <!-- User Settings Modal -->
+            <n-modal
               v-model:show="showUserSettings"
               preset="card"
               :title="`Resource Settings: ${selectedUser?.username || ''}`"
@@ -560,6 +578,7 @@ import {
   removeAdminGroupMember,
   updateAdminGroupMemberRole,
   updateAdminGroupTemplate,
+  resetUserPassword,
   type SystemSetting,
   type AdminUser,
   type UserSetting,
@@ -722,7 +741,7 @@ const userColumns = computed<DataTableColumns<AdminUser>>(() => [
   {
     title: 'Actions',
     key: 'actions',
-    width: 280,
+    width: 360,
     render(row) {
       return h(NSpace, { size: 4 }, {
         default: () => [
@@ -740,6 +759,10 @@ const userColumns = computed<DataTableColumns<AdminUser>>(() => [
             type: 'warning',
             onClick: () => openUserAgents(row),
           }, { default: () => 'Agents' }),
+          h(NButton, {
+            size: 'small',
+            onClick: () => openResetPassword(row),
+          }, { default: () => 'Reset Pwd' }),
         ]
       })
     },
@@ -765,6 +788,32 @@ async function toggleRole(user: AdminUser) {
     await loadUsers()
   } catch (error) {
     message.error(extractApiError(error, 'Failed to update role'))
+  }
+}
+
+// --- Reset Password ---
+const showResetPassword = ref(false)
+const resetPasswordUser = ref<AdminUser | null>(null)
+const resetPasswordValue = ref('')
+const resettingPassword = ref(false)
+
+function openResetPassword(user: AdminUser) {
+  resetPasswordUser.value = user
+  resetPasswordValue.value = ''
+  showResetPassword.value = true
+}
+
+async function handleResetPassword() {
+  if (!resetPasswordUser.value || resetPasswordValue.value.length < 6) return
+  resettingPassword.value = true
+  try {
+    await resetUserPassword(resetPasswordUser.value.id, resetPasswordValue.value)
+    message.success(`Password reset for "${resetPasswordUser.value.username}"`)
+    showResetPassword.value = false
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to reset password'))
+  } finally {
+    resettingPassword.value = false
   }
 }
 

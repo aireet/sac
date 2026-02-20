@@ -128,3 +128,7 @@ export interface UserSettingListResponse {
 export interface AgentWithStatusListResponse {
   agents: AgentWithStatus[];
 }
+
+export interface ResetPasswordRequest {
+  new_password: string;
+}

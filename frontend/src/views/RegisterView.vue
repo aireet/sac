@@ -5,67 +5,80 @@
         <div class="logo-wrapper">
           <img :src="sacLogo" alt="SAC" class="logo" />
         </div>
-        <p class="subtitle">Create your account</p>
 
-        <n-form ref="formRef" :model="form" :rules="rules" @submit.prevent="handleRegister">
-          <n-form-item path="username" label="Username">
-            <n-input v-model:value="form.username" placeholder="Choose a username" size="large" />
-          </n-form-item>
+        <template v-if="inviteOnly">
+          <p class="subtitle">Registration is currently by invitation only</p>
+          <div class="auth-footer">
+            <n-text depth="3">Already have an account?</n-text>
+            <router-link to="/login">
+              <n-button text type="primary">Sign In</n-button>
+            </router-link>
+          </div>
+        </template>
 
-          <n-form-item path="email" label="Email">
-            <n-input v-model:value="form.email" placeholder="Enter email address" size="large" />
-          </n-form-item>
+        <template v-else>
+          <p class="subtitle">Create your account</p>
 
-          <n-form-item path="display_name" label="Display Name">
-            <n-input v-model:value="form.display_name" placeholder="Your display name (optional)" size="large" />
-          </n-form-item>
+          <n-form ref="formRef" :model="form" :rules="rules" @submit.prevent="handleRegister">
+            <n-form-item path="username" label="Username">
+              <n-input v-model:value="form.username" placeholder="Choose a username" size="large" />
+            </n-form-item>
 
-          <n-form-item path="password" label="Password">
-            <n-input
-              v-model:value="form.password"
-              type="password"
-              show-password-on="click"
-              placeholder="At least 6 characters"
+            <n-form-item path="email" label="Email">
+              <n-input v-model:value="form.email" placeholder="Enter email address" size="large" />
+            </n-form-item>
+
+            <n-form-item path="display_name" label="Display Name">
+              <n-input v-model:value="form.display_name" placeholder="Your display name (optional)" size="large" />
+            </n-form-item>
+
+            <n-form-item path="password" label="Password">
+              <n-input
+                v-model:value="form.password"
+                type="password"
+                show-password-on="click"
+                placeholder="At least 6 characters"
+                size="large"
+              />
+            </n-form-item>
+
+            <n-form-item path="confirm_password" label="Confirm Password">
+              <n-input
+                v-model:value="form.confirm_password"
+                type="password"
+                show-password-on="click"
+                placeholder="Re-enter password"
+                size="large"
+                @keyup.enter="handleRegister"
+              />
+            </n-form-item>
+
+            <n-button
+              type="primary"
+              block
               size="large"
-            />
-          </n-form-item>
+              :loading="loading"
+              @click="handleRegister"
+              style="margin-top: 8px"
+            >
+              Create Account
+            </n-button>
+          </n-form>
 
-          <n-form-item path="confirm_password" label="Confirm Password">
-            <n-input
-              v-model:value="form.confirm_password"
-              type="password"
-              show-password-on="click"
-              placeholder="Re-enter password"
-              size="large"
-              @keyup.enter="handleRegister"
-            />
-          </n-form-item>
-
-          <n-button
-            type="primary"
-            block
-            size="large"
-            :loading="loading"
-            @click="handleRegister"
-            style="margin-top: 8px"
-          >
-            Create Account
-          </n-button>
-        </n-form>
-
-        <div class="auth-footer">
-          <n-text depth="3">Already have an account?</n-text>
-          <router-link to="/login">
-            <n-button text type="primary">Sign In</n-button>
-          </router-link>
-        </div>
+          <div class="auth-footer">
+            <n-text depth="3">Already have an account?</n-text>
+            <router-link to="/login">
+              <n-button text type="primary">Sign In</n-button>
+            </router-link>
+          </div>
+        </template>
       </div>
     </div>
   </n-config-provider>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   NConfigProvider,
@@ -78,6 +91,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { useAuthStore } from '../stores/auth'
+import api from '../services/api'
 import sacLogo from '../assets/sac-logo.svg'
 import { extractApiError } from '../utils/error'
 
@@ -87,6 +101,7 @@ const message = useMessage()
 
 const formRef = ref()
 const loading = ref(false)
+const inviteOnly = ref(false)
 
 const form = ref({
   username: '',
@@ -119,6 +134,15 @@ const rules = {
     },
   ],
 }
+
+onMounted(async () => {
+  try {
+    const resp = await api.get('/auth/registration-mode')
+    inviteOnly.value = resp.data.mode === 'invite'
+  } catch {
+    inviteOnly.value = true
+  }
+})
 
 const handleRegister = async () => {
   await formRef.value?.validate()

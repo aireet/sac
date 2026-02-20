@@ -35,7 +35,7 @@
           </n-button>
         </n-form>
 
-        <div class="auth-footer">
+        <div class="auth-footer" v-if="registrationOpen">
           <n-text depth="3">Don't have an account?</n-text>
           <router-link to="/register">
             <n-button text type="primary">Sign Up</n-button>
@@ -47,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   NConfigProvider,
@@ -60,6 +60,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { useAuthStore } from '../stores/auth'
+import api from '../services/api'
 import sacLogo from '../assets/sac-logo.svg'
 import { extractApiError } from '../utils/error'
 
@@ -69,6 +70,7 @@ const message = useMessage()
 
 const formRef = ref()
 const loading = ref(false)
+const registrationOpen = ref(true)
 
 const form = ref({
   username: '',
@@ -79,6 +81,15 @@ const rules = {
   username: { required: true, message: 'Please enter username or email', trigger: 'blur' },
   password: { required: true, message: 'Please enter password', trigger: 'blur' },
 }
+
+onMounted(async () => {
+  try {
+    const resp = await api.get('/auth/registration-mode')
+    registrationOpen.value = resp.data.mode === 'open'
+  } catch {
+    registrationOpen.value = false
+  }
+})
 
 const handleLogin = async () => {
   await formRef.value?.validate()
