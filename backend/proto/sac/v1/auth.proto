@@ -1,0 +1,37 @@
+syntax = "proto3";
+package sac.v1;
+option go_package = "g.echo.tech/dev/sac/gen/sac/v1;sacv1";
+
+import "google/protobuf/timestamp.proto";
+import "sac/v1/common.proto";
+
+message RegisterRequest {
+  string username = 1;
+  string email = 2;
+  string password = 3;
+  string display_name = 4;
+}
+
+message LoginRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message User {
+  int64 id = 1;
+  string username = 2;
+  string email = 3;
+  string display_name = 4;
+  string role = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message AuthResponse {
+  string token = 1;
+  User user = 2;
+}
+
+message UserBriefListResponse {
+  repeated UserBrief users = 1;
+}

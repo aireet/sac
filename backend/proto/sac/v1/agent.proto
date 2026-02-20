@@ -1,0 +1,78 @@
+syntax = "proto3";
+package sac.v1;
+option go_package = "g.echo.tech/dev/sac/gen/sac/v1;sacv1";
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "sac/v1/skill.proto";
+
+message Agent {
+  int64 id = 1;
+  string name = 2;
+  string description = 3;
+  string icon = 4;
+  string instructions = 5;
+  google.protobuf.Struct config = 6;
+  int64 created_by = 7;
+  optional string cpu_request = 8;
+  optional string cpu_limit = 9;
+  optional string memory_request = 10;
+  optional string memory_limit = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+  repeated AgentSkill installed_skills = 14;
+}
+
+message AgentSkill {
+  int64 id = 1;
+  int64 agent_id = 2;
+  int64 skill_id = 3;
+  int32 order = 4;
+  int32 synced_version = 5;
+  google.protobuf.Timestamp created_at = 6;
+  Skill skill = 7;
+}
+
+message CreateAgentRequest {
+  string name = 1;
+  string description = 2;
+  string icon = 3;
+  string instructions = 4;
+  google.protobuf.Struct config = 5;
+}
+
+message UpdateAgentRequest {
+  optional string name = 1;
+  optional string description = 2;
+  optional string icon = 3;
+  optional string instructions = 4;
+  google.protobuf.Struct config = 5;
+}
+
+message InstallSkillRequest {
+  int64 skill_id = 1;
+}
+
+message AgentStatus {
+  int64 agent_id = 1;
+  string pod_name = 2;
+  string status = 3;
+  int32 restart_count = 4;
+  string cpu_request = 5;
+  string cpu_limit = 6;
+  string memory_request = 7;
+  string memory_limit = 8;
+}
+
+message ClaudeMDPreview {
+  string readonly = 1;
+  string instructions = 2;
+}
+
+message AgentListResponse {
+  repeated Agent agents = 1;
+}
+
+message AgentStatusListResponse {
+  repeated AgentStatus statuses = 1;
+}

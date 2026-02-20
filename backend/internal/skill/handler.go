@@ -7,8 +7,11 @@ import (
 	"strconv"
 	"time"
 
+	sacv1 "g.echo.tech/dev/sac/gen/sac/v1"
 	"g.echo.tech/dev/sac/internal/container"
+	"g.echo.tech/dev/sac/internal/convert"
 	"g.echo.tech/dev/sac/internal/models"
+	"g.echo.tech/dev/sac/pkg/protobind"
 	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/uptrace/bun"
@@ -33,23 +36,36 @@ func (h *Handler) GetSyncService() *SyncService {
 
 // CreateSkill creates a new skill
 func (h *Handler) CreateSkill(c *gin.Context) {
-	var skill models.Skill
-	if err := c.ShouldBindJSON(&skill); err != nil {
-		response.BadRequest(c, "Invalid request body", err)
-		return
-	}
-
-	// Get user ID from context (should be set by auth middleware)
 	userID, exists := c.Get("userID")
 	if !exists {
 		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 
-	skill.CreatedBy = userID.(int64)
-	skill.CreatedAt = time.Now()
-	skill.UpdatedAt = time.Now()
-	skill.IsOfficial = false // Only admins can create official skills
+	req := &sacv1.CreateSkillRequest{}
+	if !protobind.Bind(c, req) {
+		return
+	}
+
+	if req.Name == "" {
+		response.BadRequest(c, "name is required")
+		return
+	}
+
+	skill := models.Skill{
+		Name:        req.Name,
+		Description: req.Description,
+		Icon:        req.Icon,
+		Category:    req.Category,
+		Prompt:      req.Prompt,
+		CommandName: req.CommandName,
+		Parameters:  convert.SkillParametersFromProto(req.Parameters),
+		IsPublic:    req.IsPublic,
+		CreatedBy:   userID.(int64),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+		IsOfficial:  false,
+	}
 
 	// Auto-generate command_name from name if not provided
 	if skill.CommandName == "" {
@@ -64,14 +80,14 @@ func (h *Handler) CreateSkill(c *gin.Context) {
 	ctx := context.Background()
 
 	// Check command_name uniqueness
-	exists, err := h.db.NewSelect().Model((*models.Skill)(nil)).
+	exists2, err := h.db.NewSelect().Model((*models.Skill)(nil)).
 		Where("command_name = ?", skill.CommandName).
 		Exists(ctx)
 	if err != nil {
 		response.InternalError(c, "Failed to check command name", err)
 		return
 	}
-	if exists {
+	if exists2 {
 		response.Conflict(c, fmt.Sprintf("Command name '/%s' is already taken", skill.CommandName))
 		return
 	}
@@ -82,7 +98,7 @@ func (h *Handler) CreateSkill(c *gin.Context) {
 		return
 	}
 
-	response.Created(c, skill)
+	protobind.Created(c, convert.SkillToProto(&skill))
 }
 
 // GetSkills retrieves all skills for the current user
@@ -108,7 +124,7 @@ func (h *Handler) GetSkills(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, skills)
+	protobind.OK(c, &sacv1.SkillListResponse{Skills: convert.SkillsToProto(skills)})
 }
 
 // GetSkill retrieves a single skill by ID
@@ -132,7 +148,7 @@ func (h *Handler) GetSkill(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, skill)
+	protobind.OK(c, convert.SkillToProto(&skill))
 }
 
 // UpdateSkill updates an existing skill
@@ -175,16 +191,42 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 		return
 	}
 
-	// Parse update data
-	var updateData models.Skill
-	if err := c.ShouldBindJSON(&updateData); err != nil {
-		response.BadRequest(c, "Invalid request body", err)
+	// Parse update data via protobuf
+	req := &sacv1.UpdateSkillRequest{}
+	if !protobind.Bind(c, req) {
 		return
 	}
 
+	var updateData models.Skill
 	updateData.ID = skillID
 	updateData.UpdatedAt = time.Now()
 	updateData.Version = existingSkill.Version + 1
+
+	// Apply optional fields from proto request
+	if req.Name != nil {
+		updateData.Name = *req.Name
+	}
+	if req.Description != nil {
+		updateData.Description = *req.Description
+	}
+	if req.Icon != nil {
+		updateData.Icon = *req.Icon
+	}
+	if req.Category != nil {
+		updateData.Category = *req.Category
+	}
+	if req.Prompt != nil {
+		updateData.Prompt = *req.Prompt
+	}
+	if req.CommandName != nil {
+		updateData.CommandName = *req.CommandName
+	}
+	if req.Parameters != nil {
+		updateData.Parameters = convert.SkillParametersFromProto(req.Parameters)
+	}
+	if req.IsPublic != nil {
+		updateData.IsPublic = *req.IsPublic
+	}
 
 	// If user supplied a command_name, use it; otherwise regenerate from name
 	if updateData.CommandName == "" && updateData.Name != "" {
@@ -232,7 +274,7 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, updatedSkill)
+	protobind.OK(c, convert.SkillToProto(&updatedSkill))
 }
 
 // DeleteSkill deletes a skill
@@ -308,7 +350,7 @@ func (h *Handler) DeleteSkill(c *gin.Context) {
 		}()
 	}
 
-	response.Success(c, "Skill deleted successfully")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Skill deleted successfully"})
 }
 
 // ForkSkill creates a copy of a public skill
@@ -351,14 +393,14 @@ func (h *Handler) ForkSkill(c *gin.Context) {
 
 	// Ensure uniqueness by appending a numeric suffix if needed
 	for i := 2; i <= 100; i++ {
-		exists, exErr := h.db.NewSelect().Model((*models.Skill)(nil)).
+		exists2, exErr := h.db.NewSelect().Model((*models.Skill)(nil)).
 			Where("command_name = ?", cmdName).
 			Exists(ctx)
 		if exErr != nil {
 			response.InternalError(c, "Failed to check command name", exErr)
 			return
 		}
-		if !exists {
+		if !exists2 {
 			break
 		}
 		cmdName = fmt.Sprintf("%s-%d", baseCmd, i)
@@ -386,7 +428,7 @@ func (h *Handler) ForkSkill(c *gin.Context) {
 		return
 	}
 
-	response.Created(c, forkedSkill)
+	protobind.Created(c, convert.SkillToProto(&forkedSkill))
 }
 
 // GetPublicSkills retrieves all public skills
@@ -406,7 +448,7 @@ func (h *Handler) GetPublicSkills(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, skills)
+	protobind.OK(c, &sacv1.SkillListResponse{Skills: convert.SkillsToProto(skills)})
 }
 
 // RegisterRoutes registers skill routes

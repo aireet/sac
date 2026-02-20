@@ -7,10 +7,14 @@ import (
 	"strconv"
 	"time"
 
+	sacv1 "g.echo.tech/dev/sac/gen/sac/v1"
+	"g.echo.tech/dev/sac/internal/convert"
 	"g.echo.tech/dev/sac/internal/models"
+	"g.echo.tech/dev/sac/pkg/protobind"
 	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/uptrace/bun"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type Handler struct {
@@ -35,43 +39,28 @@ func (h *Handler) RegisterInternalRoutes(rg *gin.RouterGroup) {
 
 // --- Internal endpoint: receive hook events from Pods ---
 
-type messagePayload struct {
-	Role      string `json:"role"`
-	Content   string `json:"content"`
-	UUID      string `json:"uuid"`
-	Timestamp string `json:"timestamp"`
-}
-
-type eventsRequest struct {
-	UserID    string           `json:"user_id"`
-	AgentID   string           `json:"agent_id"`
-	SessionID string           `json:"session_id"`
-	Messages  []messagePayload `json:"messages"`
-}
-
 func (h *Handler) receiveEvents(c *gin.Context) {
-	var req eventsRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request body", err)
+	req := &sacv1.EventsRequest{}
+	if !protobind.Bind(c, req) {
 		return
 	}
 
-	if req.UserID == "" || req.AgentID == "" || req.SessionID == "" {
+	if req.UserId == "" || req.AgentId == "" || req.SessionId == "" {
 		response.BadRequest(c, "user_id, agent_id, and session_id are required")
 		return
 	}
 
 	if len(req.Messages) == 0 {
-		response.OK(c, gin.H{"inserted": 0})
+		protobind.OK(c, &sacv1.EventsResponse{Inserted: 0})
 		return
 	}
 
-	userID, err := strconv.ParseInt(req.UserID, 10, 64)
+	userID, err := strconv.ParseInt(req.UserId, 10, 64)
 	if err != nil {
 		response.BadRequest(c, "invalid user_id")
 		return
 	}
-	agentID, err := strconv.ParseInt(req.AgentID, 10, 64)
+	agentID, err := strconv.ParseInt(req.AgentId, 10, 64)
 	if err != nil {
 		response.BadRequest(c, "invalid agent_id")
 		return
@@ -111,16 +100,16 @@ func (h *Handler) receiveEvents(c *gin.Context) {
 		records = append(records, models.ConversationHistory{
 			UserID:      userID,
 			AgentID:     agentID,
-			SessionID:   req.SessionID,
+			SessionID:   req.SessionId,
 			Role:        msg.Role,
 			Content:     msg.Content,
-			MessageUUID: msg.UUID,
+			MessageUUID: msg.Uuid,
 			Timestamp:   ts,
 		})
 	}
 
 	if len(records) == 0 {
-		response.OK(c, gin.H{"inserted": 0})
+		protobind.OK(c, &sacv1.EventsResponse{Inserted: 0})
 		return
 	}
 
@@ -130,7 +119,7 @@ func (h *Handler) receiveEvents(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, gin.H{"inserted": len(records)})
+	protobind.OK(c, &sacv1.EventsResponse{Inserted: int32(len(records))})
 }
 
 // --- Protected endpoint: query conversation history ---
@@ -214,10 +203,10 @@ func (h *Handler) listConversations(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"conversations": histories,
-		"count":         len(histories),
-		"has_more":      hasMore,
+	protobind.JSON(c, http.StatusOK, &sacv1.ConversationListResponse{
+		Conversations: convert.ConversationHistoriesToProto(histories),
+		Count:         int32(len(histories)),
+		HasMore:       hasMore,
 	})
 }
 
@@ -240,10 +229,10 @@ func (h *Handler) listSessions(c *gin.Context) {
 	}
 
 	type sessionRow struct {
-		SessionID string    `bun:"session_id" json:"session_id"`
-		FirstAt   time.Time `bun:"first_at" json:"first_at"`
-		LastAt    time.Time `bun:"last_at" json:"last_at"`
-		Count     int       `bun:"count" json:"count"`
+		SessionID string    `bun:"session_id"`
+		FirstAt   time.Time `bun:"first_at"`
+		LastAt    time.Time `bun:"last_at"`
+		Count     int       `bun:"count"`
 	}
 
 	var sessions []sessionRow
@@ -268,7 +257,19 @@ func (h *Handler) listSessions(c *gin.Context) {
 		sessions = []sessionRow{}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"sessions": sessions})
+	pbSessions := make([]*sacv1.SessionSummary, len(sessions))
+	for i, s := range sessions {
+		pbSessions[i] = &sacv1.SessionSummary{
+			SessionId: s.SessionID,
+			FirstAt:   timestamppb.New(s.FirstAt),
+			LastAt:    timestamppb.New(s.LastAt),
+			Count:     int32(s.Count),
+		}
+	}
+
+	protobind.JSON(c, http.StatusOK, &sacv1.SessionListResponse{
+		Sessions: pbSessions,
+	})
 }
 
 func (h *Handler) exportConversations(c *gin.Context) {

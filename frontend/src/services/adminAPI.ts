@@ -1,45 +1,30 @@
 import api from './api'
+import type {
+  SystemSetting,
+  UserSetting,
+  AdminUser,
+  AdminGroupBrief,
+  AgentWithStatus,
+  BatchUpdateImageResponse,
+  AdminConversation,
+  AdminConversationListResponse,
+  AdminUserListResponse,
+  SystemSettingListResponse,
+  UserSettingListResponse,
+  AgentWithStatusListResponse,
+} from '../generated/sac/v1/admin'
+import type { GroupWithMemberCount, GroupMember, GroupListResponse, GroupMemberListResponse } from '../generated/sac/v1/group'
 
-export interface SystemSetting {
-  id: number
-  key: string
-  value: any
-  description: string
-  created_at: string
-  updated_at: string
-}
-
-export interface UserSetting {
-  id: number
-  user_id: number
-  key: string
-  value: any
-  created_at: string
-  updated_at: string
-}
-
-export interface AdminUserGroup {
-  id: number
-  name: string
-  role: string
-}
-
-export interface AdminUser {
-  id: number
-  username: string
-  email: string
-  display_name: string
-  role: string
-  agent_count: number
-  groups: AdminUserGroup[]
-  created_at: string
-  updated_at: string
-}
+export type { SystemSetting, UserSetting, AdminUser, AgentWithStatus, AdminConversation }
+export type AdminUserGroup = AdminGroupBrief
+export type AdminAgent = AgentWithStatus
+export type AdminGroup = GroupWithMemberCount
+export type AdminGroupMember = GroupMember
 
 // System settings
 export async function getSystemSettings(): Promise<SystemSetting[]> {
-  const response = await api.get('/admin/settings')
-  return response.data
+  const response = await api.get<SystemSettingListResponse>('/admin/settings')
+  return response.data.settings ?? []
 }
 
 export async function updateSystemSetting(key: string, value: any): Promise<SystemSetting> {
@@ -49,8 +34,8 @@ export async function updateSystemSetting(key: string, value: any): Promise<Syst
 
 // Users
 export async function getUsers(): Promise<AdminUser[]> {
-  const response = await api.get('/admin/users')
-  return response.data
+  const response = await api.get<AdminUserListResponse>('/admin/users')
+  return response.data.users ?? []
 }
 
 export async function updateUserRole(userId: number, role: string): Promise<void> {
@@ -59,8 +44,8 @@ export async function updateUserRole(userId: number, role: string): Promise<void
 
 // User settings overrides
 export async function getUserSettings(userId: number): Promise<UserSetting[]> {
-  const response = await api.get(`/admin/users/${userId}/settings`)
-  return response.data
+  const response = await api.get<UserSettingListResponse>(`/admin/users/${userId}/settings`)
+  return response.data.settings ?? []
 }
 
 export async function updateUserSetting(userId: number, key: string, value: any): Promise<UserSetting> {
@@ -73,28 +58,9 @@ export async function deleteUserSetting(userId: number, key: string): Promise<vo
 }
 
 // User agents
-export interface AdminAgent {
-  id: number
-  name: string
-  description: string
-  icon: string
-  config: Record<string, any>
-  created_by: number
-  created_at: string
-  updated_at: string
-  installed_skills: any[]
-  pod_status: string
-  restart_count: number
-  cpu_request: string
-  cpu_limit: string
-  memory_request: string
-  memory_limit: string
-  image: string
-}
-
-export async function getUserAgents(userId: number): Promise<AdminAgent[]> {
-  const response = await api.get(`/admin/users/${userId}/agents`)
-  return response.data
+export async function getUserAgents(userId: number): Promise<AgentWithStatus[]> {
+  const response = await api.get<AgentWithStatusListResponse>(`/admin/users/${userId}/agents`)
+  return response.data.agents ?? []
 }
 
 export async function deleteUserAgent(userId: number, agentId: number): Promise<void> {
@@ -119,23 +85,13 @@ export async function updateAgentImage(userId: number, agentId: number, image: s
   await api.put(`/admin/users/${userId}/agents/${agentId}/image`, { image })
 }
 
-export async function batchUpdateImage(image: string): Promise<{ total: number; updated: number; failed: number; errors: any[] }> {
+export async function batchUpdateImage(image: string): Promise<BatchUpdateImageResponse> {
   const response = await api.post('/admin/agents/batch-update-image', { image })
   return response.data
 }
 
 // Conversations
-export interface ConversationRecord {
-  id: number
-  user_id: number
-  agent_id: number
-  session_id: string
-  role: string
-  content: string
-  timestamp: string
-  username: string
-  agent_name: string
-}
+export type ConversationRecord = AdminConversation
 
 export interface ConversationParams {
   user_id?: number
@@ -147,7 +103,7 @@ export interface ConversationParams {
   end?: string
 }
 
-export async function getConversations(params: ConversationParams): Promise<{ conversations: ConversationRecord[]; count: number }> {
+export async function getConversations(params: ConversationParams): Promise<AdminConversationListResponse> {
   const response = await api.get('/admin/conversations', { params })
   return response.data
 }
@@ -170,33 +126,12 @@ export async function exportConversationsCSV(params: { user_id?: number; agent_i
 }
 
 // Admin group management
-export interface AdminGroup {
-  id: number
-  name: string
-  description: string
-  owner_id: number
-  claude_md_template: string
-  owner?: { id: number; username: string; display_name: string }
-  member_count: number
-  created_at: string
-  updated_at: string
+export async function getAdminGroups(): Promise<GroupWithMemberCount[]> {
+  const response = await api.get<GroupListResponse>('/admin/groups')
+  return response.data.groups ?? []
 }
 
-export interface AdminGroupMember {
-  id: number
-  group_id: number
-  user_id: number
-  role: string
-  created_at: string
-  user?: { id: number; username: string; display_name: string }
-}
-
-export async function getAdminGroups(): Promise<AdminGroup[]> {
-  const response = await api.get('/admin/groups')
-  return response.data
-}
-
-export async function createAdminGroup(data: { name: string; description?: string; owner_id?: number }): Promise<AdminGroup> {
+export async function createAdminGroup(data: { name: string; description?: string; owner_id?: number }): Promise<GroupWithMemberCount> {
   const response = await api.post('/admin/groups', data)
   return response.data
 }
@@ -209,9 +144,9 @@ export async function deleteAdminGroup(id: number): Promise<void> {
   await api.delete(`/admin/groups/${id}`)
 }
 
-export async function getAdminGroupMembers(groupId: number): Promise<AdminGroupMember[]> {
-  const response = await api.get(`/admin/groups/${groupId}/members`)
-  return response.data
+export async function getAdminGroupMembers(groupId: number): Promise<GroupMember[]> {
+  const response = await api.get<GroupMemberListResponse>(`/admin/groups/${groupId}/members`)
+  return response.data.members ?? []
 }
 
 export async function addAdminGroupMember(groupId: number, userId: number, role: string = 'member'): Promise<void> {

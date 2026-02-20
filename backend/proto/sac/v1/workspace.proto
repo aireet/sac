@@ -1,0 +1,83 @@
+syntax = "proto3";
+package sac.v1;
+option go_package = "g.echo.tech/dev/sac/gen/sac/v1;sacv1";
+
+import "google/protobuf/timestamp.proto";
+
+message WorkspaceFile {
+  int64 id = 1;
+  int64 user_id = 2;
+  int64 agent_id = 3;
+  optional int64 group_id = 4;
+  string workspace_type = 5;
+  string oss_key = 6;
+  string file_name = 7;
+  string file_path = 8;
+  string content_type = 9;
+  int64 size_bytes = 10;
+  string checksum = 11;
+  bool is_directory = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+}
+
+message WorkspaceQuota {
+  int64 user_id = 1;
+  int64 agent_id = 2;
+  int64 used_bytes = 3;
+  int64 max_bytes = 4;
+  int32 file_count = 5;
+  int32 max_file_count = 6;
+}
+
+message GroupWorkspaceQuota {
+  int64 group_id = 1;
+  int64 used_bytes = 2;
+  int64 max_bytes = 3;
+  int32 file_count = 4;
+  int32 max_file_count = 5;
+}
+
+message WorkspaceStatusResponse {
+  bool configured = 1;
+}
+
+message CreateDirectoryRequest {
+  string path = 1;
+  int64 agent_id = 2;
+}
+
+message CreatePublicDirectoryRequest {
+  string path = 1;
+}
+
+message CreateGroupDirectoryRequest {
+  string path = 1;
+  int64 group_id = 2;
+}
+
+message SyncToPodRequest {
+  int64 agent_id = 1;
+}
+
+message CreateShareRequest {
+  int64 agent_id = 1;
+  string path = 2;
+}
+
+message ShareResponse {
+  string short_code = 1;
+  string url = 2;
+}
+
+message SharedFileMeta {
+  string file_name = 1;
+  string content_type = 2;
+  int64 size_bytes = 3;
+}
+
+message InternalOutputDeleteRequest {
+  int64 user_id = 1;
+  int64 agent_id = 2;
+  string path = 3;
+}

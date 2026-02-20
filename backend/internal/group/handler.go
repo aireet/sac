@@ -5,7 +5,10 @@ import (
 	"strconv"
 	"time"
 
+	sacv1 "g.echo.tech/dev/sac/gen/sac/v1"
+	"g.echo.tech/dev/sac/internal/convert"
 	"g.echo.tech/dev/sac/internal/models"
+	"g.echo.tech/dev/sac/pkg/protobind"
 	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/uptrace/bun"
@@ -69,39 +72,21 @@ func (h *Handler) List(c *gin.Context) {
 	}
 
 	if len(groups) == 0 {
-		response.OK(c, []any{})
+		protobind.OK(c, &sacv1.GroupListResponse{Groups: []*sacv1.GroupWithMemberCount{}})
 		return
 	}
 
-	// Get member counts
-	type countResult struct {
-		GroupID int64 `bun:"group_id"`
-		Count   int   `bun:"count"`
-	}
-	var counts []countResult
-	_ = h.db.NewSelect().
-		TableExpr("group_members").
-		Column("group_id").
-		ColumnExpr("COUNT(*) AS count").
-		Where("group_id IN (?)", bun.In(groupIDs(groups))).
-		Group("group_id").
-		Scan(ctx, &counts)
+	countMap := h.getMemberCounts(ctx, groupIDs(groups))
 
-	countMap := make(map[int64]int)
-	for _, cnt := range counts {
-		countMap[cnt.GroupID] = cnt.Count
-	}
-
-	type groupResponse struct {
-		models.Group
-		MemberCount int `json:"member_count"`
-	}
-	result := make([]groupResponse, len(groups))
+	result := make([]*sacv1.GroupWithMemberCount, len(groups))
 	for i, g := range groups {
-		result[i] = groupResponse{Group: g, MemberCount: countMap[g.ID]}
+		result[i] = &sacv1.GroupWithMemberCount{
+			Group:       convert.GroupToProto(&g),
+			MemberCount: int32(countMap[g.ID]),
+		}
 	}
 
-	response.OK(c, result)
+	protobind.OK(c, &sacv1.GroupListResponse{Groups: result})
 }
 
 // ListAll returns all groups with member counts (admin-only endpoint).
@@ -121,52 +106,34 @@ func (h *Handler) ListAll(c *gin.Context) {
 	}
 
 	if len(groups) == 0 {
-		response.OK(c, []any{})
+		protobind.OK(c, &sacv1.GroupListResponse{Groups: []*sacv1.GroupWithMemberCount{}})
 		return
 	}
 
-	// Get member counts
-	type countResult struct {
-		GroupID int64 `bun:"group_id"`
-		Count   int   `bun:"count"`
-	}
-	var counts []countResult
-	_ = h.db.NewSelect().
-		TableExpr("group_members").
-		Column("group_id").
-		ColumnExpr("COUNT(*) AS count").
-		Where("group_id IN (?)", bun.In(groupIDs(groups))).
-		Group("group_id").
-		Scan(ctx, &counts)
+	countMap := h.getMemberCounts(ctx, groupIDs(groups))
 
-	countMap := make(map[int64]int)
-	for _, cnt := range counts {
-		countMap[cnt.GroupID] = cnt.Count
-	}
-
-	type groupResponse struct {
-		models.Group
-		MemberCount int `json:"member_count"`
-	}
-	result := make([]groupResponse, len(groups))
+	result := make([]*sacv1.GroupWithMemberCount, len(groups))
 	for i, g := range groups {
-		result[i] = groupResponse{Group: g, MemberCount: countMap[g.ID]}
+		result[i] = &sacv1.GroupWithMemberCount{
+			Group:       convert.GroupToProto(&g),
+			MemberCount: int32(countMap[g.ID]),
+		}
 	}
 
-	response.OK(c, result)
+	protobind.OK(c, &sacv1.GroupListResponse{Groups: result})
 }
 
 // Create creates a new group (admin-only). The admin becomes owner and admin member.
 func (h *Handler) Create(c *gin.Context) {
 	userID := c.GetInt64("userID")
 
-	var req struct {
-		Name        string `json:"name" binding:"required"`
-		Description string `json:"description"`
-		OwnerID     *int64 `json:"owner_id"` // optional; defaults to the admin
+	req := &sacv1.CreateGroupRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "name is required", err)
+
+	if req.Name == "" {
+		response.BadRequest(c, "name is required")
 		return
 	}
 
@@ -186,8 +153,8 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 
 	ownerID := userID
-	if req.OwnerID != nil && *req.OwnerID > 0 {
-		ownerID = *req.OwnerID
+	if req.OwnerId != nil && *req.OwnerId > 0 {
+		ownerID = *req.OwnerId
 	}
 
 	now := time.Now()
@@ -244,7 +211,7 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
-	response.Created(c, group)
+	protobind.Created(c, convert.GroupToProto(group))
 }
 
 // Get returns a single group by ID (must be a member).
@@ -274,7 +241,7 @@ func (h *Handler) Get(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, group)
+	protobind.OK(c, convert.GroupToProto(&group))
 }
 
 // Update updates a group (admin-only endpoint).
@@ -284,13 +251,8 @@ func (h *Handler) Update(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		Name             *string `json:"name"`
-		Description      *string `json:"description"`
-		ClaudeMDTemplate *string `json:"claude_md_template"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request", err)
+	req := &sacv1.UpdateGroupRequest{}
+	if !protobind.Bind(c, req) {
 		return
 	}
 
@@ -303,8 +265,8 @@ func (h *Handler) Update(c *gin.Context) {
 	if req.Description != nil {
 		q = q.Set("description = ?", *req.Description)
 	}
-	if req.ClaudeMDTemplate != nil {
-		q = q.Set("claude_md_template = ?", *req.ClaudeMDTemplate)
+	if req.ClaudeMdTemplate != nil {
+		q = q.Set("claude_md_template = ?", *req.ClaudeMdTemplate)
 	}
 	q = q.Set("updated_at = ?", time.Now())
 
@@ -314,7 +276,7 @@ func (h *Handler) Update(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, "Group updated")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Group updated"})
 }
 
 // Delete deletes a group (admin-only endpoint).
@@ -332,7 +294,7 @@ func (h *Handler) Delete(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, "Group deleted")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Group deleted"})
 }
 
 // ListMembers returns all members of a group.
@@ -363,7 +325,7 @@ func (h *Handler) ListMembers(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, members)
+	protobind.OK(c, &sacv1.GroupMemberListResponse{Members: convert.GroupMembersToProto(members)})
 }
 
 // ListMembersAdmin lists all members of a group (admin-only, no membership check).
@@ -388,7 +350,7 @@ func (h *Handler) ListMembersAdmin(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, members)
+	protobind.OK(c, &sacv1.GroupMemberListResponse{Members: convert.GroupMembersToProto(members)})
 }
 
 // AddMember adds a user to a group (admin-only endpoint).
@@ -398,12 +360,13 @@ func (h *Handler) AddMember(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		UserID int64  `json:"user_id" binding:"required"`
-		Role   string `json:"role"`
+	req := &sacv1.AddMemberRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "user_id is required", err)
+
+	if req.UserId == 0 {
+		response.BadRequest(c, "user_id is required")
 		return
 	}
 	if req.Role == "" {
@@ -414,21 +377,21 @@ func (h *Handler) AddMember(c *gin.Context) {
 
 	// Verify target user exists
 	var user models.User
-	err := h.db.NewSelect().Model(&user).Where("id = ?", req.UserID).Scan(ctx)
+	err := h.db.NewSelect().Model(&user).Where("id = ?", req.UserId).Scan(ctx)
 	if err != nil {
 		response.NotFound(c, "User not found")
 		return
 	}
 
 	// Check if already a member
-	if h.isMember(ctx, groupID, req.UserID) {
+	if h.isMember(ctx, groupID, req.UserId) {
 		response.Conflict(c, "User is already a member of this group")
 		return
 	}
 
 	member := &models.GroupMember{
 		GroupID:   groupID,
-		UserID:    req.UserID,
+		UserID:    req.UserId,
 		Role:      req.Role,
 		CreatedAt: time.Now(),
 	}
@@ -439,7 +402,7 @@ func (h *Handler) AddMember(c *gin.Context) {
 		return
 	}
 
-	response.Created(c, member)
+	protobind.Created(c, convert.GroupMemberToProto(member))
 }
 
 // RemoveMember removes a user from a group (admin-only endpoint).
@@ -474,7 +437,7 @@ func (h *Handler) RemoveMember(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, "Member removed")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Member removed"})
 }
 
 // UpdateMemberRole updates a member's role (admin-only endpoint).
@@ -490,11 +453,13 @@ func (h *Handler) UpdateMemberRole(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		Role string `json:"role" binding:"required"`
+	req := &sacv1.UpdateMemberRoleRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "role is required", err)
+
+	if req.Role == "" {
+		response.BadRequest(c, "role is required")
 		return
 	}
 
@@ -509,7 +474,7 @@ func (h *Handler) UpdateMemberRole(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, "Member role updated")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Member role updated"})
 }
 
 // --- Helpers ---
@@ -562,7 +527,9 @@ func (h *Handler) GetTemplate(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, gin.H{"claude_md_template": group.ClaudeMDTemplate})
+	protobind.OK(c, &sacv1.GroupTemplateResponse{
+		ClaudeMdTemplate: group.ClaudeMDTemplate,
+	})
 }
 
 // UpdateTemplate updates the CLAUDE.md template (group admin or system admin).
@@ -572,11 +539,8 @@ func (h *Handler) UpdateTemplate(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		ClaudeMDTemplate string `json:"claude_md_template"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request", err)
+	req := &sacv1.UpdateTemplateRequest{}
+	if !protobind.Bind(c, req) {
 		return
 	}
 
@@ -591,7 +555,7 @@ func (h *Handler) UpdateTemplate(c *gin.Context) {
 	}
 
 	_, err := h.db.NewUpdate().Model((*models.Group)(nil)).
-		Set("claude_md_template = ?", req.ClaudeMDTemplate).
+		Set("claude_md_template = ?", req.ClaudeMdTemplate).
 		Set("updated_at = ?", time.Now()).
 		Where("id = ?", groupID).
 		Exec(ctx)
@@ -600,7 +564,7 @@ func (h *Handler) UpdateTemplate(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, "Template updated")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Template updated"})
 }
 
 func groupIDs(groups []models.Group) []int64 {
@@ -609,4 +573,25 @@ func groupIDs(groups []models.Group) []int64 {
 		ids[i] = g.ID
 	}
 	return ids
+}
+
+func (h *Handler) getMemberCounts(ctx context.Context, ids []int64) map[int64]int {
+	type countResult struct {
+		GroupID int64 `bun:"group_id"`
+		Count   int   `bun:"count"`
+	}
+	var counts []countResult
+	_ = h.db.NewSelect().
+		TableExpr("group_members").
+		Column("group_id").
+		ColumnExpr("COUNT(*) AS count").
+		Where("group_id IN (?)", bun.In(ids)).
+		Group("group_id").
+		Scan(ctx, &counts)
+
+	countMap := make(map[int64]int)
+	for _, cnt := range counts {
+		countMap[cnt.GroupID] = cnt.Count
+	}
+	return countMap
 }

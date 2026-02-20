@@ -14,12 +14,16 @@ import (
 	"strings"
 	"time"
 
+	sacv1 "g.echo.tech/dev/sac/gen/sac/v1"
 	"g.echo.tech/dev/sac/internal/auth"
+	"g.echo.tech/dev/sac/internal/convert"
 	"g.echo.tech/dev/sac/internal/models"
 	"g.echo.tech/dev/sac/internal/storage"
+	"g.echo.tech/dev/sac/pkg/protobind"
 	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/uptrace/bun"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const maxUploadSize = 100 << 20 // 100MB
@@ -137,7 +141,7 @@ func (h *Handler) getOSS(c *gin.Context) storage.StorageBackend {
 // GetStatus returns whether OSS is configured.
 func (h *Handler) GetStatus(c *gin.Context) {
 	configured := h.provider.IsConfigured(c.Request.Context())
-	response.OK(c, gin.H{"configured": configured})
+	protobind.OK(c, &sacv1.WorkspaceStatusResponse{Configured: configured})
 }
 
 // parseAgentID extracts and validates the agent_id parameter from query or form.
@@ -245,7 +249,7 @@ func (h *Handler) Upload(c *gin.Context) {
 	// Sync to active pods in background
 	go h.syncSvc.SyncFileToPods(context.Background(), userIDInt, agentID, ossKey, filePath+header.Filename)
 
-	response.Created(c, wf)
+	protobind.Created(c, convert.WorkspaceFileToProto(wf))
 }
 
 // ListFiles lists files in the user's agent-specific private workspace.
@@ -268,40 +272,12 @@ func (h *Handler) ListFiles(c *gin.Context) {
 		return
 	}
 
-	// Map to response format
-	type FileItem struct {
-		Name         string    `json:"name"`
-		Path         string    `json:"path"`
-		Size         int64     `json:"size"`
-		IsDirectory  bool      `json:"is_directory"`
-		LastModified time.Time `json:"last_modified,omitzero"`
-	}
-
 	basePrefix := ossKeyPrefix(userIDInt, agentID)
-	var files []FileItem
-	for _, item := range items {
-		// Strip the user/agent prefix to get the relative path
-		relPath := strings.TrimPrefix(item.Key, basePrefix)
-		name := path.Base(relPath)
-		if item.IsDirectory {
-			relPath = strings.TrimPrefix(item.Key, basePrefix)
-			name = path.Base(strings.TrimSuffix(relPath, "/"))
-			if name == "." || name == "" {
-				continue
-			}
-		}
-		files = append(files, FileItem{
-			Name:         name,
-			Path:         relPath,
-			Size:         item.Size,
-			IsDirectory:  item.IsDirectory,
-			LastModified: item.LastModified,
-		})
-	}
+	files := storageItemsToProto(items, basePrefix)
 
-	response.OK(c, gin.H{
-		"path":  reqPath,
-		"files": files,
+	protobind.OK(c, &sacv1.FileListResponse{
+		Path:  reqPath,
+		Files: files,
 	})
 }
 
@@ -384,7 +360,7 @@ func (h *Handler) DeleteFile(c *gin.Context) {
 	// Delete from active pods in background
 	go h.syncSvc.DeleteFileFromPods(context.Background(), userIDInt, agentID, filePath)
 
-	response.Success(c, "File deleted")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "File deleted"})
 }
 
 // CreateDirectory creates a directory marker in private workspace.
@@ -393,16 +369,17 @@ func (h *Handler) CreateDirectory(c *gin.Context) {
 	userID, _ := c.Get("userID")
 	userIDInt := userID.(int64)
 
-	var req struct {
-		Path    string `json:"path" binding:"required"`
-		AgentID int64  `json:"agent_id" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "path and agent_id are required", err)
+	req := &sacv1.CreateDirectoryRequest{}
+	if !protobind.Bind(c, req) {
 		return
 	}
 
-	if req.AgentID <= 0 {
+	if req.AgentId == 0 || req.Path == "" {
+		response.BadRequest(c, "path and agent_id are required")
+		return
+	}
+
+	if req.AgentId <= 0 {
 		response.BadRequest(c, "invalid agent_id")
 		return
 	}
@@ -412,7 +389,7 @@ func (h *Handler) CreateDirectory(c *gin.Context) {
 		dirPath += "/"
 	}
 
-	ossKey := ossKeyPrefix(userIDInt, req.AgentID) + dirPath
+	ossKey := ossKeyPrefix(userIDInt, req.AgentId) + dirPath
 
 	// Create an empty object as directory marker
 	if err := oss.Upload(c.Request.Context(), ossKey, strings.NewReader(""), 0, "application/x-directory"); err != nil {
@@ -420,7 +397,7 @@ func (h *Handler) CreateDirectory(c *gin.Context) {
 		return
 	}
 
-	response.Created(c, gin.H{"path": dirPath})
+	protobind.Created(c, &sacv1.DirectoryResponse{Path: dirPath})
 }
 
 // GetQuota returns the user's workspace quota for a specific agent.
@@ -435,7 +412,7 @@ func (h *Handler) GetQuota(c *gin.Context) {
 
 	ctx := context.Background()
 	quota := h.getOrCreateQuota(ctx, userIDInt, agentID)
-	response.OK(c, quota)
+	protobind.OK(c, convert.WorkspaceQuotaToProto(quota))
 }
 
 // ---- Public Workspace ----
@@ -452,37 +429,11 @@ func (h *Handler) ListPublicFiles(c *gin.Context) {
 		return
 	}
 
-	type FileItem struct {
-		Name         string    `json:"name"`
-		Path         string    `json:"path"`
-		Size         int64     `json:"size"`
-		IsDirectory  bool      `json:"is_directory"`
-		LastModified time.Time `json:"last_modified,omitzero"`
-	}
+	files := storageItemsToProto(items, "public/")
 
-	var files []FileItem
-	for _, item := range items {
-		relPath := strings.TrimPrefix(item.Key, "public/")
-		name := path.Base(relPath)
-		if item.IsDirectory {
-			relPath = strings.TrimPrefix(item.Key, "public/")
-			name = path.Base(strings.TrimSuffix(relPath, "/"))
-			if name == "." || name == "" {
-				continue
-			}
-		}
-		files = append(files, FileItem{
-			Name:         name,
-			Path:         relPath,
-			Size:         item.Size,
-			IsDirectory:  item.IsDirectory,
-			LastModified: item.LastModified,
-		})
-	}
-
-	response.OK(c, gin.H{
-		"path":  reqPath,
-		"files": files,
+	protobind.OK(c, &sacv1.FileListResponse{
+		Path:  reqPath,
+		Files: files,
 	})
 }
 
@@ -519,11 +470,13 @@ func (h *Handler) CreatePublicDirectory(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		Path string `json:"path" binding:"required"`
+	req := &sacv1.CreatePublicDirectoryRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "path is required", err)
+
+	if req.Path == "" {
+		response.BadRequest(c, "path is required")
 		return
 	}
 
@@ -539,7 +492,7 @@ func (h *Handler) CreatePublicDirectory(c *gin.Context) {
 		return
 	}
 
-	response.Created(c, gin.H{"path": dirPath})
+	protobind.Created(c, &sacv1.DirectoryResponse{Path: dirPath})
 }
 
 // UploadPublic handles file upload to public workspace (admin only).
@@ -604,7 +557,7 @@ func (h *Handler) UploadPublic(c *gin.Context) {
 	// Sync public file to all active pods in background
 	go h.syncSvc.SyncPublicFileToPods(context.Background(), ossKey, filePath+header.Filename)
 
-	response.Created(c, wf)
+	protobind.Created(c, convert.WorkspaceFileToProto(wf))
 }
 
 // DeletePublicFile deletes a file from public workspace (admin only).
@@ -647,7 +600,7 @@ func (h *Handler) DeletePublicFile(c *gin.Context) {
 	// Delete public file from all active pods in background
 	go h.syncSvc.DeletePublicFileFromPods(context.Background(), filePath)
 
-	response.Success(c, "File deleted")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "File deleted"})
 }
 
 // SyncToPod triggers a full workspace re-sync from OSS to the agent's pod.
@@ -656,23 +609,25 @@ func (h *Handler) SyncToPod(c *gin.Context) {
 	userIDInt := userID.(int64)
 	userIDStr := fmt.Sprintf("%d", userIDInt)
 
-	var req struct {
-		AgentID int64 `json:"agent_id" binding:"required"`
+	req := &sacv1.SyncToPodRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.AgentID <= 0 {
+
+	if req.AgentId <= 0 {
 		response.BadRequest(c, "agent_id is required")
 		return
 	}
 
 	ctx := context.Background()
 
-	if err := h.syncSvc.SyncWorkspaceToPod(ctx, userIDStr, req.AgentID); err != nil {
-		log.Printf("Workspace sync failed for user %s agent %d: %v", userIDStr, req.AgentID, err)
+	if err := h.syncSvc.SyncWorkspaceToPod(ctx, userIDStr, req.AgentId); err != nil {
+		log.Printf("Workspace sync failed for user %s agent %d: %v", userIDStr, req.AgentId, err)
 		response.InternalError(c, "Workspace sync failed", err)
 		return
 	}
 
-	response.Success(c, "Workspace synced to pod")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Workspace synced to pod"})
 }
 
 // SyncToPodStream triggers a full workspace sync with SSE progress events.
@@ -771,6 +726,32 @@ func (h *Handler) recalcQuota(ctx context.Context, userID, agentID int64) {
 		Set("updated_at = ?", time.Now()).
 		Where("user_id = ? AND agent_id = ?", userID, agentID).
 		Exec(ctx)
+}
+
+// storageItemsToProto converts storage list items to proto FileItem messages.
+func storageItemsToProto(items []storage.ObjectInfo, basePrefix string) []*sacv1.FileItem {
+	var files []*sacv1.FileItem
+	for _, item := range items {
+		relPath := strings.TrimPrefix(item.Key, basePrefix)
+		name := path.Base(relPath)
+		if item.IsDirectory {
+			name = path.Base(strings.TrimSuffix(relPath, "/"))
+			if name == "." || name == "" {
+				continue
+			}
+		}
+		fi := &sacv1.FileItem{
+			Name:        name,
+			Path:        relPath,
+			Size:        item.Size,
+			IsDirectory: item.IsDirectory,
+		}
+		if !item.LastModified.IsZero() {
+			fi.LastModified = timestamppb.New(item.LastModified)
+		}
+		files = append(files, fi)
+	}
+	return files
 }
 
 // sanitizePath cleans a file path, preventing directory traversal.

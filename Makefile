@@ -1,7 +1,8 @@
 .PHONY: dev stop build build-api build-ws kill-port frontend backend telepresence status \
        docker-build docker-push docker-build-api docker-build-ws docker-build-fe docker-build-cc \
        docker-build-ow docker-push-api docker-push-ws docker-push-fe docker-push-cc docker-push-ow \
-       helm-deploy helm-upgrade helm-dry-run helm-uninstall helm-dep-update
+       helm-deploy helm-upgrade helm-dry-run helm-uninstall helm-dep-update \
+       proto proto-go proto-ts
 
 # Ports
 API_PORT  := 8080
@@ -234,3 +235,59 @@ restart:
 			;; \
 		*) echo "Usage: make restart SVC=api-gateway|ws-proxy|frontend" ;; \
 	esac
+
+# ============================================================
+# Protobuf Code Generation
+# ============================================================
+
+PROTO_DIR   := backend/proto
+PROTO_FILES := $(shell find $(PROTO_DIR) -name '*.proto' 2>/dev/null)
+GO_GEN_DIR  := backend/gen
+TS_GEN_DIR  := frontend/src/generated
+
+## Generate Go code from proto files
+proto-go:
+	@rm -rf $(GO_GEN_DIR) && mkdir -p $(GO_GEN_DIR)
+	@protoc -I$(PROTO_DIR) \
+		--go_out=$(GO_GEN_DIR) --go_opt=paths=source_relative \
+		$(PROTO_FILES)
+	@echo "==> Go proto generated"
+
+## Generate TypeScript types from proto files
+proto-ts:
+	@rm -rf $(TS_GEN_DIR) && mkdir -p $(TS_GEN_DIR)
+	@protoc -I$(PROTO_DIR) \
+		--plugin=./frontend/node_modules/.bin/protoc-gen-ts_proto \
+		--ts_proto_out=$(TS_GEN_DIR) \
+		--ts_proto_opt=onlyTypes=true,snakeToCamel=false,useOptionals=messages,useDate=string,outputJsonMethods=false,outputEncodeMethods=false,outputClientImpl=false \
+		$(PROTO_FILES)
+	@echo "==> TypeScript proto generated"
+
+## Generate both Go and TypeScript from proto files
+proto: proto-go proto-ts
+
+# ============================================================
+# Testing
+# ============================================================
+
+## Run all tests
+test:
+	@echo "==> Running tests"
+	@cd $(BACKEND) && go test ./... -v
+
+## Run tests with coverage report
+test-coverage:
+	@echo "==> Running tests with coverage"
+	@cd $(BACKEND) && go test ./... -coverprofile=coverage.out
+	@cd $(BACKEND) && go tool cover -html=coverage.out -o coverage.html
+	@echo "==> Coverage report: backend/coverage.html"
+
+## Run tests with verbose output
+test-verbose:
+	@echo "==> Running tests (verbose)"
+	@cd $(BACKEND) && go test ./... -v -count=1
+
+## Run tests for specific package (usage: make test-pkg PKG=auth)
+test-pkg:
+	@echo "==> Testing package: $(PKG)"
+	@cd $(BACKEND) && go test ./internal/$(PKG)/... -v

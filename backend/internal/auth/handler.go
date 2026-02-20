@@ -4,7 +4,10 @@ import (
 	"context"
 	"time"
 
+	sacv1 "g.echo.tech/dev/sac/gen/sac/v1"
+	"g.echo.tech/dev/sac/internal/convert"
 	"g.echo.tech/dev/sac/internal/models"
+	"g.echo.tech/dev/sac/pkg/protobind"
 	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/uptrace/bun"
@@ -20,15 +23,17 @@ func NewHandler(db *bun.DB, jwtService *JWTService) *Handler {
 }
 
 func (h *Handler) Register(c *gin.Context) {
-	var req struct {
-		Username    string `json:"username" binding:"required"`
-		Email       string `json:"email" binding:"required,email"`
-		Password    string `json:"password" binding:"required,min=6"`
-		DisplayName string `json:"display_name"`
+	req := &sacv1.RegisterRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request body", err)
+	if req.Username == "" || req.Email == "" || req.Password == "" {
+		response.BadRequest(c, "username, email, and password are required")
+		return
+	}
+	if len(req.Password) < 6 {
+		response.BadRequest(c, "password must be at least 6 characters")
 		return
 	}
 
@@ -75,20 +80,20 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
-	response.Created(c, gin.H{
-		"token": token,
-		"user":  user,
+	protobind.Created(c, &sacv1.AuthResponse{
+		Token: token,
+		User:  convert.UserToProto(user),
 	})
 }
 
 func (h *Handler) Login(c *gin.Context) {
-	var req struct {
-		Username string `json:"username" binding:"required"`
-		Password string `json:"password" binding:"required"`
+	req := &sacv1.LoginRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request body", err)
+	if req.Username == "" || req.Password == "" {
+		response.BadRequest(c, "username and password are required")
 		return
 	}
 
@@ -114,9 +119,9 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, gin.H{
-		"token": token,
-		"user":  user,
+	protobind.OK(c, &sacv1.AuthResponse{
+		Token: token,
+		User:  convert.UserToProto(&user),
 	})
 }
 
@@ -131,7 +136,7 @@ func (h *Handler) GetCurrentUser(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, user)
+	protobind.OK(c, convert.UserToProto(&user))
 }
 
 func (h *Handler) SearchUsers(c *gin.Context) {
@@ -153,7 +158,11 @@ func (h *Handler) SearchUsers(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, users)
+	result := make([]*sacv1.UserBrief, len(users))
+	for i := range users {
+		result[i] = convert.UserBriefToProto(&users[i])
+	}
+	protobind.OK(c, &sacv1.UserBriefListResponse{Users: result})
 }
 
 func (h *Handler) RegisterRoutes(public *gin.RouterGroup, protected *gin.RouterGroup) {

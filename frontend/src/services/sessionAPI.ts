@@ -1,28 +1,10 @@
 import api from './api'
+import type { Session, CreateSessionResponse, UserSessionListResponse } from '../generated/sac/v1/session'
 
-export interface Session {
-  id: number
-  user_id: number
-  agent_id: number
-  session_id: string
-  pod_name: string
-  pod_ip: string
-  status: 'creating' | 'running' | 'idle' | 'stopped' | 'deleted'
-  last_active: string
-  created_at: string
-  updated_at: string
-}
+export type { Session, CreateSessionResponse }
 
 export interface CreateSessionRequest {
   agent_id?: number
-}
-
-export interface CreateSessionResponse {
-  session_id: string
-  status: string
-  pod_name?: string
-  created_at: string
-  is_new?: boolean
 }
 
 /**
@@ -50,8 +32,8 @@ export async function getSession(sessionId: string): Promise<Session> {
  * List all sessions for current user
  */
 export async function listSessions(): Promise<Session[]> {
-  const response = await api.get<Session[]>('/sessions')
-  return response.data
+  const response = await api.get<UserSessionListResponse>('/sessions')
+  return response.data.sessions ?? []
 }
 
 /**

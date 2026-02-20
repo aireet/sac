@@ -1,47 +1,26 @@
 import api from './api'
+import type { Group, GroupMember, GroupListResponse, GroupMemberListResponse } from '../generated/sac/v1/group'
 
-export interface Group {
-  id: number
-  name: string
-  description: string
-  owner_id: number
-  claude_md_template: string
-  created_at: string
-  updated_at: string
-  owner?: {
-    id: number
-    username: string
-    display_name: string
-  }
-  member_count?: number
-}
+export type { Group, GroupMember }
 
-export interface GroupMember {
-  id: number
-  group_id: number
-  user_id: number
-  role: string // "admin" | "member"
-  created_at: string
-  user?: {
-    id: number
-    username: string
-    display_name: string
-  }
-}
+// Backend returns GroupListResponse with groups field.
+// Flatten to match existing frontend usage where member_count is on Group.
+type FlatGroup = Group & { member_count?: number }
+export type { FlatGroup as GroupFlat }
 
-export const listGroups = async (): Promise<Group[]> => {
-  const response = await api.get('/groups')
-  return response.data
+export const listGroups = async (): Promise<FlatGroup[]> => {
+  const response = await api.get<GroupListResponse>('/groups')
+  return (response.data.groups ?? []).map(g => ({ ...g.group!, member_count: g.member_count }))
 }
 
 export const getGroup = async (id: number): Promise<Group> => {
-  const response = await api.get(`/groups/${id}`)
+  const response = await api.get<Group>(`/groups/${id}`)
   return response.data
 }
 
 export const listMembers = async (groupId: number): Promise<GroupMember[]> => {
-  const response = await api.get(`/groups/${groupId}/members`)
-  return response.data
+  const response = await api.get<GroupMemberListResponse>(`/groups/${groupId}/members`)
+  return response.data.members ?? []
 }
 
 export const getGroupTemplate = async (groupId: number): Promise<string> => {

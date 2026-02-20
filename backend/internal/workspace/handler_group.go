@@ -10,7 +10,10 @@ import (
 	"strings"
 	"time"
 
+	sacv1 "g.echo.tech/dev/sac/gen/sac/v1"
+	"g.echo.tech/dev/sac/internal/convert"
 	"g.echo.tech/dev/sac/internal/models"
+	"g.echo.tech/dev/sac/pkg/protobind"
 	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 )
@@ -74,37 +77,12 @@ func (h *Handler) ListGroupFiles(c *gin.Context) {
 		return
 	}
 
-	type FileItem struct {
-		Name         string    `json:"name"`
-		Path         string    `json:"path"`
-		Size         int64     `json:"size"`
-		IsDirectory  bool      `json:"is_directory"`
-		LastModified time.Time `json:"last_modified,omitzero"`
-	}
-
 	basePrefix := groupOSSKeyPrefix(groupID)
-	var files []FileItem
-	for _, item := range items {
-		relPath := strings.TrimPrefix(item.Key, basePrefix)
-		name := path.Base(relPath)
-		if item.IsDirectory {
-			name = path.Base(strings.TrimSuffix(relPath, "/"))
-			if name == "." || name == "" {
-				continue
-			}
-		}
-		files = append(files, FileItem{
-			Name:         name,
-			Path:         relPath,
-			Size:         item.Size,
-			IsDirectory:  item.IsDirectory,
-			LastModified: item.LastModified,
-		})
-	}
+	files := storageItemsToProto(items, basePrefix)
 
-	response.OK(c, gin.H{
-		"path":  reqPath,
-		"files": files,
+	protobind.OK(c, &sacv1.FileListResponse{
+		Path:  reqPath,
+		Files: files,
 	})
 }
 
@@ -229,7 +207,7 @@ func (h *Handler) UploadGroup(c *gin.Context) {
 	// Sync to active pods of group members in background
 	go h.syncSvc.SyncGroupFileToPods(context.Background(), groupID, ossKey, filePath+header.Filename)
 
-	response.Created(c, wf)
+	protobind.Created(c, convert.WorkspaceFileToProto(wf))
 }
 
 // CreateGroupDirectory creates a directory in group workspace.
@@ -238,17 +216,18 @@ func (h *Handler) CreateGroupDirectory(c *gin.Context) {
 	userID, _ := c.Get("userID")
 	userIDInt := userID.(int64)
 
-	var req struct {
-		Path    string `json:"path" binding:"required"`
-		GroupID int64  `json:"group_id" binding:"required"`
+	req := &sacv1.CreateGroupDirectoryRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "path and group_id are required", err)
+
+	if req.GroupId == 0 || req.Path == "" {
+		response.BadRequest(c, "path and group_id are required")
 		return
 	}
 
 	ctx := context.Background()
-	if !h.isGroupMember(ctx, req.GroupID, userIDInt) {
+	if !h.isGroupMember(ctx, req.GroupId, userIDInt) {
 		response.Forbidden(c, "Not a member of this group")
 		return
 	}
@@ -258,14 +237,14 @@ func (h *Handler) CreateGroupDirectory(c *gin.Context) {
 		dirPath += "/"
 	}
 
-	ossKey := groupOSSKeyPrefix(req.GroupID) + dirPath
+	ossKey := groupOSSKeyPrefix(req.GroupId) + dirPath
 
 	if err := oss.Upload(c.Request.Context(), ossKey, strings.NewReader(""), 0, "application/x-directory"); err != nil {
 		response.InternalError(c, "Failed to create directory", err)
 		return
 	}
 
-	response.Created(c, gin.H{"path": dirPath})
+	protobind.Created(c, &sacv1.DirectoryResponse{Path: dirPath})
 }
 
 // DeleteGroupFile deletes a file from a group workspace.
@@ -315,7 +294,7 @@ func (h *Handler) DeleteGroupFile(c *gin.Context) {
 
 	go h.syncSvc.DeleteGroupFileFromPods(context.Background(), groupID, filePath)
 
-	response.Success(c, "File deleted")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "File deleted"})
 }
 
 // GetGroupQuota returns a group's workspace quota.
@@ -335,7 +314,7 @@ func (h *Handler) GetGroupQuota(c *gin.Context) {
 	}
 
 	quota := h.getOrCreateGroupQuota(ctx, groupID)
-	response.OK(c, quota)
+	protobind.OK(c, convert.GroupWorkspaceQuotaToProto(quota))
 }
 
 // --- Group quota helpers ---

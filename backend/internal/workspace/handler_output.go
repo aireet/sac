@@ -13,7 +13,10 @@ import (
 	"strings"
 	"time"
 
+	sacv1 "g.echo.tech/dev/sac/gen/sac/v1"
+	"g.echo.tech/dev/sac/internal/convert"
 	"g.echo.tech/dev/sac/internal/models"
+	"g.echo.tech/dev/sac/pkg/protobind"
 	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -128,25 +131,25 @@ func (h *Handler) InternalOutputUpload(c *gin.Context) {
 		})
 	}
 
-	response.Created(c, wf)
+	protobind.Created(c, convert.WorkspaceFileToProto(wf))
 }
 
 // InternalOutputDelete handles file deletion from sidecar.
 func (h *Handler) InternalOutputDelete(c *gin.Context) {
 	oss := h.getOSS(c)
 
-	var req struct {
-		UserID  int64  `json:"user_id" binding:"required"`
-		AgentID int64  `json:"agent_id" binding:"required"`
-		Path    string `json:"path" binding:"required"`
+	req := &sacv1.InternalOutputDeleteRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "user_id, agent_id, and path are required", err)
+
+	if req.UserId == 0 || req.AgentId == 0 || req.Path == "" {
+		response.BadRequest(c, "user_id, agent_id, and path are required")
 		return
 	}
 
 	filePath := sanitizePath(req.Path)
-	ossKey := outputOSSKeyPrefix(req.UserID, req.AgentID) + filePath
+	ossKey := outputOSSKeyPrefix(req.UserId, req.AgentId) + filePath
 
 	ctx := context.Background()
 
@@ -156,7 +159,7 @@ func (h *Handler) InternalOutputDelete(c *gin.Context) {
 			return
 		}
 		_, _ = h.db.NewDelete().Model((*models.WorkspaceFile)(nil)).
-			Where("user_id = ? AND agent_id = ? AND workspace_type = 'output' AND oss_key LIKE ?", req.UserID, req.AgentID, ossKey+"%").
+			Where("user_id = ? AND agent_id = ? AND workspace_type = 'output' AND oss_key LIKE ?", req.UserId, req.AgentId, ossKey+"%").
 			Exec(ctx)
 	} else {
 		if err := oss.Delete(ctx, ossKey); err != nil {
@@ -170,14 +173,14 @@ func (h *Handler) InternalOutputDelete(c *gin.Context) {
 
 	// Notify subscribers via Redis
 	if h.hub != nil {
-		h.hub.Publish(ctx, req.UserID, req.AgentID, OutputEvent{
+		h.hub.Publish(ctx, req.UserId, req.AgentId, OutputEvent{
 			Action: "delete",
 			Path:   filePath,
 			Name:   path.Base(filePath),
 		})
 	}
 
-	response.Success(c, "File deleted")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "File deleted"})
 }
 
 // ListOutputFiles lists files in the user's agent output workspace.
@@ -200,37 +203,12 @@ func (h *Handler) ListOutputFiles(c *gin.Context) {
 		return
 	}
 
-	type FileItem struct {
-		Name         string    `json:"name"`
-		Path         string    `json:"path"`
-		Size         int64     `json:"size"`
-		IsDirectory  bool      `json:"is_directory"`
-		LastModified time.Time `json:"last_modified,omitzero"`
-	}
-
 	basePrefix := outputOSSKeyPrefix(userIDInt, agentID)
-	var files []FileItem
-	for _, item := range items {
-		relPath := strings.TrimPrefix(item.Key, basePrefix)
-		name := path.Base(relPath)
-		if item.IsDirectory {
-			name = path.Base(strings.TrimSuffix(relPath, "/"))
-			if name == "." || name == "" {
-				continue
-			}
-		}
-		files = append(files, FileItem{
-			Name:         name,
-			Path:         relPath,
-			Size:         item.Size,
-			IsDirectory:  item.IsDirectory,
-			LastModified: item.LastModified,
-		})
-	}
+	files := storageItemsToProto(items, basePrefix)
 
-	response.OK(c, gin.H{
-		"path":  reqPath,
-		"files": files,
+	protobind.OK(c, &sacv1.FileListResponse{
+		Path:  reqPath,
+		Files: files,
 	})
 }
 
@@ -320,7 +298,7 @@ func (h *Handler) DeleteOutputFile(c *gin.Context) {
 		})
 	}
 
-	response.Success(c, "File deleted")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "File deleted"})
 }
 
 // ---- Shared Links ----
@@ -330,17 +308,18 @@ func (h *Handler) CreateShare(c *gin.Context) {
 	userID, _ := c.Get("userID")
 	userIDInt := userID.(int64)
 
-	var req struct {
-		AgentID int64  `json:"agent_id" binding:"required"`
-		Path    string `json:"path" binding:"required"`
+	req := &sacv1.CreateShareRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "agent_id and path are required", err)
+
+	if req.AgentId == 0 || req.Path == "" {
+		response.BadRequest(c, "agent_id and path are required")
 		return
 	}
 
 	filePath := sanitizePath(req.Path)
-	ossKey := outputOSSKeyPrefix(userIDInt, req.AgentID) + filePath
+	ossKey := outputOSSKeyPrefix(userIDInt, req.AgentId) + filePath
 	fileName := path.Base(filePath)
 
 	ctx := context.Background()
@@ -348,13 +327,13 @@ func (h *Handler) CreateShare(c *gin.Context) {
 	// Check if already shared
 	var existing models.SharedLink
 	err := h.db.NewSelect().Model(&existing).
-		Where("user_id = ? AND agent_id = ? AND file_path = ?", userIDInt, req.AgentID, filePath).
+		Where("user_id = ? AND agent_id = ? AND file_path = ?", userIDInt, req.AgentId, filePath).
 		Scan(ctx)
 	if err == nil {
 		// Already shared, return existing link
-		response.OK(c, gin.H{
-			"short_code": existing.ShortCode,
-			"url":        "/s/" + existing.ShortCode,
+		protobind.OK(c, &sacv1.ShareResponse{
+			ShortCode: existing.ShortCode,
+			Url:       "/s/" + existing.ShortCode,
 		})
 		return
 	}
@@ -378,7 +357,7 @@ func (h *Handler) CreateShare(c *gin.Context) {
 	link := &models.SharedLink{
 		ShortCode: shortCode,
 		UserID:    userIDInt,
-		AgentID:   req.AgentID,
+		AgentID:   req.AgentId,
 		FilePath:  filePath,
 		OSSKey:    ossKey,
 		FileName:  fileName,
@@ -391,9 +370,9 @@ func (h *Handler) CreateShare(c *gin.Context) {
 		return
 	}
 
-	response.Created(c, gin.H{
-		"short_code": shortCode,
-		"url":        "/s/" + shortCode,
+	protobind.Created(c, &sacv1.ShareResponse{
+		ShortCode: shortCode,
+		Url:       "/s/" + shortCode,
 	})
 }
 
@@ -423,7 +402,7 @@ func (h *Handler) DeleteShare(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, "Share link deleted")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Share link deleted"})
 }
 
 // GetSharedFileMeta returns metadata for a shared file (public, no auth).
@@ -452,10 +431,10 @@ func (h *Handler) GetSharedFileMeta(c *gin.Context) {
 		Where("oss_key = ?", link.OSSKey).
 		Scan(ctx, &sizeBytes)
 
-	response.OK(c, gin.H{
-		"file_name":    link.FileName,
-		"content_type": contentType,
-		"size_bytes":   sizeBytes,
+	protobind.OK(c, &sacv1.SharedFileMeta{
+		FileName:    link.FileName,
+		ContentType: contentType,
+		SizeBytes:   sizeBytes,
 	})
 }
 

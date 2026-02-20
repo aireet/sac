@@ -1,0 +1,36 @@
+syntax = "proto3";
+package sac.v1;
+option go_package = "g.echo.tech/dev/sac/gen/sac/v1;sacv1";
+
+import "google/protobuf/timestamp.proto";
+
+message FileItem {
+  string name = 1;
+  string path = 2;
+  int64 size = 3;
+  bool is_directory = 4;
+  google.protobuf.Timestamp last_modified = 5;
+}
+
+message FileListResponse {
+  string path = 1;
+  repeated FileItem files = 2;
+}
+
+message DirectoryResponse {
+  string path = 1;
+}
+
+message UserBrief {
+  int64 id = 1;
+  string username = 2;
+  string display_name = 3;
+}
+
+message SuccessMessage {
+  string message = 1;
+}
+
+message ErrorMessage {
+  string error = 1;
+}

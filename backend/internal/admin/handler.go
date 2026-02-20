@@ -8,11 +8,15 @@ import (
 	"strconv"
 	"time"
 
+	sacv1 "g.echo.tech/dev/sac/gen/sac/v1"
 	"g.echo.tech/dev/sac/internal/container"
+	"g.echo.tech/dev/sac/internal/convert"
 	"g.echo.tech/dev/sac/internal/models"
+	"g.echo.tech/dev/sac/pkg/protobind"
 	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/uptrace/bun"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -33,25 +37,26 @@ func (h *Handler) GetSettings(c *gin.Context) {
 		response.InternalError(c, "Failed to fetch settings", err)
 		return
 	}
-	response.OK(c, settings)
+	protobind.OK(c, &sacv1.SystemSettingListResponse{Settings: convert.SystemSettingsToProto(settings)})
 }
 
 func (h *Handler) UpdateSetting(c *gin.Context) {
 	key := c.Param("key")
 
-	var req struct {
-		Value       models.SettingValue `json:"value" binding:"required"`
-		Description *string             `json:"description"`
+	req := &sacv1.UpdateSettingRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request body", err)
+
+	if req.Value == nil {
+		response.BadRequest(c, "value is required")
 		return
 	}
 
 	ctx := context.Background()
 
 	q := h.db.NewUpdate().Model((*models.SystemSetting)(nil)).
-		Set("value = ?", req.Value).
+		Set("value = ?", convert.ProtoValueToSettingValue(req.Value)).
 		Set("updated_at = ?", time.Now()).
 		Where("key = ?", key)
 
@@ -70,22 +75,22 @@ func (h *Handler) UpdateSetting(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, "Setting updated")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Setting updated"})
 }
 
 func (h *Handler) GetUsers(c *gin.Context) {
 	ctx := context.Background()
 
-	type GroupBrief struct {
-		ID   int64  `json:"id"`
-		Name string `json:"name"`
-		Role string `json:"role"`
-	}
-
 	type UserWithCount struct {
 		models.User
-		AgentCount int          `bun:"agent_count" json:"agent_count"`
-		Groups     []GroupBrief `bun:"-" json:"groups"`
+		AgentCount int `bun:"agent_count"`
+	}
+
+	type memberRow struct {
+		UserID    int64  `bun:"user_id"`
+		GroupID   int64  `bun:"group_id"`
+		GroupName string `bun:"group_name"`
+		Role      string `bun:"role"`
 	}
 
 	var users []UserWithCount
@@ -101,18 +106,13 @@ func (h *Handler) GetUsers(c *gin.Context) {
 	}
 
 	// Batch-load group memberships for all users
+	groupMap := make(map[int64][]memberRow)
 	if len(users) > 0 {
 		userIDs := make([]int64, len(users))
 		for i, u := range users {
 			userIDs[i] = u.ID
 		}
 
-		type memberRow struct {
-			UserID    int64  `bun:"user_id"`
-			GroupID   int64  `bun:"group_id"`
-			GroupName string `bun:"group_name"`
-			Role      string `bun:"role"`
-		}
 		var rows []memberRow
 		_ = h.db.NewSelect().
 			TableExpr("group_members AS gm").
@@ -124,21 +124,32 @@ func (h *Handler) GetUsers(c *gin.Context) {
 			Where("gm.user_id IN (?)", bun.In(userIDs)).
 			Scan(ctx, &rows)
 
-		groupMap := make(map[int64][]GroupBrief)
 		for _, r := range rows {
-			groupMap[r.UserID] = append(groupMap[r.UserID], GroupBrief{
-				ID: r.GroupID, Name: r.GroupName, Role: r.Role,
-			})
-		}
-		for i := range users {
-			users[i].Groups = groupMap[users[i].ID]
-			if users[i].Groups == nil {
-				users[i].Groups = []GroupBrief{}
-			}
+			groupMap[r.UserID] = append(groupMap[r.UserID], r)
 		}
 	}
 
-	response.OK(c, users)
+	result := make([]*sacv1.AdminUser, len(users))
+	for i, u := range users {
+		gRows := groupMap[u.ID]
+		groups := make([]*sacv1.AdminGroupBrief, len(gRows))
+		for j, g := range gRows {
+			groups[j] = &sacv1.AdminGroupBrief{Id: g.GroupID, Name: g.GroupName, Role: g.Role}
+		}
+		result[i] = &sacv1.AdminUser{
+			Id:          u.ID,
+			Username:    u.Username,
+			Email:       u.Email,
+			DisplayName: u.DisplayName,
+			Role:        u.Role,
+			AgentCount:  int32(u.AgentCount),
+			Groups:      groups,
+			CreatedAt:   timestamppb.New(u.CreatedAt),
+			UpdatedAt:   timestamppb.New(u.UpdatedAt),
+		}
+	}
+
+	protobind.OK(c, &sacv1.AdminUserListResponse{Users: result})
 }
 
 func (h *Handler) UpdateUserRole(c *gin.Context) {
@@ -148,11 +159,13 @@ func (h *Handler) UpdateUserRole(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		Role string `json:"role" binding:"required,oneof=user admin"`
+	req := &sacv1.UpdateUserRoleRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request body", err)
+
+	if req.Role != "user" && req.Role != "admin" {
+		response.BadRequest(c, "role must be 'user' or 'admin'")
 		return
 	}
 
@@ -172,7 +185,7 @@ func (h *Handler) UpdateUserRole(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, "Role updated")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Role updated"})
 }
 
 func (h *Handler) GetUserSettings(c *gin.Context) {
@@ -196,7 +209,7 @@ func (h *Handler) GetUserSettings(c *gin.Context) {
 	if settings == nil {
 		settings = []models.UserSetting{}
 	}
-	response.OK(c, settings)
+	protobind.OK(c, &sacv1.UserSettingListResponse{Settings: convert.UserSettingsToProto(settings)})
 }
 
 func (h *Handler) SetUserSetting(c *gin.Context) {
@@ -207,11 +220,13 @@ func (h *Handler) SetUserSetting(c *gin.Context) {
 	}
 	key := c.Param("key")
 
-	var req struct {
-		Value models.SettingValue `json:"value" binding:"required"`
+	req := &sacv1.SetUserSettingRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request body", err)
+
+	if req.Value == nil {
+		response.BadRequest(c, "value is required")
 		return
 	}
 
@@ -219,7 +234,7 @@ func (h *Handler) SetUserSetting(c *gin.Context) {
 	setting := &models.UserSetting{
 		UserID:    userID,
 		Key:       key,
-		Value:     req.Value,
+		Value:     convert.ProtoValueToSettingValue(req.Value),
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -234,7 +249,7 @@ func (h *Handler) SetUserSetting(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, "User setting updated")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "User setting updated"})
 }
 
 func (h *Handler) DeleteUserSetting(c *gin.Context) {
@@ -254,7 +269,7 @@ func (h *Handler) DeleteUserSetting(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, "User setting deleted")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "User setting deleted"})
 }
 
 func (h *Handler) GetUserAgents(c *gin.Context) {
@@ -280,33 +295,22 @@ func (h *Handler) GetUserAgents(c *gin.Context) {
 		return
 	}
 
-	type agentWithStatus struct {
-		models.Agent
-		PodStatus     string `json:"pod_status"`
-		RestartCount  int32  `json:"restart_count"`
-		CPURequest    string `json:"cpu_request"`
-		CPULimit      string `json:"cpu_limit"`
-		MemoryRequest string `json:"memory_request"`
-		MemoryLimit   string `json:"memory_limit"`
-		Image         string `json:"image"`
-	}
-
-	result := make([]agentWithStatus, 0, len(agents))
+	result := make([]*sacv1.AgentWithStatus, 0, len(agents))
 	for _, a := range agents {
 		info := h.containerManager.GetStatefulSetPodInfo(ctx, userIDStr, a.ID)
-		result = append(result, agentWithStatus{
-			Agent:         a,
+		result = append(result, &sacv1.AgentWithStatus{
+			Agent:         convert.AgentToProto(&a),
 			PodStatus:     info.Status,
 			RestartCount:  info.RestartCount,
-			CPURequest:    info.CPURequest,
-			CPULimit:      info.CPULimit,
+			CpuRequest:    info.CPURequest,
+			CpuLimit:      info.CPULimit,
 			MemoryRequest: info.MemoryRequest,
 			MemoryLimit:   info.MemoryLimit,
 			Image:         info.Image,
 		})
 	}
 
-	response.OK(c, result)
+	protobind.OK(c, &sacv1.AgentWithStatusListResponse{Agents: result})
 }
 
 func (h *Handler) DeleteUserAgent(c *gin.Context) {
@@ -357,7 +361,7 @@ func (h *Handler) DeleteUserAgent(c *gin.Context) {
 		log.Printf("Warning: failed to delete StatefulSet for agent %d: %v", agentID, err)
 	}
 
-	response.Success(c, "Agent deleted successfully")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Agent deleted successfully"})
 }
 
 func (h *Handler) RestartUserAgent(c *gin.Context) {
@@ -409,7 +413,7 @@ func (h *Handler) RestartUserAgent(c *gin.Context) {
 	}
 
 	log.Printf("Admin restarted agent %d (deleted StatefulSet) for user %d", agentID, userID)
-	response.Success(c, "Agent is restarting")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Agent is restarting"})
 }
 
 func (h *Handler) UpdateAgentResources(c *gin.Context) {
@@ -424,14 +428,8 @@ func (h *Handler) UpdateAgentResources(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		CPURequest    *string `json:"cpu_request"`
-		CPULimit      *string `json:"cpu_limit"`
-		MemoryRequest *string `json:"memory_request"`
-		MemoryLimit   *string `json:"memory_limit"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request body", err)
+	req := &sacv1.UpdateAgentResourcesRequest{}
+	if !protobind.Bind(c, req) {
 		return
 	}
 
@@ -451,18 +449,18 @@ func (h *Handler) UpdateAgentResources(c *gin.Context) {
 		Set("updated_at = ?", time.Now()).
 		Where("id = ?", agentID)
 
-	if req.CPURequest != nil {
-		if *req.CPURequest == "" {
+	if req.CpuRequest != nil {
+		if *req.CpuRequest == "" {
 			q = q.Set("cpu_request = NULL")
 		} else {
-			q = q.Set("cpu_request = ?", *req.CPURequest)
+			q = q.Set("cpu_request = ?", *req.CpuRequest)
 		}
 	}
-	if req.CPULimit != nil {
-		if *req.CPULimit == "" {
+	if req.CpuLimit != nil {
+		if *req.CpuLimit == "" {
 			q = q.Set("cpu_limit = NULL")
 		} else {
-			q = q.Set("cpu_limit = ?", *req.CPULimit)
+			q = q.Set("cpu_limit = ?", *req.CpuLimit)
 		}
 	}
 	if req.MemoryRequest != nil {
@@ -486,7 +484,7 @@ func (h *Handler) UpdateAgentResources(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, "Agent resources updated. Restart agent to apply.")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Agent resources updated. Restart agent to apply."})
 }
 
 func (h *Handler) UpdateAgentImage(c *gin.Context) {
@@ -501,11 +499,13 @@ func (h *Handler) UpdateAgentImage(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		Image string `json:"image" binding:"required"`
+	req := &sacv1.UpdateAgentImageRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request body", err)
+
+	if req.Image == "" {
+		response.BadRequest(c, "image is required")
 		return
 	}
 
@@ -544,15 +544,17 @@ func (h *Handler) UpdateAgentImage(c *gin.Context) {
 		Exec(ctx)
 
 	log.Printf("Admin updated agent %d image to %s for user %d", agentID, req.Image, userID)
-	response.Success(c, "Agent image updated")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Agent image updated"})
 }
 
 func (h *Handler) BatchUpdateImage(c *gin.Context) {
-	var req struct {
-		Image string `json:"image" binding:"required"`
+	req := &sacv1.BatchUpdateImageRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request body", err)
+
+	if req.Image == "" {
+		response.BadRequest(c, "image is required")
 		return
 	}
 
@@ -604,11 +606,16 @@ func (h *Handler) BatchUpdateImage(c *gin.Context) {
 		})).
 		Exec(ctx)
 
-	response.OK(c, gin.H{
-		"total":   len(stsList.Items),
-		"updated": updated,
-		"failed":  failed,
-		"errors":  errors,
+	batchErrors := make([]*sacv1.BatchUpdateError, len(errors))
+	for i, e := range errors {
+		batchErrors[i] = &sacv1.BatchUpdateError{Name: e.Name, Error: e.Error}
+	}
+
+	protobind.OK(c, &sacv1.BatchUpdateImageResponse{
+		Total:   int32(len(stsList.Items)),
+		Updated: int32(updated),
+		Failed:  int32(failed),
+		Errors:  batchErrors,
 	})
 }
 
@@ -673,9 +680,24 @@ func (h *Handler) GetConversations(c *gin.Context) {
 		rows = []ConversationRow{}
 	}
 
-	response.OK(c, gin.H{
-		"conversations": rows,
-		"count":         len(rows),
+	convos := make([]*sacv1.AdminConversation, len(rows))
+	for i, r := range rows {
+		convos[i] = &sacv1.AdminConversation{
+			Id:        r.ID,
+			UserId:    r.UserID,
+			AgentId:   r.AgentID,
+			SessionId: r.SessionID,
+			Role:      r.Role,
+			Content:   r.Content,
+			Timestamp: timestamppb.New(r.Timestamp),
+			Username:  r.Username,
+			AgentName: r.AgentName,
+		}
+	}
+
+	protobind.OK(c, &sacv1.AdminConversationListResponse{
+		Conversations: convos,
+		Count:         int32(len(rows)),
 	})
 }
 

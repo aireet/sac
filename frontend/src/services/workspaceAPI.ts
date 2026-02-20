@@ -1,30 +1,19 @@
 import api, { getApiWsBaseUrl } from './api'
+import type { FileItem, FileListResponse } from '../generated/sac/v1/common'
+import type {
+  WorkspaceQuota,
+  GroupWorkspaceQuota,
+  ShareResponse,
+  SharedFileMeta,
+} from '../generated/sac/v1/workspace'
 
-export interface WorkspaceFile {
-  name: string
-  path: string
-  size: number
-  is_directory: boolean
-  last_modified?: string
-}
-
-export interface WorkspaceQuota {
-  user_id: number
-  agent_id: number
-  used_bytes: number
-  max_bytes: number
-  file_count: number
-  max_file_count: number
-}
-
-export interface ListFilesResponse {
-  path: string
-  files: WorkspaceFile[]
-}
+export type { FileListResponse, WorkspaceQuota, GroupWorkspaceQuota, SharedFileMeta }
+export type WorkspaceFile = FileItem
+export type ListFilesResponse = FileListResponse
 
 // ---- Private workspace (per-agent) ----
 
-export const listFiles = async (agentId: number, path = '/'): Promise<ListFilesResponse> => {
+export const listFiles = async (agentId: number, path = '/'): Promise<FileListResponse> => {
   const response = await api.get('/workspace/files', { params: { agent_id: agentId, path } })
   return response.data
 }
@@ -92,7 +81,7 @@ export const getQuota = async (agentId: number): Promise<WorkspaceQuota> => {
 
 // ---- Public workspace ----
 
-export const listPublicFiles = async (path = '/'): Promise<ListFilesResponse> => {
+export const listPublicFiles = async (path = '/'): Promise<FileListResponse> => {
   const response = await api.get('/workspace/public/files', { params: { path } })
   return response.data
 }
@@ -153,15 +142,7 @@ export const createPublicDirectory = async (path: string): Promise<void> => {
 
 // ---- Group workspace ----
 
-export interface GroupWorkspaceQuota {
-  group_id: number
-  used_bytes: number
-  max_bytes: number
-  file_count: number
-  max_file_count: number
-}
-
-export const listGroupFiles = async (groupId: number, path = '/'): Promise<ListFilesResponse> => {
+export const listGroupFiles = async (groupId: number, path = '/'): Promise<FileListResponse> => {
   const response = await api.get('/workspace/group/files', { params: { group_id: groupId, path } })
   return response.data
 }
@@ -229,7 +210,7 @@ export const getGroupQuota = async (groupId: number): Promise<GroupWorkspaceQuot
 
 // ---- Output workspace (read-only, populated by sidecar) ----
 
-export const listOutputFiles = async (agentId: number, path = '/'): Promise<ListFilesResponse> => {
+export const listOutputFiles = async (agentId: number, path = '/'): Promise<FileListResponse> => {
   const response = await api.get('/workspace/output/files', { params: { agent_id: agentId, path } })
   return response.data
 }
@@ -379,16 +360,7 @@ export const watchOutputFiles = (
 
 // ---- Shared links ----
 
-export interface ShareResult {
-  short_code: string
-  url: string
-}
-
-export interface SharedFileMeta {
-  file_name: string
-  content_type: string
-  size_bytes: number
-}
+export type ShareResult = ShareResponse
 
 export const shareOutputFile = async (agentId: number, path: string): Promise<ShareResult> => {
   const response = await api.post('/workspace/output/share', { agent_id: agentId, path })

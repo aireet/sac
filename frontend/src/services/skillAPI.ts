@@ -1,46 +1,11 @@
 import api from './api'
+import type { Skill, SkillParameter, CreateSkillRequest, SkillListResponse } from '../generated/sac/v1/skill'
 
-export interface SkillParameter {
-  name: string
-  label: string
-  type: 'text' | 'select' | 'date' | 'number'
-  required: boolean
-  default_value?: string
-  options?: string[]
-}
-
-export interface Skill {
-  id: number
-  name: string
-  description: string
-  icon: string
-  category: string
-  prompt: string
-  command_name: string
-  parameters?: SkillParameter[]
-  is_official: boolean
-  created_by: number
-  is_public: boolean
-  forked_from?: number
-  version: number
-  created_at: string
-  updated_at: string
-}
-
-export interface CreateSkillRequest {
-  name: string
-  description: string
-  icon: string
-  category: string
-  prompt: string
-  command_name?: string
-  parameters?: SkillParameter[]
-  is_public: boolean
-}
+export type { Skill, SkillParameter, CreateSkillRequest }
 
 export async function getSkills(): Promise<Skill[]> {
-  const response = await api.get('/skills')
-  return response.data
+  const response = await api.get<SkillListResponse>('/skills')
+  return response.data.skills ?? []
 }
 
 export async function getSkill(id: number): Promise<Skill> {
@@ -68,8 +33,8 @@ export async function forkSkill(id: number): Promise<Skill> {
 }
 
 export async function getPublicSkills(): Promise<Skill[]> {
-  const response = await api.get('/skills/public')
-  return response.data
+  const response = await api.get<SkillListResponse>('/skills/public')
+  return response.data.skills ?? []
 }
 
 export async function syncAgentSkills(agentId: number): Promise<void> {

@@ -8,15 +8,19 @@ import (
 	"strings"
 	"time"
 
+	sacv1 "g.echo.tech/dev/sac/gen/sac/v1"
 	"g.echo.tech/dev/sac/internal/admin"
 	"g.echo.tech/dev/sac/internal/container"
+	"g.echo.tech/dev/sac/internal/convert"
 	"g.echo.tech/dev/sac/internal/models"
 	"g.echo.tech/dev/sac/internal/skill"
 	"g.echo.tech/dev/sac/internal/workspace"
+	"g.echo.tech/dev/sac/pkg/protobind"
 	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type Handler struct {
@@ -37,18 +41,6 @@ func NewHandler(db *bun.DB, containerManager *container.Manager, syncService *sk
 	}
 }
 
-type CreateSessionRequest struct {
-	AgentID int64 `json:"agent_id"` // Optional: which agent to use
-}
-
-type CreateSessionResponse struct {
-	SessionID string               `json:"session_id"`
-	Status    models.SessionStatus `json:"status"`
-	PodName   string               `json:"pod_name,omitempty"`
-	CreatedAt time.Time            `json:"created_at"`
-	IsNew     bool                 `json:"is_new"`
-}
-
 // CreateSession creates or reuses a session using a per-agent StatefulSet.
 // If an active session already exists for the same user+agent pair with a
 // healthy pod, it is returned directly (GetOrCreate semantics). This allows
@@ -60,9 +52,9 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		return
 	}
 
-	var req CreateSessionRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		// Agent ID is optional, so ignore bind errors
+	req := &sacv1.CreateSessionRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
 
 	ctx := context.Background()
@@ -71,7 +63,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	userIDStr := fmt.Sprintf("%d", userIDInt)
 
 	// Require agentID
-	if req.AgentID <= 0 {
+	if req.AgentId <= 0 {
 		response.BadRequest(c, "agent_id is required")
 		return
 	}
@@ -81,7 +73,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	err := h.db.NewSelect().
 		Model(&existing).
 		Where("user_id = ?", userIDInt).
-		Where("agent_id = ?", req.AgentID).
+		Where("agent_id = ?", req.AgentId).
 		Where("status IN (?)", bun.In([]models.SessionStatus{
 			models.SessionStatusRunning,
 			models.SessionStatusIdle,
@@ -92,7 +84,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 
 	if err == nil {
 		// Found an existing session — verify the pod is still healthy
-		podIP, podErr := h.containerManager.GetStatefulSetPodIP(ctx, userIDStr, req.AgentID)
+		podIP, podErr := h.containerManager.GetStatefulSetPodIP(ctx, userIDStr, req.AgentId)
 		if podErr == nil && podIP != "" {
 			// Pod is healthy — reuse session, refresh pod_ip and last_active
 			now := time.Now()
@@ -105,13 +97,13 @@ func (h *Handler) CreateSession(c *gin.Context) {
 				Where("id = ?", existing.ID).
 				Exec(ctx)
 
-			log.Printf("Reusing existing session: sessionID=%s, agentID=%d, podIP=%s", existing.SessionID, req.AgentID, podIP)
+			log.Printf("Reusing existing session: sessionID=%s, agentID=%d, podIP=%s", existing.SessionID, req.AgentId, podIP)
 
-			response.Created(c, CreateSessionResponse{
-				SessionID: existing.SessionID,
-				Status:    models.SessionStatusRunning,
+			protobind.Created(c, &sacv1.CreateSessionResponse{
+				SessionId: existing.SessionID,
+				Status:    string(models.SessionStatusRunning),
 				PodName:   existing.PodName,
-				CreatedAt: existing.CreatedAt,
+				CreatedAt: timestamppb.New(existing.CreatedAt),
 			})
 			return
 		}
@@ -128,7 +120,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 
 	// --- Create new session ---
 	sessionID := uuid.New().String()
-	log.Printf("Creating session: userID=%s, sessionID=%s, agentID=%d", userIDStr, sessionID, req.AgentID)
+	log.Printf("Creating session: userID=%s, sessionID=%s, agentID=%d", userIDStr, sessionID, req.AgentId)
 
 	// Close sessions for OTHER agents (user can only have one active agent at a time)
 	_, err = h.db.NewUpdate().
@@ -136,7 +128,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		Set("status = ?", models.SessionStatusDeleted).
 		Set("updated_at = ?", time.Now()).
 		Where("user_id = ?", userIDInt).
-		Where("agent_id != ?", req.AgentID).
+		Where("agent_id != ?", req.AgentId).
 		Where("status IN (?)", bun.In([]models.SessionStatus{
 			models.SessionStatusRunning,
 			models.SessionStatusCreating,
@@ -152,12 +144,12 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	var agent models.Agent
 	err = h.db.NewSelect().
 		Model(&agent).
-		Where("id = ?", req.AgentID).
+		Where("id = ?", req.AgentId).
 		Where("created_by = ?", userIDInt).
 		Scan(ctx)
 
 	if err != nil {
-		log.Printf("Failed to load agent %d: %v", req.AgentID, err)
+		log.Printf("Failed to load agent %d: %v", req.AgentId, err)
 		response.NotFound(c, "Agent not found", err)
 		return
 	}
@@ -166,7 +158,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 
 	// Check if StatefulSet exists for this user-agent combination
 	isNewStatefulSet := false
-	sts, err := h.containerManager.GetStatefulSet(ctx, userIDStr, req.AgentID)
+	sts, err := h.containerManager.GetStatefulSet(ctx, userIDStr, req.AgentId)
 	if err != nil {
 		isNewStatefulSet = true
 		log.Printf("StatefulSet not found, creating it...")
@@ -197,7 +189,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		dockerImage := h.settingsService.GetDockerImage(ctx)
 
 		// Create StatefulSet with headless service
-		if err := h.containerManager.CreateStatefulSet(ctx, userIDStr, req.AgentID, agent.Config, rc, dockerImage); err != nil {
+		if err := h.containerManager.CreateStatefulSet(ctx, userIDStr, req.AgentId, agent.Config, rc, dockerImage); err != nil {
 			log.Printf("Failed to create StatefulSet: %v", err)
 			response.InternalError(c, "Failed to create StatefulSet", err)
 			return
@@ -206,7 +198,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		log.Printf("StatefulSet and headless service created, waiting for pod to be ready...")
 
 		// Wait for pod to be ready before returning
-		if err := h.containerManager.WaitForStatefulSetReady(ctx, userIDStr, req.AgentID, 60, 5*time.Second); err != nil {
+		if err := h.containerManager.WaitForStatefulSetReady(ctx, userIDStr, req.AgentId, 60, 5*time.Second); err != nil {
 			log.Printf("Warning: %v", err)
 			// Don't fail — pod may still be starting, session can be used once ready
 		}
@@ -215,7 +207,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	}
 
 	// Get the actual Pod IP
-	podIP, err := h.containerManager.GetStatefulSetPodIP(ctx, userIDStr, req.AgentID)
+	podIP, err := h.containerManager.GetStatefulSetPodIP(ctx, userIDStr, req.AgentId)
 	if err != nil {
 		log.Printf("Failed to get Pod IP: %v", err)
 		response.InternalError(c, "Failed to get Pod IP, pod may not be ready", err)
@@ -227,35 +219,35 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		// New pod — only sync skills (fast). Workspace sync is deferred to
 		// the frontend which calls the SSE /workspace/sync-stream endpoint
 		// with a progress bar so the user sees what's happening.
-		if err := h.syncService.SyncAllSkillsToAgent(ctx, userIDStr, req.AgentID); err != nil {
-			log.Printf("Warning: failed to sync skills to agent %d: %v", req.AgentID, err)
+		if err := h.syncService.SyncAllSkillsToAgent(ctx, userIDStr, req.AgentId); err != nil {
+			log.Printf("Warning: failed to sync skills to agent %d: %v", req.AgentId, err)
 		}
 		// Write merged CLAUDE.md (system instructions + agent instructions) to pod
-		h.writeClaudeMD(ctx, userIDStr, req.AgentID, agent.Instructions)
+		h.writeClaudeMD(ctx, userIDStr, req.AgentId, agent.Instructions)
 	} else {
 		// Existing pod — files already on disk from last sync. Run background
 		// sync to pick up any changes without blocking session creation.
 		go func() {
 			bgCtx := context.Background()
 			if h.workspaceSyncSvc != nil {
-				if err := h.workspaceSyncSvc.SyncWorkspaceToPod(bgCtx, userIDStr, req.AgentID); err != nil {
+				if err := h.workspaceSyncSvc.SyncWorkspaceToPod(bgCtx, userIDStr, req.AgentId); err != nil {
 					log.Printf("Warning: background workspace sync failed: %v", err)
 				}
 			}
-			if err := h.syncService.SyncAllSkillsToAgent(bgCtx, userIDStr, req.AgentID); err != nil {
+			if err := h.syncService.SyncAllSkillsToAgent(bgCtx, userIDStr, req.AgentId); err != nil {
 				log.Printf("Warning: background skill sync failed: %v", err)
 			}
 			// Write merged CLAUDE.md (system instructions + agent instructions) to pod
-			h.writeClaudeMD(bgCtx, userIDStr, req.AgentID, agent.Instructions)
-			log.Printf("Background sync completed for user %s agent %d", userIDStr, req.AgentID)
+			h.writeClaudeMD(bgCtx, userIDStr, req.AgentId, agent.Instructions)
+			log.Printf("Background sync completed for user %s agent %d", userIDStr, req.AgentId)
 		}()
 	}
 
 	// Save session to database
-	stsName := fmt.Sprintf("claude-code-%s-%d", userIDStr, req.AgentID)
+	stsName := fmt.Sprintf("claude-code-%s-%d", userIDStr, req.AgentId)
 	session := &models.Session{
 		UserID:     userIDInt,
-		AgentID:    req.AgentID,
+		AgentID:    req.AgentId,
 		SessionID:  sessionID,
 		PodName:    stsName, // StatefulSet name
 		PodIP:      podIP,   // Actual Pod IP
@@ -272,11 +264,11 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		return
 	}
 
-	response.Created(c, CreateSessionResponse{
-		SessionID: sessionID,
-		Status:    models.SessionStatusRunning,
+	protobind.Created(c, &sacv1.CreateSessionResponse{
+		SessionId: sessionID,
+		Status:    string(models.SessionStatusRunning),
 		PodName:   stsName,
-		CreatedAt: session.CreatedAt,
+		CreatedAt: timestamppb.New(session.CreatedAt),
 		IsNew:     isNewStatefulSet,
 	})
 }
@@ -304,7 +296,7 @@ func (h *Handler) GetSession(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, session)
+	protobind.OK(c, convert.SessionToProto(&session))
 }
 
 // ListSessions lists all sessions for the current user
@@ -330,7 +322,7 @@ func (h *Handler) ListSessions(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, sessions)
+	protobind.OK(c, &sacv1.UserSessionListResponse{Sessions: convert.SessionsToProto(sessions)})
 }
 
 // DeleteSession soft-deletes a session (marks as deleted).
@@ -372,7 +364,7 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, "Session deleted successfully")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Session deleted successfully"})
 }
 
 // RegisterRoutes registers session routes

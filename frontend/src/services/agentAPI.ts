@@ -1,55 +1,36 @@
 import api from './api'
+import type {
+  Agent,
+  AgentSkill,
+  CreateAgentRequest,
+  UpdateAgentRequest,
+  AgentStatus,
+  ClaudeMDPreview,
+  AgentListResponse,
+  AgentStatusListResponse,
+} from '../generated/sac/v1/agent'
+import type {
+  ConversationMessage,
+  SessionSummary,
+  ConversationListResponse,
+} from '../generated/sac/v1/history'
 
-export interface Agent {
-  id: number
-  name: string
-  description: string
-  icon: string
-  instructions: string
-  config?: Record<string, any>
-  created_by: number
-  created_at: string
-  updated_at: string
-  installed_skills?: AgentSkill[]
-}
+export type { Agent, AgentSkill, CreateAgentRequest, UpdateAgentRequest, AgentStatus, ConversationMessage }
 
-export interface AgentSkill {
-  id: number
+export interface ConversationQuery {
   agent_id: number
-  skill_id: number
-  order: number
-  synced_version: number
-  created_at: string
-  skill?: {
-    id: number
-    name: string
-    description: string
-    icon: string
-    category: string
-    version: number
-  }
+  session_id?: string
+  limit?: number
+  before?: string
+  after?: string
 }
 
-export interface CreateAgentRequest {
-  name: string
-  description?: string
-  icon?: string
-  instructions?: string
-  config?: Record<string, any>
-}
-
-export interface UpdateAgentRequest {
-  name?: string
-  description?: string
-  icon?: string
-  instructions?: string
-  config?: Record<string, any>
-}
+export type SessionInfo = SessionSummary
 
 // Get all agents for current user
 export const getAgents = async (): Promise<Agent[]> => {
-  const response = await api.get<Agent[]>('/agents')
-  return response.data
+  const response = await api.get<AgentListResponse>('/agents')
+  return response.data.agents ?? []
 }
 
 // Get a specific agent by ID
@@ -80,8 +61,8 @@ export const restartAgent = async (id: number): Promise<void> => {
   await api.post(`/agents/${id}/restart`)
 }
 
-export const previewClaudeMD = async (id: number): Promise<{ readonly: string; instructions: string }> => {
-  const response = await api.get(`/agents/${id}/claude-md-preview`)
+export const previewClaudeMD = async (id: number): Promise<ClaudeMDPreview> => {
+  const response = await api.get<ClaudeMDPreview>(`/agents/${id}/claude-md-preview`)
   return response.data
 }
 
@@ -95,53 +76,14 @@ export const uninstallSkill = async (agentId: number, skillId: number): Promise<
   await api.delete(`/agents/${agentId}/skills/${skillId}`)
 }
 
-// Agent pod status
-export interface AgentStatus {
-  agent_id: number
-  pod_name: string
-  status: string
-  restart_count: number
-  cpu_request: string
-  cpu_limit: string
-  memory_request: string
-  memory_limit: string
-}
-
 // Get pod statuses for all agents
 export const getAgentStatuses = async (): Promise<AgentStatus[]> => {
-  const response = await api.get<AgentStatus[]>('/agent-statuses')
-  return response.data
+  const response = await api.get<AgentStatusListResponse>('/agent-statuses')
+  return response.data.statuses ?? []
 }
 
-// Conversation history
-export interface ConversationMessage {
-  id: number
-  user_id: number
-  agent_id: number
-  session_id: string
-  role: string
-  content: string
-  message_uuid: string
-  timestamp: string
-}
-
-export interface ConversationQuery {
-  agent_id: number
-  session_id?: string
-  limit?: number
-  before?: string
-  after?: string
-}
-
-export interface SessionInfo {
-  session_id: string
-  first_at: string
-  last_at: string
-  count: number
-}
-
-export const getConversations = async (params: ConversationQuery): Promise<{ conversations: ConversationMessage[]; count: number; has_more: boolean }> => {
-  const response = await api.get('/conversations', { params })
+export const getConversations = async (params: ConversationQuery): Promise<ConversationListResponse> => {
+  const response = await api.get<ConversationListResponse>('/conversations', { params })
   return response.data
 }
 

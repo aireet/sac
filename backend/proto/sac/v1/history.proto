@@ -1,0 +1,51 @@
+syntax = "proto3";
+package sac.v1;
+option go_package = "g.echo.tech/dev/sac/gen/sac/v1;sacv1";
+
+import "google/protobuf/timestamp.proto";
+
+message MessagePayload {
+  string role = 1;
+  string content = 2;
+  string uuid = 3;
+  string timestamp = 4;
+}
+
+message EventsRequest {
+  string user_id = 1;
+  string agent_id = 2;
+  string session_id = 3;
+  repeated MessagePayload messages = 4;
+}
+
+message EventsResponse {
+  int32 inserted = 1;
+}
+
+message ConversationMessage {
+  int64 id = 1;
+  int64 user_id = 2;
+  int64 agent_id = 3;
+  string session_id = 4;
+  string role = 5;
+  string content = 6;
+  string message_uuid = 7;
+  google.protobuf.Timestamp timestamp = 8;
+}
+
+message ConversationListResponse {
+  repeated ConversationMessage conversations = 1;
+  int32 count = 2;
+  bool has_more = 3;
+}
+
+message SessionSummary {
+  string session_id = 1;
+  google.protobuf.Timestamp first_at = 2;
+  google.protobuf.Timestamp last_at = 3;
+  int32 count = 4;
+}
+
+message SessionListResponse {
+  repeated SessionSummary sessions = 1;
+}

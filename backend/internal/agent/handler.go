@@ -4,14 +4,18 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	sacv1 "g.echo.tech/dev/sac/gen/sac/v1"
 	"g.echo.tech/dev/sac/internal/admin"
 	"g.echo.tech/dev/sac/internal/container"
+	"g.echo.tech/dev/sac/internal/convert"
 	"g.echo.tech/dev/sac/internal/models"
 	"g.echo.tech/dev/sac/internal/skill"
+	"g.echo.tech/dev/sac/pkg/protobind"
 	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/uptrace/bun"
@@ -74,7 +78,7 @@ func (h *Handler) GetAgents(c *gin.Context) {
 	if agents == nil {
 		agents = []models.Agent{}
 	}
-	response.OK(c, agents)
+	protobind.OK(c, &sacv1.AgentListResponse{Agents: convert.AgentsToProto(agents)})
 }
 
 // GetAgent returns a specific agent by ID
@@ -99,7 +103,7 @@ func (h *Handler) GetAgent(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, agent)
+	protobind.OK(c, convert.AgentToProto(&agent))
 }
 
 // CreateAgent creates a new agent
@@ -123,16 +127,13 @@ func (h *Handler) CreateAgent(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		Name         string         `json:"name" binding:"required"`
-		Description  string         `json:"description"`
-		Icon         string         `json:"icon"`
-		Instructions string         `json:"instructions"`
-		Config       map[string]any `json:"config"`
+	req := &sacv1.CreateAgentRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request body", err)
+	if req.Name == "" {
+		response.BadRequest(c, "name is required")
 		return
 	}
 
@@ -141,8 +142,10 @@ func (h *Handler) CreateAgent(c *gin.Context) {
 		Description:  req.Description,
 		Icon:         req.Icon,
 		Instructions: req.Instructions,
-		Config:       req.Config,
 		CreatedBy:    userID,
+	}
+	if req.Config != nil {
+		agent.Config = req.Config.AsMap()
 	}
 
 	_, err = h.db.NewInsert().
@@ -154,7 +157,7 @@ func (h *Handler) CreateAgent(c *gin.Context) {
 		return
 	}
 
-	response.Created(c, agent)
+	protobind.JSON(c, http.StatusCreated, convert.AgentToProto(agent))
 }
 
 // UpdateAgent updates an existing agent
@@ -166,16 +169,8 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		Name         *string        `json:"name"`
-		Description  *string        `json:"description"`
-		Icon         *string        `json:"icon"`
-		Instructions *string        `json:"instructions"`
-		Config       map[string]any `json:"config"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request body", err)
+	req := &sacv1.UpdateAgentRequest{}
+	if !protobind.Bind(c, req) {
 		return
 	}
 
@@ -206,7 +201,7 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 		q = q.Set("instructions = ?", *req.Instructions)
 	}
 	if req.Config != nil {
-		q = q.Set("config = ?", req.Config)
+		q = q.Set("config = ?", models.AgentConfig(req.Config.AsMap()))
 	}
 	q = q.Set("updated_at = ?", time.Now())
 
@@ -249,7 +244,7 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, existing)
+	protobind.OK(c, convert.AgentToProto(&existing))
 }
 
 // DeleteAgent deletes an agent and cleans up its K8s StatefulSet
@@ -299,7 +294,7 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 		// Not fatal — DB record is already deleted
 	}
 
-	response.Success(c, "Agent deleted successfully")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Agent deleted successfully"})
 }
 
 // RestartAgent deletes the StatefulSet pod so K8s recreates it
@@ -348,7 +343,7 @@ func (h *Handler) RestartAgent(c *gin.Context) {
 	}
 
 	log.Printf("Restarted agent %d (deleted StatefulSet) for user %s", agentID, userIDStr)
-	response.Success(c, "Agent is restarting")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Agent is restarting"})
 }
 
 // InstallSkill installs a skill to an agent
@@ -360,12 +355,13 @@ func (h *Handler) InstallSkill(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		SkillID int64 `json:"skill_id" binding:"required"`
+	req := &sacv1.InstallSkillRequest{}
+	if !protobind.Bind(c, req) {
+		return
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request body", err)
+	if req.SkillId == 0 {
+		response.BadRequest(c, "skill_id is required")
 		return
 	}
 
@@ -385,7 +381,7 @@ func (h *Handler) InstallSkill(c *gin.Context) {
 	var sk models.Skill
 	err = h.db.NewSelect().
 		Model(&sk).
-		Where("id = ?", req.SkillID).
+		Where("id = ?", req.SkillId).
 		Scan(c.Request.Context())
 
 	if err != nil {
@@ -406,7 +402,7 @@ func (h *Handler) InstallSkill(c *gin.Context) {
 	// Install skill
 	agentSkill := &models.AgentSkill{
 		AgentID: agentID,
-		SkillID: req.SkillID,
+		SkillID: req.SkillId,
 		Order:   maxOrder + 1,
 	}
 
@@ -429,7 +425,7 @@ func (h *Handler) InstallSkill(c *gin.Context) {
 		}
 	}()
 
-	response.Success(c, "Skill installed successfully")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Skill installed successfully"})
 }
 
 // GetAgentStatuses returns the K8s pod status for all agents of the current user
@@ -450,33 +446,22 @@ func (h *Handler) GetAgentStatuses(c *gin.Context) {
 		return
 	}
 
-	type agentStatus struct {
-		AgentID       int64  `json:"agent_id"`
-		PodName       string `json:"pod_name"`
-		Status        string `json:"status"`
-		RestartCount  int32  `json:"restart_count"`
-		CPURequest    string `json:"cpu_request"`
-		CPULimit      string `json:"cpu_limit"`
-		MemoryRequest string `json:"memory_request"`
-		MemoryLimit   string `json:"memory_limit"`
-	}
-
-	statuses := make([]agentStatus, 0, len(agentIDs))
+	statuses := make([]*sacv1.AgentStatus, 0, len(agentIDs))
 	for _, aid := range agentIDs {
 		info := h.containerManager.GetStatefulSetPodInfo(c.Request.Context(), userIDStr, aid)
-		statuses = append(statuses, agentStatus{
-			AgentID:       aid,
+		statuses = append(statuses, &sacv1.AgentStatus{
+			AgentId:       aid,
 			PodName:       info.PodName,
 			Status:        info.Status,
 			RestartCount:  info.RestartCount,
-			CPURequest:    info.CPURequest,
-			CPULimit:      info.CPULimit,
+			CpuRequest:    info.CPURequest,
+			CpuLimit:      info.CPULimit,
 			MemoryRequest: info.MemoryRequest,
 			MemoryLimit:   info.MemoryLimit,
 		})
 	}
 
-	response.OK(c, statuses)
+	protobind.OK(c, &sacv1.AgentStatusListResponse{Statuses: statuses})
 }
 
 // UninstallSkill removes a skill from an agent
@@ -532,7 +517,7 @@ func (h *Handler) UninstallSkill(c *gin.Context) {
 		}()
 	}
 
-	response.Success(c, "Skill uninstalled successfully")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Skill uninstalled successfully"})
 }
 
 // SyncSkills manually triggers a full sync of all installed skills to the agent pod.
@@ -563,7 +548,7 @@ func (h *Handler) SyncSkills(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, "Skills synced successfully")
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "Skills synced successfully"})
 }
 
 // PreviewClaudeMD returns the CLAUDE.md content split into read-only and editable parts.
@@ -594,9 +579,9 @@ func (h *Handler) PreviewClaudeMD(c *gin.Context) {
 	}
 	readonlyParts = append(readonlyParts, groupTemplates...)
 
-	response.OK(c, gin.H{
-		"readonly":     strings.Join(readonlyParts, "\n\n---\n\n"),
-		"instructions": agent.Instructions,
+	protobind.OK(c, &sacv1.ClaudeMDPreview{
+		Readonly:     strings.Join(readonlyParts, "\n\n---\n\n"),
+		Instructions: agent.Instructions,
 	})
 }
 
