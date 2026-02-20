@@ -35,22 +35,22 @@ ok "All prerequisites met."
 
 info "Building Docker images (this may take a few minutes)..."
 
-docker build -f "$SCRIPT_DIR/docker/api-gateway.Dockerfile" -t "sac-local/api-gateway:$TAG" "$ROOT_DIR"
+docker build -f "$ROOT_DIR/docker/api-gateway/Dockerfile" -t "sac-local/api-gateway:$TAG" "$ROOT_DIR"
 ok "api-gateway"
 
-docker build -f "$SCRIPT_DIR/docker/ws-proxy.Dockerfile" -t "sac-local/ws-proxy:$TAG" "$ROOT_DIR"
+docker build -f "$ROOT_DIR/docker/ws-proxy/Dockerfile" -t "sac-local/ws-proxy:$TAG" "$ROOT_DIR"
 ok "ws-proxy"
 
-docker build -f "$SCRIPT_DIR/docker/frontend.Dockerfile" -t "sac-local/frontend:$TAG" "$ROOT_DIR"
+docker build -f "$ROOT_DIR/docker/frontend/Dockerfile" -t "sac-local/frontend:$TAG" "$ROOT_DIR"
 ok "frontend"
 
-docker build -f "$SCRIPT_DIR/docker/claude-code.Dockerfile" -t "sac-local/cc:$TAG" "$ROOT_DIR/docker/claude-code"
+docker build -f "$ROOT_DIR/docker/claude-code/Dockerfile" -t "sac-local/cc:$TAG" "$ROOT_DIR/docker/claude-code"
 ok "claude-code"
 
-docker build -f "$SCRIPT_DIR/docker/output-watcher.Dockerfile" -t "sac-local/output-watcher:$TAG" "$ROOT_DIR"
+docker build -f "$ROOT_DIR/docker/output-watcher/Dockerfile" -t "sac-local/output-watcher:$TAG" "$ROOT_DIR"
 ok "output-watcher"
 
-docker build -f "$SCRIPT_DIR/docker/migrate.Dockerfile" -t "sac-local/migrate:$TAG" "$ROOT_DIR"
+docker build -f "$ROOT_DIR/docker/migrate/Dockerfile" -t "sac-local/migrate:$TAG" "$ROOT_DIR"
 ok "migrate"
 
 # ── Phase 3: Create kind cluster ─────────────────────────────────────
