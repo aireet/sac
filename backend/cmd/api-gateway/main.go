@@ -3,14 +3,18 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
+	sacv1 "g.echo.tech/dev/sac/gen/sac/v1"
 	"g.echo.tech/dev/sac/internal/admin"
 	"g.echo.tech/dev/sac/internal/agent"
 	"g.echo.tech/dev/sac/internal/auth"
 	"g.echo.tech/dev/sac/internal/container"
+	"g.echo.tech/dev/sac/internal/ctxkeys"
 	"g.echo.tech/dev/sac/internal/database"
 	"g.echo.tech/dev/sac/internal/group"
 	"g.echo.tech/dev/sac/internal/history"
@@ -21,6 +25,9 @@ import (
 	"g.echo.tech/dev/sac/internal/workspace"
 	"g.echo.tech/dev/sac/pkg/config"
 	"github.com/gin-gonic/gin"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func main() {
@@ -36,7 +43,94 @@ func main() {
 	}
 	defer database.Close()
 
-	// Create Gin router
+	// Create shared services
+	jwtService := auth.NewJWTService(cfg.JWTSecret)
+	settingsService := admin.NewSettingsService(database.DB)
+
+	containerMgr, err := container.NewManager(cfg.KubeconfigPath, cfg.Namespace, cfg.DockerRegistry, cfg.DockerImage, cfg.SidecarImage)
+	if err != nil {
+		log.Fatalf("Failed to create container manager: %v", err)
+	}
+
+	storageProvider := storage.NewStorageProvider(database.DB)
+	workspaceSyncSvc := workspace.NewSyncService(database.DB, storageProvider, containerMgr)
+
+	// Initialize Redis (optional)
+	var outputHub *workspace.OutputHub
+	if cfg.RedisURL == "" {
+		log.Printf("Warning: REDIS_URL not set, output watch disabled")
+	} else if err := sacredis.Initialize(cfg.RedisURL); err != nil {
+		log.Printf("Warning: Redis not available, output watch disabled: %v", err)
+	} else {
+		defer sacredis.Close()
+		outputHub = workspace.NewOutputHub(sacredis.Client)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go outputHub.Start(ctx)
+	}
+
+	// ---- gRPC Server (in-process, no network listener) ----
+	// NOTE: No interceptor here — auth is handled by HTTP middleware before
+	// requests reach the gRPC-gateway. RegisterXxxHandlerServer (in-process)
+	// bypasses gRPC interceptors, so auth must happen at the HTTP layer.
+	grpcServer := grpc.NewServer()
+
+	// Create skill handler to get SyncService (shared dependency)
+	skillHandler := skill.NewHandler(database.DB, containerMgr)
+	syncService := skillHandler.GetSyncService()
+
+	// Register all gRPC service implementations
+	authServer := auth.NewServer(database.DB, jwtService, settingsService)
+	sacv1.RegisterAuthServiceServer(grpcServer, authServer)
+
+	skillServer := skill.NewServer(database.DB, syncService)
+	sacv1.RegisterSkillServiceServer(grpcServer, skillServer)
+
+	groupServer := group.NewServer(database.DB)
+	sacv1.RegisterGroupServiceServer(grpcServer, groupServer)
+	sacv1.RegisterAdminGroupServiceServer(grpcServer, groupServer)
+
+	historyServer := history.NewServer(database.DB)
+	sacv1.RegisterHistoryServiceServer(grpcServer, historyServer)
+
+	agentServer := agent.NewServer(database.DB, containerMgr, syncService, settingsService)
+	sacv1.RegisterAgentServiceServer(grpcServer, agentServer)
+
+	sessionServer := session.NewServer(database.DB, containerMgr, syncService, settingsService, workspaceSyncSvc)
+	sacv1.RegisterSessionServiceServer(grpcServer, sessionServer)
+
+	adminServer := admin.NewServer2(database.DB, containerMgr)
+	sacv1.RegisterAdminServiceServer(grpcServer, adminServer)
+
+	workspaceServer := workspace.NewWorkspaceServer(database.DB, storageProvider, workspaceSyncSvc, outputHub)
+	sacv1.RegisterWorkspaceServiceServer(grpcServer, workspaceServer)
+
+	// ---- gRPC-Gateway Mux (in-process calls) ----
+	ctx := context.Background()
+	gwMux := runtime.NewServeMux(
+		runtime.WithMarshalerOption(runtime.MIMEWildcard, &runtime.JSONPb{
+			MarshalOptions: protojson.MarshalOptions{
+				UseProtoNames:   true,
+				EmitUnpopulated: false,
+			},
+			UnmarshalOptions: protojson.UnmarshalOptions{
+				DiscardUnknown: true,
+			},
+		}),
+	)
+
+	// Register all gateway handlers (in-process, no network)
+	must(sacv1.RegisterAuthServiceHandlerServer(ctx, gwMux, authServer))
+	must(sacv1.RegisterSkillServiceHandlerServer(ctx, gwMux, skillServer))
+	must(sacv1.RegisterGroupServiceHandlerServer(ctx, gwMux, groupServer))
+	must(sacv1.RegisterAdminGroupServiceHandlerServer(ctx, gwMux, groupServer))
+	must(sacv1.RegisterHistoryServiceHandlerServer(ctx, gwMux, historyServer))
+	must(sacv1.RegisterAgentServiceHandlerServer(ctx, gwMux, agentServer))
+	must(sacv1.RegisterSessionServiceHandlerServer(ctx, gwMux, sessionServer))
+	must(sacv1.RegisterAdminServiceHandlerServer(ctx, gwMux, adminServer))
+	must(sacv1.RegisterWorkspaceServiceHandlerServer(ctx, gwMux, workspaceServer))
+
+	// ---- Gin Router (special endpoints only) ----
 	router := gin.Default()
 
 	// CORS middleware
@@ -54,103 +148,59 @@ func main() {
 		c.Next()
 	})
 
-	// Health check (public)
+	// Health check
 	router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{
-			"status": "healthy",
-		})
+		c.JSON(200, gin.H{"status": "healthy"})
 	})
 
-	// Create shared services
-	jwtService := auth.NewJWTService(cfg.JWTSecret)
-	settingsService := admin.NewSettingsService(database.DB)
-
-	containerMgr, err := container.NewManager(cfg.KubeconfigPath, cfg.Namespace, cfg.DockerRegistry, cfg.DockerImage, cfg.SidecarImage)
-	if err != nil {
-		log.Fatalf("Failed to create container manager: %v", err)
-	}
-
-	// Storage provider reads config from system_settings (admin-managed)
-	storageProvider := storage.NewStorageProvider(database.DB)
-	workspaceSyncSvc := workspace.NewSyncService(database.DB, storageProvider, containerMgr)
-
-	// Initialize Redis (optional — output watch degrades gracefully)
-	var outputHub *workspace.OutputHub
-	if cfg.RedisURL == "" {
-		log.Printf("Warning: REDIS_URL not set, output watch disabled")
-	} else if err := sacredis.Initialize(cfg.RedisURL); err != nil {
-		log.Printf("Warning: Redis not available, output watch disabled: %v", err)
-	} else {
-		defer sacredis.Close()
-		outputHub = workspace.NewOutputHub(sacredis.Client)
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		go outputHub.Start(ctx)
-	}
-
-	// Shared history handler
-	historyHandler := history.NewHandler(database.DB)
-
-	// Workspace handler (needed for both internal and protected routes)
+	// Workspace handler for file upload/download/WS/SSE endpoints
 	workspaceHandler := workspace.NewHandler(database.DB, storageProvider, workspaceSyncSvc, outputHub, jwtService)
 
-	// Internal API routes (no JWT, Pod-internal calls)
+	// Internal routes (no JWT, pod-internal calls) — only multipart upload
 	internalGroup := router.Group("/api/internal")
+	internalGroup.POST("/output/upload", workspaceHandler.RequireOSS(), workspaceHandler.InternalOutputUpload)
+
+	// History internal route (pod-internal, no JWT) — kept on Gin for backward compat
+	// Note: ReceiveEvents is also on gRPC-gateway, but pods may call the REST endpoint directly
+	historyHandler := history.NewHandler(database.DB)
 	historyHandler.RegisterInternalRoutes(internalGroup)
-	workspaceHandler.RegisterInternalRoutes(internalGroup)
 
-	// Public routes (no auth required)
-	publicGroup := router.Group("/api")
-	authHandler := auth.NewHandler(database.DB, jwtService, settingsService)
-	authHandler.RegisterRoutes(publicGroup, nil)       // register public routes only
-	workspaceHandler.RegisterPublicRoutes(publicGroup) // WS endpoints with token in query param
+	// Public routes (no auth) — WS and shared file download
+	router.GET("/api/workspace/output/watch", workspaceHandler.WatchOutput)
+	router.GET("/api/s/:code/raw", workspaceHandler.RequireOSS(), workspaceHandler.DownloadSharedFile)
 
-	// Protected routes (JWT auth required)
-	protectedGroup := router.Group("/api")
-	protectedGroup.Use(auth.AuthMiddleware(jwtService))
+	// Protected file routes (JWT auth + multipart/streaming)
+	protected := router.Group("/api")
+	protected.Use(auth.AuthMiddleware(jwtService))
 	{
-		// Register auth /me route
-		authHandler.RegisterRoutes(nil, protectedGroup)
+		ws := protected.Group("/workspace")
+		ws.POST("/upload", workspaceHandler.RequireOSS(), workspaceHandler.Upload)
+		ws.POST("/public/upload", workspaceHandler.RequireOSS(), workspaceHandler.UploadPublic)
+		ws.POST("/group/upload", workspaceHandler.RequireOSS(), workspaceHandler.UploadGroup)
+		ws.GET("/files/download", workspaceHandler.RequireOSS(), workspaceHandler.DownloadFile)
+		ws.GET("/public/files/download", workspaceHandler.RequireOSS(), workspaceHandler.DownloadPublicFile)
+		ws.GET("/group/files/download", workspaceHandler.RequireOSS(), workspaceHandler.DownloadGroupFile)
+		ws.GET("/output/files/download", workspaceHandler.RequireOSS(), workspaceHandler.DownloadOutputFile)
+		ws.GET("/sync-stream", workspaceHandler.SyncToPodStream)
 
-		// Conversation history routes
-		historyHandler.RegisterRoutes(protectedGroup)
+		// CSV exports (streaming response, not suitable for gRPC-gateway)
+		protected.GET("/conversations/export", historyHandler.ExportConversations)
 
-		// Skill routes
-		skillHandler := skill.NewHandler(database.DB, containerMgr)
-		skillHandler.RegisterRoutes(protectedGroup)
-
-		// Shared sync service for agent & session handlers
-		syncService := skillHandler.GetSyncService()
-
-		// Session routes
-		sessionHandler := session.NewHandler(database.DB, containerMgr, syncService, settingsService, workspaceSyncSvc)
-		sessionHandler.RegisterRoutes(protectedGroup)
-
-		// Agent routes
-		agentHandler := agent.NewHandler(database.DB, containerMgr, syncService, settingsService)
-		agentHandler.RegisterRoutes(protectedGroup)
-
-		// Workspace routes (always registered; requireOSS middleware returns 503 if not configured)
-		workspaceHandler.RegisterRoutes(protectedGroup)
-
-		// Group routes (read-only for authenticated users)
-		groupHandler := group.NewHandler(database.DB)
-		groupHandler.RegisterRoutes(protectedGroup)
-
-		// Admin routes (requires admin role)
-		adminGroup := protectedGroup.Group("/admin")
+		adminGroup := protected.Group("/admin")
 		adminGroup.Use(admin.AdminMiddleware())
-
 		adminHandler := admin.NewHandler(database.DB, containerMgr)
-		adminHandler.RegisterRoutes(adminGroup)
-		groupHandler.RegisterAdminRoutes(adminGroup)
+		adminGroup.GET("/conversations/export", adminHandler.ExportConversations)
 	}
 
-	// Start server (listen on all interfaces for remote debugging)
-	addr := "0.0.0.0:" + cfg.APIGatewayPort
-	log.Printf("API Gateway starting on %s", addr)
+	// Fallback: all unmatched routes go to gRPC-gateway with JWT auth injected.
+	// RegisterXxxHandlerServer (in-process) bypasses gRPC interceptors, so we
+	// parse the JWT here and inject user claims into the request context.
+	router.NoRoute(gatewayAuthMiddleware(jwtService, gwMux))
 
-	// Graceful shutdown
+	// Start server
+	addr := "0.0.0.0:" + cfg.APIGatewayPort
+	log.Printf("API Gateway starting on %s (hybrid Gin + gRPC-gateway)", addr)
+
 	go func() {
 		if err := router.Run(addr); err != nil {
 			log.Fatalf("Failed to start server: %v", err)
@@ -163,4 +213,91 @@ func main() {
 	<-quit
 
 	log.Println("Shutting down API Gateway...")
+	grpcServer.GracefulStop()
+}
+
+func must(err error) {
+	if err != nil {
+		log.Fatalf("Failed to register gateway handler: %v", err)
+	}
+}
+
+// publicPaths are routes that don't require JWT authentication.
+var publicPaths = map[string]bool{
+	"/api/auth/register":          true,
+	"/api/auth/login":             true,
+	"/api/auth/registration-mode": true,
+	"/api/s/":                     false, // prefix match below
+}
+
+// gatewayResponseWriter wraps http.ResponseWriter to override the status code
+// that Gin's NoRoute pre-sets to 404. The gRPC-gateway will call WriteHeader
+// with the correct status, and we forward that instead of Gin's 404.
+type gatewayResponseWriter struct {
+	http.ResponseWriter
+	wroteHeader bool
+}
+
+func (w *gatewayResponseWriter) WriteHeader(code int) {
+	w.wroteHeader = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *gatewayResponseWriter) Write(b []byte) (int, error) {
+	if !w.wroteHeader {
+		w.wroteHeader = true
+		w.ResponseWriter.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+// gatewayAuthMiddleware wraps the gRPC-gateway mux with JWT authentication.
+// It parses the Authorization header, injects user claims into the context,
+// and enforces auth/admin requirements that the gRPC interceptor used to handle.
+func gatewayAuthMiddleware(jwtService *auth.JWTService, gwMux http.Handler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		path := c.Request.URL.Path
+
+		// Wrap the writer so gRPC-gateway controls the status code, not Gin's NoRoute 404.
+		gw := &gatewayResponseWriter{ResponseWriter: c.Writer}
+
+		// Public routes — no auth needed
+		if publicPaths[path] || strings.HasPrefix(path, "/api/s/") ||
+			strings.HasPrefix(path, "/api/internal/") {
+			gwMux.ServeHTTP(gw, c.Request)
+			return
+		}
+
+		// All other routes require a valid JWT
+		authHeader := c.GetHeader("Authorization")
+		tokenStr, ok := strings.CutPrefix(authHeader, "Bearer ")
+		if !ok || tokenStr == "" {
+			c.JSON(401, gin.H{"code": 16, "message": "authorization header required"})
+			c.Abort()
+			return
+		}
+
+		claims, err := jwtService.ValidateToken(tokenStr)
+		if err != nil {
+			c.JSON(401, gin.H{"code": 16, "message": "invalid or expired token"})
+			c.Abort()
+			return
+		}
+
+		// Admin routes require admin role
+		if strings.HasPrefix(path, "/api/admin/") && claims.Role != "admin" {
+			c.JSON(403, gin.H{"code": 7, "message": "admin access required"})
+			c.Abort()
+			return
+		}
+
+		// Inject user claims into context for gRPC-gateway server methods
+		ctx := c.Request.Context()
+		ctx = context.WithValue(ctx, ctxkeys.UserIDKey, claims.UserID)
+		ctx = context.WithValue(ctx, ctxkeys.UsernameKey, claims.Username)
+		ctx = context.WithValue(ctx, ctxkeys.RoleKey, claims.Role)
+		c.Request = c.Request.WithContext(ctx)
+
+		gwMux.ServeHTTP(gw, c.Request)
+	}
 }

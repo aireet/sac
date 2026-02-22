@@ -2,6 +2,7 @@ syntax = "proto3";
 package sac.v1;
 option go_package = "g.echo.tech/dev/sac/gen/sac/v1;sacv1";
 
+import "google/api/annotations.proto";
 import "google/protobuf/timestamp.proto";
 import "sac/v1/common.proto";
 
@@ -65,4 +66,88 @@ message GroupListResponse {
 
 message GroupMemberListResponse {
   repeated GroupMember members = 1;
+}
+
+// Request messages for RPCs that need path params
+message GetGroupRequest {
+  int64 id = 1;
+}
+
+message UpdateGroupByIdRequest {
+  int64 id = 1;
+  optional string name = 2;
+  optional string description = 3;
+  optional string claude_md_template = 4;
+}
+
+message AddMemberByGroupRequest {
+  int64 group_id = 1;
+  int64 user_id = 2;
+  string role = 3;
+}
+
+message RemoveMemberRequest {
+  int64 group_id = 1;
+  int64 user_id = 2;
+}
+
+message UpdateMemberRoleByGroupRequest {
+  int64 group_id = 1;
+  int64 user_id = 2;
+  string role = 3;
+}
+
+message UpdateTemplateByGroupRequest {
+  int64 group_id = 1;
+  string claude_md_template = 2;
+}
+
+// User-facing group service (requires membership)
+service GroupService {
+  rpc ListGroups(Empty) returns (GroupListResponse) {
+    option (google.api.http) = { get: "/api/groups" };
+  }
+  rpc GetGroup(GetGroupRequest) returns (Group) {
+    option (google.api.http) = { get: "/api/groups/{id}" };
+  }
+  rpc ListMembers(GetGroupRequest) returns (GroupMemberListResponse) {
+    option (google.api.http) = { get: "/api/groups/{id}/members" };
+  }
+  rpc GetTemplate(GetGroupRequest) returns (GroupTemplateResponse) {
+    option (google.api.http) = { get: "/api/groups/{id}/template" };
+  }
+  rpc UpdateTemplate(UpdateTemplateByGroupRequest) returns (SuccessMessage) {
+    option (google.api.http) = { put: "/api/groups/{group_id}/template", body: "*" };
+  }
+}
+
+// Admin group management service
+service AdminGroupService {
+  rpc ListAllGroups(Empty) returns (GroupListResponse) {
+    option (google.api.http) = { get: "/api/admin/groups" };
+  }
+  rpc CreateGroup(CreateGroupRequest) returns (Group) {
+    option (google.api.http) = { post: "/api/admin/groups", body: "*" };
+  }
+  rpc UpdateGroup(UpdateGroupByIdRequest) returns (SuccessMessage) {
+    option (google.api.http) = { put: "/api/admin/groups/{id}", body: "*" };
+  }
+  rpc DeleteGroup(GetGroupRequest) returns (SuccessMessage) {
+    option (google.api.http) = { delete: "/api/admin/groups/{id}" };
+  }
+  rpc ListMembersAdmin(GetGroupRequest) returns (GroupMemberListResponse) {
+    option (google.api.http) = { get: "/api/admin/groups/{id}/members" };
+  }
+  rpc AddMember(AddMemberByGroupRequest) returns (GroupMember) {
+    option (google.api.http) = { post: "/api/admin/groups/{group_id}/members", body: "*" };
+  }
+  rpc RemoveMember(RemoveMemberRequest) returns (SuccessMessage) {
+    option (google.api.http) = { delete: "/api/admin/groups/{group_id}/members/{user_id}" };
+  }
+  rpc UpdateMemberRole(UpdateMemberRoleByGroupRequest) returns (SuccessMessage) {
+    option (google.api.http) = { put: "/api/admin/groups/{group_id}/members/{user_id}", body: "*" };
+  }
+  rpc AdminUpdateTemplate(UpdateTemplateByGroupRequest) returns (SuccessMessage) {
+    option (google.api.http) = { put: "/api/admin/groups/{group_id}/template", body: "*" };
+  }
 }

@@ -2,6 +2,7 @@ syntax = "proto3";
 package sac.v1;
 option go_package = "g.echo.tech/dev/sac/gen/sac/v1;sacv1";
 
+import "google/api/annotations.proto";
 import "google/protobuf/timestamp.proto";
 
 message MessagePayload {
@@ -48,4 +49,31 @@ message SessionSummary {
 
 message SessionListResponse {
   repeated SessionSummary sessions = 1;
+}
+
+message ListConversationsRequest {
+  int64 agent_id = 1;
+  string session_id = 2;
+  int32 limit = 3;
+  string before = 4;
+  string after = 5;
+}
+
+message ListSessionsRequest {
+  int64 agent_id = 1;
+}
+
+service HistoryService {
+  // Internal: receive events from pods (no auth)
+  rpc ReceiveEvents(EventsRequest) returns (EventsResponse) {
+    option (google.api.http) = { post: "/api/internal/conversations/events", body: "*" };
+  }
+  // Protected: query conversations
+  rpc ListConversations(ListConversationsRequest) returns (ConversationListResponse) {
+    option (google.api.http) = { get: "/api/conversations" };
+  }
+  // Protected: list sessions
+  rpc ListSessions(ListSessionsRequest) returns (SessionListResponse) {
+    option (google.api.http) = { get: "/api/conversations/sessions" };
+  }
 }

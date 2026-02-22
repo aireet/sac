@@ -15,9 +15,6 @@
       <n-ellipsis :line-clamp="2" :tooltip="false" class="card-desc">
         <n-text depth="3">{{ skill.description || 'No description' }}</n-text>
       </n-ellipsis>
-      <n-tag v-if="skill.category" size="small" :bordered="false" class="card-category">
-        {{ skill.category }}
-      </n-tag>
     </div>
 
     <div class="card-footer" @click.stop>
@@ -147,11 +144,6 @@ defineEmits<{
   font-size: 13px;
   margin-top: 4px;
   min-height: 2.6em;
-}
-
-.card-category {
-  margin-top: 6px;
-  align-self: flex-start;
 }
 
 .card-footer {

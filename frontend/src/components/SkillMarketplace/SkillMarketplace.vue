@@ -31,19 +31,6 @@
         </template>
       </n-input>
 
-      <n-space :size="8" style="margin-top: 12px" wrap>
-        <n-button
-          v-for="cat in allCategories"
-          :key="cat"
-          size="small"
-          :type="selectedCategory === cat ? 'primary' : 'default'"
-          :secondary="selectedCategory === cat"
-          round
-          @click="selectedCategory = selectedCategory === cat ? '' : cat"
-        >
-          {{ cat }}
-        </n-button>
-      </n-space>
     </div>
 
     <!-- Tabs -->
@@ -114,7 +101,6 @@
           <n-space :size="6">
             <n-tag v-if="detailSkill.is_official" type="success" size="small" round>Official</n-tag>
             <n-tag v-if="detailSkill.is_public" type="info" size="small" round>Public</n-tag>
-            <n-tag v-if="detailSkill.category" size="small" :bordered="false">{{ detailSkill.category }}</n-tag>
           </n-space>
 
           <div>
@@ -232,14 +218,6 @@
           />
         </n-form-item>
 
-        <n-form-item label="Category" path="category">
-          <n-select
-            v-model:value="formData.category"
-            :options="categoryOptions"
-            placeholder="Select category"
-          />
-        </n-form-item>
-
         <n-form-item label="Prompt" path="prompt">
           <n-space vertical style="width: 100%">
             <n-input
@@ -336,7 +314,6 @@ const authStore = useAuthStore()
 const loading = ref(false)
 const allSkills = ref<Skill[]>([])
 const searchQuery = ref('')
-const selectedCategory = ref('')
 const activeTab = ref('browse')
 const installingId = ref<number | null>(null)
 
@@ -361,14 +338,6 @@ const installedSkillIds = computed(() => {
   )
 })
 
-const allCategories = computed(() => {
-  const cats = new Set<string>()
-  allSkills.value.forEach(s => {
-    if (s.category) cats.add(s.category)
-  })
-  return ['All', ...Array.from(cats)]
-})
-
 const browseSkills = computed(() =>
   allSkills.value.filter(s => s.is_official || s.is_public || isOwned(s))
 )
@@ -382,19 +351,13 @@ const filteredMySkills = computed(() => filterSkills(mySkills.value))
 
 // --- Helpers ---
 function filterSkills(skills: Skill[]) {
-  let result = skills
-  if (selectedCategory.value && selectedCategory.value !== 'All') {
-    result = result.filter(s => s.category === selectedCategory.value)
-  }
-  if (searchQuery.value) {
-    const q = searchQuery.value.toLowerCase()
-    result = result.filter(
-      s => s.name.toLowerCase().includes(q) ||
-           s.description.toLowerCase().includes(q) ||
-           s.command_name.toLowerCase().includes(q)
-    )
-  }
-  return result
+  if (!searchQuery.value) return skills
+  const q = searchQuery.value.toLowerCase()
+  return skills.filter(
+    s => s.name.toLowerCase().includes(q) ||
+         s.description.toLowerCase().includes(q) ||
+         s.command_name.toLowerCase().includes(q)
+  )
 }
 
 function isInstalled(skillId: number) {
@@ -402,7 +365,7 @@ function isInstalled(skillId: number) {
 }
 
 function isOwned(skill: Skill) {
-  return !skill.is_official && skill.created_by === authStore.userId
+  return !skill.is_official && Number(skill.created_by) === Number(authStore.userId)
 }
 
 function emptyForm() {
@@ -410,7 +373,6 @@ function emptyForm() {
     name: '',
     description: '',
     icon: '📝',
-    category: '',
     prompt: '',
     command_name: '',
     parameters: [] as SkillParameter[],
@@ -466,8 +428,18 @@ async function handleDelete(skill: Skill) {
 
 async function handleFork(skill: Skill) {
   try {
-    await forkSkill(skill.id)
+    const forked = await forkSkill(skill.id)
     message.success('Skill forked to My Skills')
+    // Auto-install the forked skill to current agent
+    if (props.agentId && forked?.id) {
+      try {
+        await installSkill(props.agentId, forked.id)
+        message.success('Forked skill installed to agent')
+        emit('skillsChanged')
+      } catch (installErr) {
+        console.error('Auto-install after fork failed:', installErr)
+      }
+    }
     loadSkills()
   } catch (error) {
     message.error(extractApiError(error, 'Failed to fork skill'))
@@ -487,7 +459,6 @@ function openEditor(skill?: Skill) {
       name: skill.name,
       description: skill.description,
       icon: skill.icon,
-      category: skill.category,
       prompt: skill.prompt,
       command_name: skill.command_name || '',
       parameters: skill.parameters || [],
@@ -522,14 +493,6 @@ async function handleSubmit() {
 }
 
 // --- Form options ---
-const categoryOptions = [
-  { label: '数据查询', value: '数据查询' },
-  { label: '数据分析', value: '数据分析' },
-  { label: '报表生成', value: '报表生成' },
-  { label: '数据处理', value: '数据处理' },
-  { label: '其他', value: '其他' },
-]
-
 const iconOptions = [
   { label: '💰 Money', value: '💰' },
   { label: '📈 Chart', value: '📈' },
@@ -574,7 +537,6 @@ const formRules = {
       return true
     },
   },
-  category: { required: true, message: 'Please select category', trigger: 'change' },
   prompt: { required: true, message: 'Please input prompt', trigger: 'blur' },
 }
 

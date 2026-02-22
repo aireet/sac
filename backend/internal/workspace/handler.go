@@ -133,6 +133,11 @@ func (h *Handler) requireOSS() gin.HandlerFunc {
 	return h.requireStorage()
 }
 
+// RequireOSS is the exported version of requireOSS for use in main.go route registration.
+func (h *Handler) RequireOSS() gin.HandlerFunc {
+	return h.requireStorage()
+}
+
 // getOSS is an alias for getStorage (backward compatible helper).
 func (h *Handler) getOSS(c *gin.Context) storage.StorageBackend {
 	return h.getStorage(c)

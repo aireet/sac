@@ -241,15 +241,17 @@ restart:
 # ============================================================
 
 PROTO_DIR   := backend/proto
-PROTO_FILES := $(shell find $(PROTO_DIR) -name '*.proto' 2>/dev/null)
+PROTO_FILES := $(shell find $(PROTO_DIR)/sac -name '*.proto' 2>/dev/null)
 GO_GEN_DIR  := backend/gen
 TS_GEN_DIR  := frontend/src/generated
 
-## Generate Go code from proto files
+## Generate Go code from proto files (messages + gRPC services + gRPC-gateway)
 proto-go:
 	@rm -rf $(GO_GEN_DIR) && mkdir -p $(GO_GEN_DIR)
 	@protoc -I$(PROTO_DIR) \
 		--go_out=$(GO_GEN_DIR) --go_opt=paths=source_relative \
+		--go-grpc_out=$(GO_GEN_DIR) --go-grpc_opt=paths=source_relative \
+		--grpc-gateway_out=$(GO_GEN_DIR) --grpc-gateway_opt=paths=source_relative \
 		$(PROTO_FILES)
 	@echo "==> Go proto generated"
 

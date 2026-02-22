@@ -1,7 +1,10 @@
 import api from './api'
 import type { Session, CreateSessionResponse, UserSessionListResponse } from '../generated/sac/v1/session'
+import { normalizeInt64, normalizeInt64Array } from '../utils/proto'
 
 export type { Session, CreateSessionResponse }
+
+const SESSION_I64 = ['id', 'user_id', 'agent_id'] as const
 
 export interface CreateSessionRequest {
   agent_id?: number
@@ -25,7 +28,7 @@ export async function createSession(agentId?: number): Promise<CreateSessionResp
  */
 export async function getSession(sessionId: string): Promise<Session> {
   const response = await api.get<Session>(`/sessions/${sessionId}`)
-  return response.data
+  return normalizeInt64(response.data, [...SESSION_I64])
 }
 
 /**
@@ -33,7 +36,7 @@ export async function getSession(sessionId: string): Promise<Session> {
  */
 export async function listSessions(): Promise<Session[]> {
   const response = await api.get<UserSessionListResponse>('/sessions')
-  return response.data.sessions ?? []
+  return normalizeInt64Array(response.data.sessions ?? [], [...SESSION_I64])
 }
 
 /**

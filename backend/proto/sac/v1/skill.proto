@@ -2,6 +2,7 @@ syntax = "proto3";
 package sac.v1;
 option go_package = "g.echo.tech/dev/sac/gen/sac/v1;sacv1";
 
+import "google/api/annotations.proto";
 import "google/protobuf/timestamp.proto";
 import "sac/v1/common.proto";
 
@@ -57,4 +58,44 @@ message UpdateSkillRequest {
 
 message SkillListResponse {
   repeated Skill skills = 1;
+}
+
+message GetSkillRequest {
+  int64 id = 1;
+}
+
+message UpdateSkillByIdRequest {
+  int64 id = 1;
+  optional string name = 2;
+  optional string description = 3;
+  optional string icon = 4;
+  optional string category = 5;
+  optional string prompt = 6;
+  optional string command_name = 7;
+  repeated SkillParameter parameters = 8;
+  optional bool is_public = 9;
+}
+
+service SkillService {
+  rpc ListSkills(Empty) returns (SkillListResponse) {
+    option (google.api.http) = { get: "/api/skills" };
+  }
+  rpc GetSkill(GetSkillRequest) returns (Skill) {
+    option (google.api.http) = { get: "/api/skills/{id}" };
+  }
+  rpc CreateSkill(CreateSkillRequest) returns (Skill) {
+    option (google.api.http) = { post: "/api/skills", body: "*" };
+  }
+  rpc UpdateSkill(UpdateSkillByIdRequest) returns (Skill) {
+    option (google.api.http) = { put: "/api/skills/{id}", body: "*" };
+  }
+  rpc DeleteSkill(GetSkillRequest) returns (SuccessMessage) {
+    option (google.api.http) = { delete: "/api/skills/{id}" };
+  }
+  rpc ForkSkill(GetSkillRequest) returns (Skill) {
+    option (google.api.http) = { post: "/api/skills/{id}/fork" };
+  }
+  rpc ListPublicSkills(Empty) returns (SkillListResponse) {
+    option (google.api.http) = { get: "/api/skills/public" };
+  }
 }

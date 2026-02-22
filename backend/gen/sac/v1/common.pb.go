@@ -359,6 +359,45 @@ func (x *ErrorMessage) GetError() string {
 	return ""
 }
 
+// Empty is used for RPCs that take no parameters.
+type Empty struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *Empty) Reset() {
+	*x = Empty{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_sac_v1_common_proto_msgTypes[6]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *Empty) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Empty) ProtoMessage() {}
+
+func (x *Empty) ProtoReflect() protoreflect.Message {
+	mi := &file_sac_v1_common_proto_msgTypes[6]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Empty.ProtoReflect.Descriptor instead.
+func (*Empty) Descriptor() ([]byte, []int) {
+	return file_sac_v1_common_proto_rawDescGZIP(), []int{6}
+}
+
 var File_sac_v1_common_proto protoreflect.FileDescriptor
 
 var file_sac_v1_common_proto_rawDesc = []byte{
@@ -395,10 +434,10 @@ var file_sac_v1_common_proto_rawDesc = []byte{
 	0x01, 0x28, 0x09, 0x52, 0x07, 0x6d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x22, 0x24, 0x0a, 0x0c,
 	0x45, 0x72, 0x72, 0x6f, 0x72, 0x4d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x12, 0x14, 0x0a, 0x05,
 	0x65, 0x72, 0x72, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x65, 0x72, 0x72,
-	0x6f, 0x72, 0x42, 0x26, 0x5a, 0x24, 0x67, 0x2e, 0x65, 0x63, 0x68, 0x6f, 0x2e, 0x74, 0x65, 0x63,
-	0x68, 0x2f, 0x64, 0x65, 0x76, 0x2f, 0x73, 0x61, 0x63, 0x2f, 0x67, 0x65, 0x6e, 0x2f, 0x73, 0x61,
-	0x63, 0x2f, 0x76, 0x31, 0x3b, 0x73, 0x61, 0x63, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74,
-	0x6f, 0x33,
+	0x6f, 0x72, 0x22, 0x07, 0x0a, 0x05, 0x45, 0x6d, 0x70, 0x74, 0x79, 0x42, 0x26, 0x5a, 0x24, 0x67,
+	0x2e, 0x65, 0x63, 0x68, 0x6f, 0x2e, 0x74, 0x65, 0x63, 0x68, 0x2f, 0x64, 0x65, 0x76, 0x2f, 0x73,
+	0x61, 0x63, 0x2f, 0x67, 0x65, 0x6e, 0x2f, 0x73, 0x61, 0x63, 0x2f, 0x76, 0x31, 0x3b, 0x73, 0x61,
+	0x63, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -413,7 +452,7 @@ func file_sac_v1_common_proto_rawDescGZIP() []byte {
 	return file_sac_v1_common_proto_rawDescData
 }
 
-var file_sac_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_sac_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_sac_v1_common_proto_goTypes = []interface{}{
 	(*FileItem)(nil),              // 0: sac.v1.FileItem
 	(*FileListResponse)(nil),      // 1: sac.v1.FileListResponse
@@ -421,10 +460,11 @@ var file_sac_v1_common_proto_goTypes = []interface{}{
 	(*UserBrief)(nil),             // 3: sac.v1.UserBrief
 	(*SuccessMessage)(nil),        // 4: sac.v1.SuccessMessage
 	(*ErrorMessage)(nil),          // 5: sac.v1.ErrorMessage
-	(*timestamppb.Timestamp)(nil), // 6: google.protobuf.Timestamp
+	(*Empty)(nil),                 // 6: sac.v1.Empty
+	(*timestamppb.Timestamp)(nil), // 7: google.protobuf.Timestamp
 }
 var file_sac_v1_common_proto_depIdxs = []int32{
-	6, // 0: sac.v1.FileItem.last_modified:type_name -> google.protobuf.Timestamp
+	7, // 0: sac.v1.FileItem.last_modified:type_name -> google.protobuf.Timestamp
 	0, // 1: sac.v1.FileListResponse.files:type_name -> sac.v1.FileItem
 	2, // [2:2] is the sub-list for method output_type
 	2, // [2:2] is the sub-list for method input_type
@@ -511,6 +551,18 @@ func file_sac_v1_common_proto_init() {
 				return nil
 			}
 		}
+		file_sac_v1_common_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*Empty); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -518,7 +570,7 @@ func file_sac_v1_common_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_sac_v1_common_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -2,10 +2,11 @@ syntax = "proto3";
 package sac.v1;
 option go_package = "g.echo.tech/dev/sac/gen/sac/v1;sacv1";
 
+import "google/api/annotations.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "sac/v1/agent.proto";
-
+import "sac/v1/common.proto";
 
 message SystemSetting {
   int64 id = 1;
@@ -129,4 +130,123 @@ message AgentWithStatusListResponse {
 
 message ResetPasswordRequest {
   string new_password = 1;
+}
+
+// Request messages for RPCs that need path params
+message UpdateSettingByKeyRequest {
+  string key = 1;
+  google.protobuf.Value value = 2;
+  optional string description = 3;
+}
+
+message UpdateUserRoleByIdRequest {
+  int64 user_id = 1;
+  string role = 2;
+}
+
+message GetUserSettingsRequest {
+  int64 user_id = 1;
+}
+
+message SetUserSettingByIdRequest {
+  int64 user_id = 1;
+  string key = 2;
+  google.protobuf.Value value = 3;
+}
+
+message DeleteUserSettingRequest {
+  int64 user_id = 1;
+  string key = 2;
+}
+
+message GetUserAgentsRequest {
+  int64 user_id = 1;
+}
+
+message AdminAgentRequest {
+  int64 user_id = 1;
+  int64 agent_id = 2;
+}
+
+message UpdateAgentResourcesByIdRequest {
+  int64 user_id = 1;
+  int64 agent_id = 2;
+  optional string cpu_request = 3;
+  optional string cpu_limit = 4;
+  optional string memory_request = 5;
+  optional string memory_limit = 6;
+}
+
+message UpdateAgentImageByIdRequest {
+  int64 user_id = 1;
+  int64 agent_id = 2;
+  string image = 3;
+}
+
+message ResetPasswordByIdRequest {
+  int64 user_id = 1;
+  string new_password = 2;
+}
+
+message AdminGetConversationsRequest {
+  int64 user_id = 1;
+  int64 agent_id = 2;
+  string session_id = 3;
+  int32 limit = 4;
+  string before = 5;
+  string start = 6;
+  string end = 7;
+}
+
+service AdminService {
+  // Settings
+  rpc GetSettings(Empty) returns (SystemSettingListResponse) {
+    option (google.api.http) = { get: "/api/admin/settings" };
+  }
+  rpc UpdateSetting(UpdateSettingByKeyRequest) returns (SuccessMessage) {
+    option (google.api.http) = { put: "/api/admin/settings/{key}", body: "*" };
+  }
+
+  // Users
+  rpc GetUsers(Empty) returns (AdminUserListResponse) {
+    option (google.api.http) = { get: "/api/admin/users" };
+  }
+  rpc UpdateUserRole(UpdateUserRoleByIdRequest) returns (SuccessMessage) {
+    option (google.api.http) = { put: "/api/admin/users/{user_id}/role", body: "*" };
+  }
+  rpc GetUserSettings(GetUserSettingsRequest) returns (UserSettingListResponse) {
+    option (google.api.http) = { get: "/api/admin/users/{user_id}/settings" };
+  }
+  rpc SetUserSetting(SetUserSettingByIdRequest) returns (SuccessMessage) {
+    option (google.api.http) = { put: "/api/admin/users/{user_id}/settings/{key}", body: "*" };
+  }
+  rpc DeleteUserSetting(DeleteUserSettingRequest) returns (SuccessMessage) {
+    option (google.api.http) = { delete: "/api/admin/users/{user_id}/settings/{key}" };
+  }
+  rpc GetUserAgents(GetUserAgentsRequest) returns (AgentWithStatusListResponse) {
+    option (google.api.http) = { get: "/api/admin/users/{user_id}/agents" };
+  }
+  rpc DeleteUserAgent(AdminAgentRequest) returns (SuccessMessage) {
+    option (google.api.http) = { delete: "/api/admin/users/{user_id}/agents/{agent_id}" };
+  }
+  rpc RestartUserAgent(AdminAgentRequest) returns (SuccessMessage) {
+    option (google.api.http) = { post: "/api/admin/users/{user_id}/agents/{agent_id}/restart" };
+  }
+  rpc UpdateAgentResources(UpdateAgentResourcesByIdRequest) returns (SuccessMessage) {
+    option (google.api.http) = { put: "/api/admin/users/{user_id}/agents/{agent_id}/resources", body: "*" };
+  }
+  rpc UpdateAgentImage(UpdateAgentImageByIdRequest) returns (SuccessMessage) {
+    option (google.api.http) = { put: "/api/admin/users/{user_id}/agents/{agent_id}/image", body: "*" };
+  }
+  rpc BatchUpdateImage(BatchUpdateImageRequest) returns (BatchUpdateImageResponse) {
+    option (google.api.http) = { post: "/api/admin/agents/batch-update-image", body: "*" };
+  }
+  rpc ResetUserPassword(ResetPasswordByIdRequest) returns (SuccessMessage) {
+    option (google.api.http) = { put: "/api/admin/users/{user_id}/password", body: "*" };
+  }
+
+  // Conversations
+  rpc GetConversations(AdminGetConversationsRequest) returns (AdminConversationListResponse) {
+    option (google.api.http) = { get: "/api/admin/conversations" };
+  }
 }

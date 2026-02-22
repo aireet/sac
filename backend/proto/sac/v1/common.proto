@@ -34,3 +34,6 @@ message SuccessMessage {
 message ErrorMessage {
   string error = 1;
 }
+
+// Empty is used for RPCs that take no parameters.
+message Empty {}

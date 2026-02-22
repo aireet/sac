@@ -2,8 +2,10 @@ syntax = "proto3";
 package sac.v1;
 option go_package = "g.echo.tech/dev/sac/gen/sac/v1;sacv1";
 
+import "google/api/annotations.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
+import "sac/v1/common.proto";
 import "sac/v1/skill.proto";
 
 message Agent {
@@ -75,4 +77,64 @@ message AgentListResponse {
 
 message AgentStatusListResponse {
   repeated AgentStatus statuses = 1;
+}
+
+// Request messages for RPCs that need path/query params
+message GetAgentRequest {
+  int64 id = 1;
+}
+
+message UpdateAgentByIdRequest {
+  int64 id = 1;
+  optional string name = 2;
+  optional string description = 3;
+  optional string icon = 4;
+  optional string instructions = 5;
+  google.protobuf.Struct config = 6;
+}
+
+message InstallSkillByAgentRequest {
+  int64 agent_id = 1;
+  int64 skill_id = 2;
+}
+
+message UninstallSkillRequest {
+  int64 agent_id = 1;
+  int64 skill_id = 2;
+}
+
+service AgentService {
+  rpc ListAgents(Empty) returns (AgentListResponse) {
+    option (google.api.http) = { get: "/api/agents" };
+  }
+  rpc GetAgent(GetAgentRequest) returns (Agent) {
+    option (google.api.http) = { get: "/api/agents/{id}" };
+  }
+  rpc CreateAgent(CreateAgentRequest) returns (Agent) {
+    option (google.api.http) = { post: "/api/agents", body: "*" };
+  }
+  rpc UpdateAgent(UpdateAgentByIdRequest) returns (Agent) {
+    option (google.api.http) = { put: "/api/agents/{id}", body: "*" };
+  }
+  rpc DeleteAgent(GetAgentRequest) returns (SuccessMessage) {
+    option (google.api.http) = { delete: "/api/agents/{id}" };
+  }
+  rpc RestartAgent(GetAgentRequest) returns (SuccessMessage) {
+    option (google.api.http) = { post: "/api/agents/{id}/restart" };
+  }
+  rpc InstallSkill(InstallSkillByAgentRequest) returns (SuccessMessage) {
+    option (google.api.http) = { post: "/api/agents/{agent_id}/skills", body: "*" };
+  }
+  rpc UninstallSkill(UninstallSkillRequest) returns (SuccessMessage) {
+    option (google.api.http) = { delete: "/api/agents/{agent_id}/skills/{skill_id}" };
+  }
+  rpc SyncSkills(GetAgentRequest) returns (SuccessMessage) {
+    option (google.api.http) = { post: "/api/agents/{id}/sync-skills" };
+  }
+  rpc GetAgentStatuses(Empty) returns (AgentStatusListResponse) {
+    option (google.api.http) = { get: "/api/agent-statuses" };
+  }
+  rpc PreviewClaudeMD(GetAgentRequest) returns (ClaudeMDPreview) {
+    option (google.api.http) = { get: "/api/agents/{id}/claude-md-preview" };
+  }
 }

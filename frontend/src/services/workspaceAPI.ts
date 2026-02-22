@@ -6,16 +6,25 @@ import type {
   ShareResponse,
   SharedFileMeta,
 } from '../generated/sac/v1/workspace'
+import { normalizeInt64, normalizeInt64Array } from '../utils/proto'
 
 export type { FileListResponse, WorkspaceQuota, GroupWorkspaceQuota, SharedFileMeta }
 export type WorkspaceFile = FileItem
 export type ListFilesResponse = FileListResponse
 
+function normalizeFileList(data: FileListResponse): FileListResponse {
+  if (data.files) normalizeInt64Array(data.files, ['size'])
+  return data
+}
+
+const QUOTA_I64 = ['user_id', 'agent_id', 'used_bytes', 'max_bytes'] as const
+const GROUP_QUOTA_I64 = ['group_id', 'used_bytes', 'max_bytes'] as const
+
 // ---- Private workspace (per-agent) ----
 
 export const listFiles = async (agentId: number, path = '/'): Promise<FileListResponse> => {
   const response = await api.get('/workspace/files', { params: { agent_id: agentId, path } })
-  return response.data
+  return normalizeFileList(response.data)
 }
 
 export const uploadFile = async (
@@ -76,14 +85,14 @@ export const createDirectory = async (agentId: number, path: string): Promise<vo
 
 export const getQuota = async (agentId: number): Promise<WorkspaceQuota> => {
   const response = await api.get('/workspace/quota', { params: { agent_id: agentId } })
-  return response.data
+  return normalizeInt64(response.data, [...QUOTA_I64])
 }
 
 // ---- Public workspace ----
 
 export const listPublicFiles = async (path = '/'): Promise<FileListResponse> => {
   const response = await api.get('/workspace/public/files', { params: { path } })
-  return response.data
+  return normalizeFileList(response.data)
 }
 
 export const downloadPublicFile = (path: string): void => {
@@ -144,7 +153,7 @@ export const createPublicDirectory = async (path: string): Promise<void> => {
 
 export const listGroupFiles = async (groupId: number, path = '/'): Promise<FileListResponse> => {
   const response = await api.get('/workspace/group/files', { params: { group_id: groupId, path } })
-  return response.data
+  return normalizeFileList(response.data)
 }
 
 export const uploadGroupFile = async (
@@ -205,14 +214,14 @@ export const createGroupDirectory = async (groupId: number, path: string): Promi
 
 export const getGroupQuota = async (groupId: number): Promise<GroupWorkspaceQuota> => {
   const response = await api.get('/workspace/group/quota', { params: { group_id: groupId } })
-  return response.data
+  return normalizeInt64(response.data, [...GROUP_QUOTA_I64])
 }
 
 // ---- Output workspace (read-only, populated by sidecar) ----
 
 export const listOutputFiles = async (agentId: number, path = '/'): Promise<FileListResponse> => {
   const response = await api.get('/workspace/output/files', { params: { agent_id: agentId, path } })
-  return response.data
+  return normalizeFileList(response.data)
 }
 
 export const downloadOutputFile = (agentId: number, path: string): void => {
@@ -389,7 +398,8 @@ export const getSharedFile = async (code: string): Promise<SharedFileMeta> => {
   const r = await fetch(`${baseUrl}/s/${code}`)
   if (!r.ok) throw new Error(`Not found: ${r.status}`)
   const json = await r.json()
-  return json.data ?? json
+  const meta = json.data ?? json
+  return normalizeInt64(meta, ['size_bytes'])
 }
 
 export const fetchSharedFileBlob = async (code: string): Promise<Blob> => {

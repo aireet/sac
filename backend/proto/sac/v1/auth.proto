@@ -2,6 +2,7 @@ syntax = "proto3";
 package sac.v1;
 option go_package = "g.echo.tech/dev/sac/gen/sac/v1;sacv1";
 
+import "google/api/annotations.proto";
 import "google/protobuf/timestamp.proto";
 import "sac/v1/common.proto";
 
@@ -43,4 +44,29 @@ message ChangePasswordRequest {
 
 message RegistrationModeResponse {
   string mode = 1;
+}
+
+message SearchUsersRequest {
+  string q = 1;
+}
+
+service AuthService {
+  rpc Register(RegisterRequest) returns (AuthResponse) {
+    option (google.api.http) = { post: "/api/auth/register", body: "*" };
+  }
+  rpc Login(LoginRequest) returns (AuthResponse) {
+    option (google.api.http) = { post: "/api/auth/login", body: "*" };
+  }
+  rpc GetRegistrationMode(Empty) returns (RegistrationModeResponse) {
+    option (google.api.http) = { get: "/api/auth/registration-mode" };
+  }
+  rpc GetCurrentUser(Empty) returns (User) {
+    option (google.api.http) = { get: "/api/auth/me" };
+  }
+  rpc ChangePassword(ChangePasswordRequest) returns (SuccessMessage) {
+    option (google.api.http) = { put: "/api/auth/password", body: "*" };
+  }
+  rpc SearchUsers(SearchUsersRequest) returns (UserBriefListResponse) {
+    option (google.api.http) = { get: "/api/users/search" };
+  }
 }

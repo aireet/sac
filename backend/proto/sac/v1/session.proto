@@ -2,7 +2,9 @@ syntax = "proto3";
 package sac.v1;
 option go_package = "g.echo.tech/dev/sac/gen/sac/v1;sacv1";
 
+import "google/api/annotations.proto";
 import "google/protobuf/timestamp.proto";
+import "sac/v1/common.proto";
 
 message CreateSessionRequest {
   int64 agent_id = 1;
@@ -31,4 +33,23 @@ message Session {
 
 message UserSessionListResponse {
   repeated Session sessions = 1;
+}
+
+message GetSessionRequest {
+  string session_id = 1;
+}
+
+service SessionService {
+  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse) {
+    option (google.api.http) = { post: "/api/sessions", body: "*" };
+  }
+  rpc ListSessions(Empty) returns (UserSessionListResponse) {
+    option (google.api.http) = { get: "/api/sessions" };
+  }
+  rpc GetSession(GetSessionRequest) returns (Session) {
+    option (google.api.http) = { get: "/api/sessions/{session_id}" };
+  }
+  rpc DeleteSession(GetSessionRequest) returns (SuccessMessage) {
+    option (google.api.http) = { delete: "/api/sessions/{session_id}" };
+  }
 }

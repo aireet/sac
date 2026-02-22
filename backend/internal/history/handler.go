@@ -29,7 +29,7 @@ func NewHandler(db *bun.DB) *Handler {
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/conversations", h.listConversations)
 	rg.GET("/conversations/sessions", h.listSessions)
-	rg.GET("/conversations/export", h.exportConversations)
+	rg.GET("/conversations/export", h.ExportConversations)
 }
 
 // RegisterInternalRoutes registers internal routes (no JWT, Pod-internal calls).
@@ -272,7 +272,7 @@ func (h *Handler) listSessions(c *gin.Context) {
 	})
 }
 
-func (h *Handler) exportConversations(c *gin.Context) {
+func (h *Handler) ExportConversations(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
 		response.Unauthorized(c, "User not authenticated")
