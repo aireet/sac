@@ -23,43 +23,8 @@ message WorkspaceFile {
   google.protobuf.Timestamp updated_at = 14;
 }
 
-message WorkspaceQuota {
-  int64 user_id = 1;
-  int64 agent_id = 2;
-  int64 used_bytes = 3;
-  int64 max_bytes = 4;
-  int32 file_count = 5;
-  int32 max_file_count = 6;
-}
-
-message GroupWorkspaceQuota {
-  int64 group_id = 1;
-  int64 used_bytes = 2;
-  int64 max_bytes = 3;
-  int32 file_count = 4;
-  int32 max_file_count = 5;
-}
-
 message WorkspaceStatusResponse {
   bool configured = 1;
-}
-
-message CreateDirectoryRequest {
-  string path = 1;
-  int64 agent_id = 2;
-}
-
-message CreatePublicDirectoryRequest {
-  string path = 1;
-}
-
-message CreateGroupDirectoryRequest {
-  string path = 1;
-  int64 group_id = 2;
-}
-
-message SyncToPodRequest {
-  int64 agent_id = 1;
 }
 
 message CreateShareRequest {
@@ -84,35 +49,6 @@ message InternalOutputDeleteRequest {
   string path = 3;
 }
 
-// Request messages for RPCs that need path/query params
-message ListFilesRequest {
-  int64 agent_id = 1;
-  string path = 2;
-}
-
-message DeleteFileRequest {
-  int64 agent_id = 1;
-  string path = 2;
-}
-
-message ListPublicFilesRequest {
-  string path = 1;
-}
-
-message DeletePublicFileRequest {
-  string path = 1;
-}
-
-message ListGroupFilesRequest {
-  int64 group_id = 1;
-  string path = 2;
-}
-
-message DeleteGroupFileRequest {
-  int64 group_id = 1;
-  string path = 2;
-}
-
 message ListOutputFilesRequest {
   int64 agent_id = 1;
   string path = 2;
@@ -121,14 +57,6 @@ message ListOutputFilesRequest {
 message DeleteOutputFileRequest {
   int64 agent_id = 1;
   string path = 2;
-}
-
-message GetQuotaRequest {
-  int64 agent_id = 1;
-}
-
-message GetGroupQuotaRequest {
-  int64 group_id = 1;
 }
 
 message DeleteShareRequest {
@@ -143,45 +71,6 @@ service WorkspaceService {
   // Status
   rpc GetStatus(Empty) returns (WorkspaceStatusResponse) {
     option (google.api.http) = { get: "/api/workspace/status" };
-  }
-
-  // Private workspace
-  rpc ListFiles(ListFilesRequest) returns (FileListResponse) {
-    option (google.api.http) = { get: "/api/workspace/files" };
-  }
-  rpc DeleteFile(DeleteFileRequest) returns (SuccessMessage) {
-    option (google.api.http) = { delete: "/api/workspace/files" };
-  }
-  rpc CreateDirectory(CreateDirectoryRequest) returns (DirectoryResponse) {
-    option (google.api.http) = { post: "/api/workspace/directories", body: "*" };
-  }
-  rpc GetQuota(GetQuotaRequest) returns (WorkspaceQuota) {
-    option (google.api.http) = { get: "/api/workspace/quota" };
-  }
-
-  // Public workspace
-  rpc ListPublicFiles(ListPublicFilesRequest) returns (FileListResponse) {
-    option (google.api.http) = { get: "/api/workspace/public/files" };
-  }
-  rpc CreatePublicDirectory(CreatePublicDirectoryRequest) returns (DirectoryResponse) {
-    option (google.api.http) = { post: "/api/workspace/public/directories", body: "*" };
-  }
-  rpc DeletePublicFile(DeletePublicFileRequest) returns (SuccessMessage) {
-    option (google.api.http) = { delete: "/api/workspace/public/files" };
-  }
-
-  // Group workspace
-  rpc ListGroupFiles(ListGroupFilesRequest) returns (FileListResponse) {
-    option (google.api.http) = { get: "/api/workspace/group/files" };
-  }
-  rpc CreateGroupDirectory(CreateGroupDirectoryRequest) returns (DirectoryResponse) {
-    option (google.api.http) = { post: "/api/workspace/group/directories", body: "*" };
-  }
-  rpc DeleteGroupFile(DeleteGroupFileRequest) returns (SuccessMessage) {
-    option (google.api.http) = { delete: "/api/workspace/group/files" };
-  }
-  rpc GetGroupQuota(GetGroupQuotaRequest) returns (GroupWorkspaceQuota) {
-    option (google.api.http) = { get: "/api/workspace/group/quota" };
   }
 
   // Output workspace
@@ -203,11 +92,6 @@ service WorkspaceService {
   // Shared file (public, no auth)
   rpc GetSharedFileMeta(GetSharedFileRequest) returns (SharedFileMeta) {
     option (google.api.http) = { get: "/api/s/{code}" };
-  }
-
-  // Sync
-  rpc SyncToPod(SyncToPodRequest) returns (SuccessMessage) {
-    option (google.api.http) = { post: "/api/workspace/sync", body: "*" };
   }
 
   // Internal (sidecar, no auth)

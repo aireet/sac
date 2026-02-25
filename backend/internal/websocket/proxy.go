@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"github.com/rs/zerolog/log"
 	"net/http"
 	"sync"
 	"time"
@@ -76,12 +76,12 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 	// Upgrade connection to WebSocket
 	clientConn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		log.Printf("Failed to upgrade connection: %v", err)
+		log.Warn().Err(err).Msg("failed to upgrade WebSocket connection")
 		return
 	}
 	defer clientConn.Close()
 
-	log.Printf("Client connected: userID=%s, sessionID=%s, agentID=%s", userID, sessionID, agentIDStr)
+	log.Info().Str("user_id", userID).Str("session_id", sessionID).Str("agent_id", agentIDStr).Msg("client connected")
 
 	// Get Pod IP from database
 	ctx := context.Background()
@@ -96,9 +96,9 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 			Scan(ctx)
 		if err == nil {
 			agent = &a
-			log.Printf("Loaded agent: %s (config keys: %v)", agent.Name, getConfigKeys(agent.Config))
+			log.Debug().Str("agent", agent.Name).Msg("loaded agent")
 		} else {
-			log.Printf("Warning: Failed to load agent %s: %v", agentIDStr, err)
+			log.Warn().Err(err).Str("agent_id", agentIDStr).Msg("failed to load agent")
 		}
 	}
 	var session models.Session
@@ -109,13 +109,13 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 		Scan(ctx)
 
 	if err != nil {
-		log.Printf("Failed to find session: %v", err)
+		log.Warn().Err(err).Msg("failed to find session")
 		clientConn.WriteMessage(websocket.TextMessage, []byte("Error: Session not found"))
 		return
 	}
 
 	if session.PodIP == "" {
-		log.Printf("Pod IP not available for session: %s", sessionID)
+		log.Warn().Str("session_id", sessionID).Msg("pod IP not available")
 		clientConn.WriteMessage(websocket.TextMessage, []byte("Error: Pod is not ready yet"))
 		return
 	}
@@ -128,7 +128,7 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 	columns, rows := 100, 30 // sensible defaults
 	_, firstMsg, err := clientConn.ReadMessage()
 	if err != nil {
-		log.Printf("Failed to read initial message from client: %v", err)
+		log.Warn().Err(err).Msg("failed to read initial message from client")
 		return
 	}
 	if len(firstMsg) > 0 && firstMsg[0] == '{' {
@@ -140,35 +140,35 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 		if json.Unmarshal(firstMsg, &msg) == nil && msg.Columns > 0 && msg.Rows > 0 {
 			columns = msg.Columns
 			rows = msg.Rows
-			log.Printf("Client reported terminal size: %dx%d", columns, rows)
+			log.Debug().Int("columns", columns).Int("rows", rows).Msg("client reported terminal size")
 		}
 	}
 
 	// Connect to ttyd in the pod
 	ttydURL := fmt.Sprintf("ws://%s:7681/ws", session.PodIP)
-	log.Printf("Connecting to ttyd at: %s", ttydURL)
+	log.Debug().Str("url", ttydURL).Msg("connecting to ttyd")
 
 	// ttyd requires the "tty" WebSocket subprotocol
 	ttydHeaders := http.Header{}
 	ttydHeaders.Set("Sec-WebSocket-Protocol", "tty")
 	ttydConn, _, err := websocket.DefaultDialer.Dial(ttydURL, ttydHeaders)
 	if err != nil {
-		log.Printf("Failed to connect to ttyd: %v", err)
+		log.Warn().Err(err).Msg("failed to connect to ttyd")
 		clientConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("Error: Failed to connect to container: %v", err)))
 		return
 	}
 	defer ttydConn.Close()
 
-	log.Printf("Connected to ttyd successfully")
+	log.Debug().Msg("connected to ttyd")
 
 	// Send authentication handshake with the client's actual terminal dimensions
 	authMsg := fmt.Sprintf(`{"AuthToken":"","columns":%d,"rows":%d}`, columns, rows)
 	if err := ttydConn.WriteMessage(websocket.BinaryMessage, []byte(authMsg)); err != nil {
-		log.Printf("Failed to send auth handshake: %v", err)
+		log.Warn().Err(err).Msg("failed to send auth handshake")
 		clientConn.WriteMessage(websocket.TextMessage, []byte("Error: Failed to authenticate with container"))
 		return
 	}
-	log.Printf("Sent ttyd auth handshake with dimensions: %dx%d", columns, rows)
+	log.Debug().Int("columns", columns).Int("rows", rows).Msg("sent ttyd auth handshake")
 
 	// Update last active time
 	_, err = h.db.NewUpdate().
@@ -177,7 +177,7 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 		Where("id = ?", session.ID).
 		Exec(ctx)
 	if err != nil {
-		log.Printf("Failed to update last_active: %v", err)
+		log.Warn().Err(err).Msg("failed to update last_active")
 	}
 
 	// Enable ping/pong heartbeat to prevent idle disconnections (Envoy/NAT timeout).
@@ -222,7 +222,7 @@ func (h *ProxyHandler) HandleWebSocket(c *gin.Context) {
 
 	// Wait for both directions to complete
 	wg.Wait()
-	log.Printf("WebSocket proxy closed for session: %s", sessionID)
+	log.Info().Str("session_id", sessionID).Msg("WebSocket proxy closed")
 }
 
 // ttyd WebSocket protocol uses ASCII character bytes as message type prefixes.
@@ -254,7 +254,7 @@ func (h *ProxyHandler) forwardClientToTtyd(src, dst *websocket.Conn) {
 		_, message, err := src.ReadMessage()
 		if err != nil {
 			if err != io.EOF && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				log.Printf("Error reading message (client->ttyd): %v", err)
+				log.Debug().Err(err).Msg("error reading message (client->ttyd)")
 			}
 			return
 		}
@@ -272,7 +272,7 @@ func (h *ProxyHandler) forwardClientToTtyd(src, dst *websocket.Conn) {
 				resizeJSON := fmt.Sprintf(`{"columns":%d,"rows":%d}`, msg.Columns, msg.Rows)
 				wrapped := append([]byte{ttydResizeTerminal}, []byte(resizeJSON)...)
 				if err := dst.WriteMessage(websocket.BinaryMessage, wrapped); err != nil {
-					log.Printf("Error writing resize (client->ttyd): %v", err)
+					log.Debug().Err(err).Msg("error writing resize (client->ttyd)")
 					return
 				}
 				continue
@@ -285,7 +285,7 @@ func (h *ProxyHandler) forwardClientToTtyd(src, dst *websocket.Conn) {
 		copy(wrapped[1:], message)
 
 		if err := dst.WriteMessage(websocket.BinaryMessage, wrapped); err != nil {
-			log.Printf("Error writing message (client->ttyd): %v", err)
+			log.Debug().Err(err).Msg("error writing message (client->ttyd)")
 			return
 		}
 	}
@@ -297,7 +297,7 @@ func (h *ProxyHandler) forwardTtydToClient(src, dst *websocket.Conn) {
 		_, message, err := src.ReadMessage()
 		if err != nil {
 			if err != io.EOF && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				log.Printf("Error reading message (ttyd->client): %v", err)
+				log.Debug().Err(err).Msg("error reading message (ttyd->client)")
 			}
 			return
 		}
@@ -314,13 +314,13 @@ func (h *ProxyHandler) forwardTtydToClient(src, dst *websocket.Conn) {
 		switch msgType {
 		case ttydOutput: // Terminal output - forward as binary to preserve raw PTY bytes
 			if err := dst.WriteMessage(websocket.BinaryMessage, payload); err != nil {
-				log.Printf("Error writing message (ttyd->client): %v", err)
+				log.Debug().Err(err).Msg("error writing message (ttyd->client)")
 				return
 			}
 		case ttydSetWindowTitle, ttydSetPreferences:
 			// Ignore window title and preferences messages
 		default:
-			log.Printf("Skipping unknown ttyd message type: %d", msgType)
+			log.Debug().Uint8("type", msgType).Msg("skipping unknown ttyd message type")
 		}
 	}
 }
@@ -332,7 +332,7 @@ func (h *ProxyHandler) StartHeartbeat(conn *websocket.Conn, interval time.Durati
 
 	for range ticker.C {
 		if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second)); err != nil {
-			log.Printf("Failed to send ping: %v", err)
+			log.Debug().Err(err).Msg("failed to send ping")
 			return
 		}
 	}

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+"github.com/rs/zerolog/log"
 	"net/http"
 	"path"
 	"strconv"
@@ -507,7 +507,7 @@ func (h *Handler) WatchOutput(c *gin.Context) {
 
 	conn, err := wsUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		log.Printf("WatchOutput: websocket upgrade failed: %v", err)
+		log.Warn().Err(err).Msg("WatchOutput: websocket upgrade failed")
 		return
 	}
 	defer conn.Close()
@@ -543,7 +543,7 @@ func (h *Handler) WatchOutput(c *gin.Context) {
 		case event := <-ch:
 			data, err := json.Marshal(event)
 			if err != nil {
-				log.Printf("WatchOutput: marshal error: %v", err)
+				log.Warn().Err(err).Msg("WatchOutput: marshal error")
 				continue
 			}
 			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {

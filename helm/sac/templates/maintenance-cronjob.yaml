@@ -1,0 +1,59 @@
+{{- if .Values.maintenance.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: maintenance
+  labels:
+    {{- include "sac.labels" . | nindent 4 }}
+    app: maintenance
+spec:
+  schedule: {{ .Values.maintenance.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      ttlSecondsAfterFinished: 300
+      template:
+        metadata:
+          labels:
+            app: maintenance
+        spec:
+          serviceAccountName: {{ .Values.serviceAccount.name }}
+          restartPolicy: Never
+          containers:
+            - name: maintenance
+              image: {{ include "sac.image" (dict "registry" .Values.global.registry "name" .Values.apiGateway.image.name "tag" .Values.apiGateway.image.tag) }}
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              command: ["/app/maintenance"]
+              env:
+                - name: DB_HOST
+                  value: {{ .Values.database.host | quote }}
+                - name: DB_PORT
+                  value: {{ .Values.database.port | quote }}
+                - name: DB_USER
+                  value: {{ .Values.database.user | quote }}
+                - name: DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: sac-secret
+                      key: db-password
+                - name: DB_NAME
+                  value: {{ .Values.database.name | quote }}
+                - name: K8S_NAMESPACE
+                  value: {{ .Values.apiGateway.env.K8S_NAMESPACE | quote }}
+                - name: DOCKER_REGISTRY
+                  value: {{ .Values.apiGateway.env.DOCKER_REGISTRY | quote }}
+                - name: DOCKER_IMAGE
+                  value: {{ .Values.apiGateway.env.DOCKER_IMAGE | quote }}
+                - name: SIDECAR_IMAGE
+                  value: {{ .Values.apiGateway.env.SIDECAR_IMAGE | default "" | quote }}
+                - name: LOG_LEVEL
+                  value: {{ .Values.global.logLevel | quote }}
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+{{- end }}

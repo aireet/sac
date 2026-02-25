@@ -5,7 +5,7 @@
 // source: sac/v1/skill.proto
 
 /* eslint-disable */
-import type { UserBrief } from "./common";
+import type { Empty, SuccessMessage, UserBrief } from "./common";
 
 export const protobufPackage = "sac.v1";
 
@@ -16,6 +16,25 @@ export interface SkillParameter {
   required: boolean;
   default_value: string;
   options: string[];
+}
+
+export interface SkillFrontmatter {
+  allowed_tools: string[];
+  model: string;
+  context: string;
+  agent: string;
+  disable_model_invocation: boolean;
+  argument_hint: string;
+  user_invocable?: boolean | undefined;
+}
+
+export interface SkillFile {
+  id: number;
+  skill_id: number;
+  filepath: string;
+  size: number;
+  content_type: string;
+  created_at?: string | undefined;
 }
 
 export interface Skill {
@@ -35,6 +54,9 @@ export interface Skill {
   created_at?: string | undefined;
   updated_at?: string | undefined;
   creator?: UserBrief | undefined;
+  frontmatter?: SkillFrontmatter | undefined;
+  files: SkillFile[];
+  group_id?: number | undefined;
 }
 
 export interface CreateSkillRequest {
@@ -46,6 +68,8 @@ export interface CreateSkillRequest {
   command_name: string;
   parameters: SkillParameter[];
   is_public: boolean;
+  frontmatter?: SkillFrontmatter | undefined;
+  group_id?: number | undefined;
 }
 
 export interface UpdateSkillRequest {
@@ -57,8 +81,66 @@ export interface UpdateSkillRequest {
   command_name?: string | undefined;
   parameters: SkillParameter[];
   is_public?: boolean | undefined;
+  frontmatter?: SkillFrontmatter | undefined;
+  group_id?: number | undefined;
 }
 
 export interface SkillListResponse {
   skills: Skill[];
+}
+
+export interface SkillFileListResponse {
+  files: SkillFile[];
+}
+
+export interface SkillFileContentResponse {
+  filepath: string;
+  content: string;
+  content_type: string;
+  size: number;
+}
+
+export interface SaveSkillFileContentRequest {
+  skill_id: number;
+  filepath: string;
+  content: string;
+}
+
+export interface GetSkillRequest {
+  id: number;
+}
+
+export interface UpdateSkillByIdRequest {
+  id: number;
+  name?: string | undefined;
+  description?: string | undefined;
+  icon?: string | undefined;
+  category?: string | undefined;
+  prompt?: string | undefined;
+  command_name?: string | undefined;
+  parameters: SkillParameter[];
+  is_public?: boolean | undefined;
+  frontmatter?: SkillFrontmatter | undefined;
+  group_id?: number | undefined;
+}
+
+export interface ListGroupSkillsRequest {
+  group_id: number;
+}
+
+export interface ShareSkillToGroupRequest {
+  id: number;
+  group_id: number;
+}
+
+export interface SkillService {
+  ListSkills(request: Empty): Promise<SkillListResponse>;
+  GetSkill(request: GetSkillRequest): Promise<Skill>;
+  CreateSkill(request: CreateSkillRequest): Promise<Skill>;
+  UpdateSkill(request: UpdateSkillByIdRequest): Promise<Skill>;
+  DeleteSkill(request: GetSkillRequest): Promise<SuccessMessage>;
+  ForkSkill(request: GetSkillRequest): Promise<Skill>;
+  ListPublicSkills(request: Empty): Promise<SkillListResponse>;
+  ListGroupSkills(request: ListGroupSkillsRequest): Promise<SkillListResponse>;
+  ShareSkillToGroup(request: ShareSkillToGroupRequest): Promise<SuccessMessage>;
 }

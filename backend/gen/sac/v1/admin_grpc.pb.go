@@ -34,6 +34,7 @@ const (
 	AdminService_BatchUpdateImage_FullMethodName     = "/sac.v1.AdminService/BatchUpdateImage"
 	AdminService_ResetUserPassword_FullMethodName    = "/sac.v1.AdminService/ResetUserPassword"
 	AdminService_GetConversations_FullMethodName     = "/sac.v1.AdminService/GetConversations"
+	AdminService_TriggerMaintenance_FullMethodName   = "/sac.v1.AdminService/TriggerMaintenance"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -58,6 +59,8 @@ type AdminServiceClient interface {
 	ResetUserPassword(ctx context.Context, in *ResetPasswordByIdRequest, opts ...grpc.CallOption) (*SuccessMessage, error)
 	// Conversations
 	GetConversations(ctx context.Context, in *AdminGetConversationsRequest, opts ...grpc.CallOption) (*AdminConversationListResponse, error)
+	// Maintenance
+	TriggerMaintenance(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*SuccessMessage, error)
 }
 
 type adminServiceClient struct {
@@ -218,6 +221,16 @@ func (c *adminServiceClient) GetConversations(ctx context.Context, in *AdminGetC
 	return out, nil
 }
 
+func (c *adminServiceClient) TriggerMaintenance(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*SuccessMessage, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SuccessMessage)
+	err := c.cc.Invoke(ctx, AdminService_TriggerMaintenance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminServiceServer is the server API for AdminService service.
 // All implementations must embed UnimplementedAdminServiceServer
 // for forward compatibility.
@@ -240,6 +253,8 @@ type AdminServiceServer interface {
 	ResetUserPassword(context.Context, *ResetPasswordByIdRequest) (*SuccessMessage, error)
 	// Conversations
 	GetConversations(context.Context, *AdminGetConversationsRequest) (*AdminConversationListResponse, error)
+	// Maintenance
+	TriggerMaintenance(context.Context, *Empty) (*SuccessMessage, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -294,6 +309,9 @@ func (UnimplementedAdminServiceServer) ResetUserPassword(context.Context, *Reset
 }
 func (UnimplementedAdminServiceServer) GetConversations(context.Context, *AdminGetConversationsRequest) (*AdminConversationListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetConversations not implemented")
+}
+func (UnimplementedAdminServiceServer) TriggerMaintenance(context.Context, *Empty) (*SuccessMessage, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TriggerMaintenance not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
@@ -586,6 +604,24 @@ func _AdminService_GetConversations_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AdminService_TriggerMaintenance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).TriggerMaintenance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_TriggerMaintenance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).TriggerMaintenance(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -652,6 +688,10 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetConversations",
 			Handler:    _AdminService_GetConversations_Handler,
+		},
+		{
+			MethodName: "TriggerMaintenance",
+			Handler:    _AdminService_TriggerMaintenance_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

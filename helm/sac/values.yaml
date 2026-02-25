@@ -4,6 +4,7 @@ global:
   registry: docker-register-registry-vpc.cn-shanghai.cr.aliyuncs.com/prod/sac
   namespace: sac
   imagePullPolicy: Always
+  logLevel: info
 
 # --- API Gateway ---
 apiGateway:
@@ -100,6 +101,11 @@ redis:
       limits:
         cpu: 500m
         memory: 256Mi
+
+# --- Maintenance CronJob ---
+maintenance:
+  enabled: true
+  schedule: "*/10 * * * *"
 
 # --- gateway-helm subchart values ---
 gateway-helm:

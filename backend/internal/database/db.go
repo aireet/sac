@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
+"github.com/rs/zerolog/log"
 
 	"g.echo.tech/dev/sac/pkg/config"
 	"github.com/uptrace/bun"
@@ -43,7 +43,7 @@ func Initialize(cfg *config.Config) error {
 		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	log.Println("Database connection established successfully")
+	log.Info().Msg("database connection established")
 	return nil
 }
 

@@ -1,23 +1,14 @@
 package workspace
 
 import (
-	"context"
-	"crypto/md5"
-	"encoding/json"
 	"fmt"
-	"io"
-	"log"
 	"mime"
-	"mime/multipart"
 	"path"
 	"strconv"
 	"strings"
-	"time"
 
 	sacv1 "g.echo.tech/dev/sac/gen/sac/v1"
 	"g.echo.tech/dev/sac/internal/auth"
-	"g.echo.tech/dev/sac/internal/convert"
-	"g.echo.tech/dev/sac/internal/models"
 	"g.echo.tech/dev/sac/internal/storage"
 	"g.echo.tech/dev/sac/pkg/protobind"
 	"g.echo.tech/dev/sac/pkg/response"
@@ -37,78 +28,21 @@ func contentTypeByFilename(fileName string) string {
 	return "application/octet-stream"
 }
 
-// Handler serves workspace HTTP endpoints.
+// Handler serves workspace HTTP endpoints (output download, internal upload, shared files).
 type Handler struct {
 	db       *bun.DB
 	provider *storage.StorageProvider
-	syncSvc  *SyncService
 	hub      *OutputHub
 	jwt      *auth.JWTService
 }
 
 // NewHandler creates a new workspace handler.
-func NewHandler(db *bun.DB, provider *storage.StorageProvider, syncSvc *SyncService, hub *OutputHub, jwt *auth.JWTService) *Handler {
-	return &Handler{db: db, provider: provider, syncSvc: syncSvc, hub: hub, jwt: jwt}
+func NewHandler(db *bun.DB, provider *storage.StorageProvider, hub *OutputHub, jwt *auth.JWTService) *Handler {
+	return &Handler{db: db, provider: provider, hub: hub, jwt: jwt}
 }
 
-// RegisterRoutes registers workspace routes on a protected router group.
-func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	ws := rg.Group("/workspace")
-	{
-		// OSS status (always available)
-		ws.GET("/status", h.GetStatus)
-
-		// Private workspace (per-agent)
-		ws.POST("/upload", h.requireOSS(), h.Upload)
-		ws.GET("/files", h.requireOSS(), h.ListFiles)
-		ws.GET("/files/download", h.requireOSS(), h.DownloadFile)
-		ws.DELETE("/files", h.requireOSS(), h.DeleteFile)
-		ws.POST("/directories", h.requireOSS(), h.CreateDirectory)
-		ws.GET("/quota", h.requireOSS(), h.GetQuota)
-
-		// Public workspace
-		ws.GET("/public/files", h.requireOSS(), h.ListPublicFiles)
-		ws.GET("/public/files/download", h.requireOSS(), h.DownloadPublicFile)
-		ws.POST("/public/upload", h.requireOSS(), h.UploadPublic)
-		ws.POST("/public/directories", h.requireOSS(), h.CreatePublicDirectory)
-		ws.DELETE("/public/files", h.requireOSS(), h.DeletePublicFile)
-
-		// Group workspace
-		ws.GET("/group/files", h.requireOSS(), h.ListGroupFiles)
-		ws.GET("/group/files/download", h.requireOSS(), h.DownloadGroupFile)
-		ws.POST("/group/upload", h.requireOSS(), h.UploadGroup)
-		ws.POST("/group/directories", h.requireOSS(), h.CreateGroupDirectory)
-		ws.DELETE("/group/files", h.requireOSS(), h.DeleteGroupFile)
-		ws.GET("/group/quota", h.requireOSS(), h.GetGroupQuota)
-
-		// Output workspace (read-only, populated by sidecar)
-		ws.GET("/output/files", h.requireOSS(), h.ListOutputFiles)
-		ws.GET("/output/files/download", h.requireOSS(), h.DownloadOutputFile)
-		ws.DELETE("/output/files", h.requireOSS(), h.DeleteOutputFile)
-		// NOTE: output/watch is registered via RegisterPublicRoutes (WS upgrade needs token in query param)
-
-		// Output file sharing
-		ws.POST("/output/share", h.CreateShare)
-		ws.DELETE("/output/share/:code", h.DeleteShare)
-
-		// Sync workspace files from OSS to pod
-		ws.POST("/sync", h.SyncToPod)
-		ws.GET("/sync-stream", h.SyncToPodStream)
-	}
-}
-
-// RegisterPublicRoutes registers workspace routes that handle auth internally (no JWT middleware).
-// Used for WebSocket endpoints where Authorization header isn't available.
-func (h *Handler) RegisterPublicRoutes(rg *gin.RouterGroup) {
-	rg.GET("/workspace/output/watch", h.WatchOutput)
-
-	// Shared file links (public, no auth)
-	rg.GET("/s/:code", h.GetSharedFileMeta)
-	rg.GET("/s/:code/raw", h.requireOSS(), h.DownloadSharedFile)
-}
-
-// requireStorage is a middleware that checks if storage is configured.
-func (h *Handler) requireStorage() gin.HandlerFunc {
+// requireOSS is a middleware that checks if storage is configured.
+func (h *Handler) requireOSS() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		backend := h.provider.GetClient(c.Request.Context())
 		if backend == nil {
@@ -116,31 +50,20 @@ func (h *Handler) requireStorage() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		// Store backend in context for the handler to use
 		c.Set("storageBackend", backend)
 		c.Next()
 	}
 }
 
-// getStorage retrieves the StorageBackend stored by requireStorage middleware.
-func (h *Handler) getStorage(c *gin.Context) storage.StorageBackend {
+// RequireOSS is the exported version for use in main.go route registration.
+func (h *Handler) RequireOSS() gin.HandlerFunc {
+	return h.requireOSS()
+}
+
+// getOSS retrieves the StorageBackend stored by requireOSS middleware.
+func (h *Handler) getOSS(c *gin.Context) storage.StorageBackend {
 	v, _ := c.Get("storageBackend")
 	return v.(storage.StorageBackend)
-}
-
-// requireOSS is an alias for requireStorage (backward compatible route registration).
-func (h *Handler) requireOSS() gin.HandlerFunc {
-	return h.requireStorage()
-}
-
-// RequireOSS is the exported version of requireOSS for use in main.go route registration.
-func (h *Handler) RequireOSS() gin.HandlerFunc {
-	return h.requireStorage()
-}
-
-// getOSS is an alias for getStorage (backward compatible helper).
-func (h *Handler) getOSS(c *gin.Context) storage.StorageBackend {
-	return h.getStorage(c)
 }
 
 // GetStatus returns whether OSS is configured.
@@ -165,572 +88,6 @@ func parseAgentID(c *gin.Context) (int64, bool) {
 		return 0, false
 	}
 	return agentID, true
-}
-
-// ossKeyPrefix returns the OSS key prefix for a user's agent workspace.
-func ossKeyPrefix(userID, agentID int64) string {
-	return fmt.Sprintf("users/%d/agents/%d/", userID, agentID)
-}
-
-// ---- Private Workspace (per-agent) ----
-
-// Upload handles multipart file upload to private workspace.
-func (h *Handler) Upload(c *gin.Context) {
-	oss := h.getOSS(c)
-	userID, _ := c.Get("userID")
-	userIDInt := userID.(int64)
-
-	agentID, ok := parseAgentID(c)
-	if !ok {
-		return
-	}
-
-	filePath := c.DefaultPostForm("path", "/")
-	filePath = sanitizePath(filePath)
-
-	file, header, err := c.Request.FormFile("file")
-	if err != nil {
-		response.BadRequest(c, "No file provided", err)
-		return
-	}
-	defer file.Close()
-
-	if header.Size > maxUploadSize {
-		response.BadRequest(c, fmt.Sprintf("File too large: %d bytes (max %d)", header.Size, maxUploadSize))
-		return
-	}
-
-	ctx := context.Background()
-
-	// Check quota
-	quota := h.getOrCreateQuota(ctx, userIDInt, agentID)
-	if quota.UsedBytes+header.Size > quota.MaxBytes {
-		response.BadRequest(c, fmt.Sprintf("Quota exceeded: used %d + file %d > max %d", quota.UsedBytes, header.Size, quota.MaxBytes))
-		return
-	}
-	if quota.FileCount >= quota.MaxFileCount {
-		response.BadRequest(c, fmt.Sprintf("File count limit exceeded: %d/%d", quota.FileCount, quota.MaxFileCount))
-		return
-	}
-
-	ossKey := ossKeyPrefix(userIDInt, agentID) + filePath + header.Filename
-
-	checksum, err := uploadToStorage(ctx, oss, ossKey, file, header)
-	if err != nil {
-		response.InternalError(c, "Failed to upload file", err)
-		return
-	}
-
-	// Upsert workspace_files record
-	wf := &models.WorkspaceFile{
-		UserID:        userIDInt,
-		AgentID:       agentID,
-		WorkspaceType: "private",
-		OSSKey:        ossKey,
-		FileName:      header.Filename,
-		FilePath:      filePath + header.Filename,
-		ContentType:   header.Header.Get("Content-Type"),
-		SizeBytes:     header.Size,
-		Checksum:      checksum,
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
-	}
-
-	_, err = h.db.NewInsert().Model(wf).
-		On("CONFLICT (oss_key) DO UPDATE").
-		Set("size_bytes = EXCLUDED.size_bytes").
-		Set("checksum = EXCLUDED.checksum").
-		Set("content_type = EXCLUDED.content_type").
-		Set("updated_at = EXCLUDED.updated_at").
-		Exec(ctx)
-	if err != nil {
-		response.InternalError(c, "Failed to save file record", err)
-		return
-	}
-
-	// Update quota
-	h.recalcQuota(ctx, userIDInt, agentID)
-
-	// Sync to active pods in background
-	go h.syncSvc.SyncFileToPods(context.Background(), userIDInt, agentID, ossKey, filePath+header.Filename)
-
-	protobind.Created(c, convert.WorkspaceFileToProto(wf))
-}
-
-// ListFiles lists files in the user's agent-specific private workspace.
-func (h *Handler) ListFiles(c *gin.Context) {
-	oss := h.getOSS(c)
-	userID, _ := c.Get("userID")
-	userIDInt := userID.(int64)
-
-	agentID, ok := parseAgentID(c)
-	if !ok {
-		return
-	}
-
-	reqPath := sanitizePath(c.DefaultQuery("path", "/"))
-	prefix := ossKeyPrefix(userIDInt, agentID) + reqPath
-
-	items, err := oss.List(c.Request.Context(), prefix, "/", 1000)
-	if err != nil {
-		response.InternalError(c, "Failed to list files", err)
-		return
-	}
-
-	basePrefix := ossKeyPrefix(userIDInt, agentID)
-	files := storageItemsToProto(items, basePrefix)
-
-	protobind.OK(c, &sacv1.FileListResponse{
-		Path:  reqPath,
-		Files: files,
-	})
-}
-
-// DownloadFile downloads a private workspace file.
-func (h *Handler) DownloadFile(c *gin.Context) {
-	oss := h.getOSS(c)
-	userID, _ := c.Get("userID")
-	userIDInt := userID.(int64)
-
-	agentID, ok := parseAgentID(c)
-	if !ok {
-		return
-	}
-
-	filePath := c.Query("path")
-	if filePath == "" {
-		response.BadRequest(c, "path parameter required")
-		return
-	}
-	filePath = sanitizePath(filePath)
-
-	ossKey := ossKeyPrefix(userIDInt, agentID) + filePath
-
-	body, err := oss.Download(c.Request.Context(), ossKey)
-	if err != nil {
-		response.NotFound(c, "File not found", err)
-		return
-	}
-	defer body.Close()
-
-	fileName := path.Base(filePath)
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
-	c.Header("Content-Type", contentTypeByFilename(fileName))
-	io.Copy(c.Writer, body)
-}
-
-// DeleteFile deletes a private workspace file.
-func (h *Handler) DeleteFile(c *gin.Context) {
-	oss := h.getOSS(c)
-	userID, _ := c.Get("userID")
-	userIDInt := userID.(int64)
-
-	agentID, ok := parseAgentID(c)
-	if !ok {
-		return
-	}
-
-	filePath := c.Query("path")
-	if filePath == "" {
-		response.BadRequest(c, "path parameter required")
-		return
-	}
-	filePath = sanitizePath(filePath)
-	ossKey := ossKeyPrefix(userIDInt, agentID) + filePath
-
-	ctx := context.Background()
-
-	// Check if it's a directory prefix
-	if strings.HasSuffix(filePath, "/") {
-		if err := oss.DeletePrefix(ctx, ossKey); err != nil {
-			response.InternalError(c, "Failed to delete directory", err)
-			return
-		}
-		// Delete DB records with prefix
-		_, _ = h.db.NewDelete().Model((*models.WorkspaceFile)(nil)).
-			Where("user_id = ? AND agent_id = ? AND workspace_type = 'private' AND oss_key LIKE ?", userIDInt, agentID, ossKey+"%").
-			Exec(ctx)
-	} else {
-		if err := oss.Delete(ctx, ossKey); err != nil {
-			response.InternalError(c, "Failed to delete file", err)
-			return
-		}
-		_, _ = h.db.NewDelete().Model((*models.WorkspaceFile)(nil)).
-			Where("oss_key = ?", ossKey).
-			Exec(ctx)
-	}
-
-	h.recalcQuota(ctx, userIDInt, agentID)
-
-	// Delete from active pods in background
-	go h.syncSvc.DeleteFileFromPods(context.Background(), userIDInt, agentID, filePath)
-
-	protobind.OK(c, &sacv1.SuccessMessage{Message: "File deleted"})
-}
-
-// CreateDirectory creates a directory marker in private workspace.
-func (h *Handler) CreateDirectory(c *gin.Context) {
-	oss := h.getOSS(c)
-	userID, _ := c.Get("userID")
-	userIDInt := userID.(int64)
-
-	req := &sacv1.CreateDirectoryRequest{}
-	if !protobind.Bind(c, req) {
-		return
-	}
-
-	if req.AgentId == 0 || req.Path == "" {
-		response.BadRequest(c, "path and agent_id are required")
-		return
-	}
-
-	if req.AgentId <= 0 {
-		response.BadRequest(c, "invalid agent_id")
-		return
-	}
-
-	dirPath := sanitizePath(req.Path)
-	if !strings.HasSuffix(dirPath, "/") {
-		dirPath += "/"
-	}
-
-	ossKey := ossKeyPrefix(userIDInt, req.AgentId) + dirPath
-
-	// Create an empty object as directory marker
-	if err := oss.Upload(c.Request.Context(), ossKey, strings.NewReader(""), 0, "application/x-directory"); err != nil {
-		response.InternalError(c, "Failed to create directory", err)
-		return
-	}
-
-	protobind.Created(c, &sacv1.DirectoryResponse{Path: dirPath})
-}
-
-// GetQuota returns the user's workspace quota for a specific agent.
-func (h *Handler) GetQuota(c *gin.Context) {
-	userID, _ := c.Get("userID")
-	userIDInt := userID.(int64)
-
-	agentID, ok := parseAgentID(c)
-	if !ok {
-		return
-	}
-
-	ctx := context.Background()
-	quota := h.getOrCreateQuota(ctx, userIDInt, agentID)
-	protobind.OK(c, convert.WorkspaceQuotaToProto(quota))
-}
-
-// ---- Public Workspace ----
-
-// ListPublicFiles lists files in the public workspace.
-func (h *Handler) ListPublicFiles(c *gin.Context) {
-	oss := h.getOSS(c)
-	reqPath := sanitizePath(c.DefaultQuery("path", "/"))
-	prefix := "public/" + reqPath
-
-	items, err := oss.List(c.Request.Context(), prefix, "/", 1000)
-	if err != nil {
-		response.InternalError(c, "Failed to list public files", err)
-		return
-	}
-
-	files := storageItemsToProto(items, "public/")
-
-	protobind.OK(c, &sacv1.FileListResponse{
-		Path:  reqPath,
-		Files: files,
-	})
-}
-
-// DownloadPublicFile downloads a file from public workspace.
-func (h *Handler) DownloadPublicFile(c *gin.Context) {
-	oss := h.getOSS(c)
-	filePath := c.Query("path")
-	if filePath == "" {
-		response.BadRequest(c, "path parameter required")
-		return
-	}
-	filePath = sanitizePath(filePath)
-	ossKey := "public/" + filePath
-
-	body, err := oss.Download(c.Request.Context(), ossKey)
-	if err != nil {
-		response.NotFound(c, "File not found", err)
-		return
-	}
-	defer body.Close()
-
-	fileName := path.Base(filePath)
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
-	c.Header("Content-Type", contentTypeByFilename(fileName))
-	io.Copy(c.Writer, body)
-}
-
-// CreatePublicDirectory creates a directory marker in public workspace (admin only).
-func (h *Handler) CreatePublicDirectory(c *gin.Context) {
-	oss := h.getOSS(c)
-	role, _ := c.Get("role")
-	if role != "admin" {
-		response.Forbidden(c, "Admin access required")
-		return
-	}
-
-	req := &sacv1.CreatePublicDirectoryRequest{}
-	if !protobind.Bind(c, req) {
-		return
-	}
-
-	if req.Path == "" {
-		response.BadRequest(c, "path is required")
-		return
-	}
-
-	dirPath := sanitizePath(req.Path)
-	if !strings.HasSuffix(dirPath, "/") {
-		dirPath += "/"
-	}
-
-	ossKey := "public/" + dirPath
-
-	if err := oss.Upload(c.Request.Context(), ossKey, strings.NewReader(""), 0, "application/x-directory"); err != nil {
-		response.InternalError(c, "Failed to create directory", err)
-		return
-	}
-
-	protobind.Created(c, &sacv1.DirectoryResponse{Path: dirPath})
-}
-
-// UploadPublic handles file upload to public workspace (admin only).
-func (h *Handler) UploadPublic(c *gin.Context) {
-	oss := h.getOSS(c)
-	role, _ := c.Get("role")
-	if role != "admin" {
-		response.Forbidden(c, "Admin access required")
-		return
-	}
-
-	filePath := c.DefaultPostForm("path", "/")
-	filePath = sanitizePath(filePath)
-
-	file, header, err := c.Request.FormFile("file")
-	if err != nil {
-		response.BadRequest(c, "No file provided", err)
-		return
-	}
-	defer file.Close()
-
-	if header.Size > maxUploadSize {
-		response.BadRequest(c, fmt.Sprintf("File too large: %d bytes (max %d)", header.Size, maxUploadSize))
-		return
-	}
-
-	ossKey := "public/" + filePath + header.Filename
-
-	ctx := context.Background()
-	checksum, err := uploadToStorage(ctx, oss, ossKey, file, header)
-	if err != nil {
-		response.InternalError(c, "Failed to upload file", err)
-		return
-	}
-
-	wf := &models.WorkspaceFile{
-		UserID:        0, // public
-		AgentID:       0, // public
-		WorkspaceType: "public",
-		OSSKey:        ossKey,
-		FileName:      header.Filename,
-		FilePath:      filePath + header.Filename,
-		ContentType:   header.Header.Get("Content-Type"),
-		SizeBytes:     header.Size,
-		Checksum:      checksum,
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
-	}
-
-	_, err = h.db.NewInsert().Model(wf).
-		On("CONFLICT (oss_key) DO UPDATE").
-		Set("size_bytes = EXCLUDED.size_bytes").
-		Set("checksum = EXCLUDED.checksum").
-		Set("content_type = EXCLUDED.content_type").
-		Set("updated_at = EXCLUDED.updated_at").
-		Exec(ctx)
-	if err != nil {
-		response.InternalError(c, "Failed to save file record", err)
-		return
-	}
-
-	// Sync public file to all active pods in background
-	go h.syncSvc.SyncPublicFileToPods(context.Background(), ossKey, filePath+header.Filename)
-
-	protobind.Created(c, convert.WorkspaceFileToProto(wf))
-}
-
-// DeletePublicFile deletes a file from public workspace (admin only).
-func (h *Handler) DeletePublicFile(c *gin.Context) {
-	oss := h.getOSS(c)
-	role, _ := c.Get("role")
-	if role != "admin" {
-		response.Forbidden(c, "Admin access required")
-		return
-	}
-
-	filePath := c.Query("path")
-	if filePath == "" {
-		response.BadRequest(c, "path parameter required")
-		return
-	}
-	filePath = sanitizePath(filePath)
-	ossKey := "public/" + filePath
-
-	ctx := context.Background()
-
-	if strings.HasSuffix(filePath, "/") {
-		if err := oss.DeletePrefix(ctx, ossKey); err != nil {
-			response.InternalError(c, "Failed to delete directory", err)
-			return
-		}
-		_, _ = h.db.NewDelete().Model((*models.WorkspaceFile)(nil)).
-			Where("workspace_type = 'public' AND oss_key LIKE ?", ossKey+"%").
-			Exec(ctx)
-	} else {
-		if err := oss.Delete(ctx, ossKey); err != nil {
-			response.InternalError(c, "Failed to delete file", err)
-			return
-		}
-		_, _ = h.db.NewDelete().Model((*models.WorkspaceFile)(nil)).
-			Where("oss_key = ?", ossKey).
-			Exec(ctx)
-	}
-
-	// Delete public file from all active pods in background
-	go h.syncSvc.DeletePublicFileFromPods(context.Background(), filePath)
-
-	protobind.OK(c, &sacv1.SuccessMessage{Message: "File deleted"})
-}
-
-// SyncToPod triggers a full workspace re-sync from OSS to the agent's pod.
-func (h *Handler) SyncToPod(c *gin.Context) {
-	userID, _ := c.Get("userID")
-	userIDInt := userID.(int64)
-	userIDStr := fmt.Sprintf("%d", userIDInt)
-
-	req := &sacv1.SyncToPodRequest{}
-	if !protobind.Bind(c, req) {
-		return
-	}
-
-	if req.AgentId <= 0 {
-		response.BadRequest(c, "agent_id is required")
-		return
-	}
-
-	ctx := context.Background()
-
-	if err := h.syncSvc.SyncWorkspaceToPod(ctx, userIDStr, req.AgentId); err != nil {
-		log.Printf("Workspace sync failed for user %s agent %d: %v", userIDStr, req.AgentId, err)
-		response.InternalError(c, "Workspace sync failed", err)
-		return
-	}
-
-	protobind.OK(c, &sacv1.SuccessMessage{Message: "Workspace synced to pod"})
-}
-
-// SyncToPodStream triggers a full workspace sync with SSE progress events.
-func (h *Handler) SyncToPodStream(c *gin.Context) {
-	userID, _ := c.Get("userID")
-	userIDInt := userID.(int64)
-	userIDStr := fmt.Sprintf("%d", userIDInt)
-
-	agentIDStr := c.Query("agent_id")
-	agentID, err := strconv.ParseInt(agentIDStr, 10, 64)
-	if err != nil || agentID <= 0 {
-		response.BadRequest(c, "agent_id is required")
-		return
-	}
-
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-
-	ctx := context.Background()
-	flusher := c.Writer
-
-	syncErr := h.syncSvc.SyncWorkspaceToPodWithProgress(ctx, userIDStr, agentID, func(p SyncProgress) {
-		data, _ := json.Marshal(p)
-		fmt.Fprintf(flusher, "data: %s\n\n", data)
-		flusher.Flush()
-	})
-
-	if syncErr != nil {
-		log.Printf("Workspace sync-stream failed for user %s agent %d: %v", userIDStr, agentID, syncErr)
-		fmt.Fprintf(flusher, "data: {\"error\":\"%s\"}\n\n", syncErr.Error())
-		flusher.Flush()
-	}
-}
-
-// ---- Helpers ----
-
-func uploadToStorage(ctx context.Context, backend storage.StorageBackend, ossKey string, file multipart.File, header *multipart.FileHeader) (string, error) {
-	// Compute MD5 checksum
-	hasher := md5.New()
-	tee := io.TeeReader(file, hasher)
-
-	contentType := header.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-
-	if err := backend.Upload(ctx, ossKey, tee, header.Size, contentType); err != nil {
-		return "", err
-	}
-
-	checksum := fmt.Sprintf("%x", hasher.Sum(nil))
-	return checksum, nil
-}
-
-func (h *Handler) getOrCreateQuota(ctx context.Context, userID, agentID int64) *models.WorkspaceQuota {
-	var quota models.WorkspaceQuota
-	err := h.db.NewSelect().Model(&quota).Where("user_id = ? AND agent_id = ?", userID, agentID).Scan(ctx)
-	if err != nil {
-		// Create default quota
-		quota = models.WorkspaceQuota{
-			UserID:       userID,
-			AgentID:      agentID,
-			UsedBytes:    0,
-			MaxBytes:     1 << 30, // 1GB
-			FileCount:    0,
-			MaxFileCount: 1000,
-			UpdatedAt:    time.Now(),
-		}
-		_, _ = h.db.NewInsert().Model(&quota).Exec(ctx)
-	}
-	return &quota
-}
-
-func (h *Handler) recalcQuota(ctx context.Context, userID, agentID int64) {
-	var result struct {
-		TotalSize int64 `bun:"total_size"`
-		FileCount int   `bun:"file_count"`
-	}
-
-	err := h.db.NewSelect().
-		TableExpr("workspace_files").
-		ColumnExpr("COALESCE(SUM(size_bytes), 0) AS total_size").
-		ColumnExpr("COUNT(*) AS file_count").
-		Where("user_id = ? AND agent_id = ? AND workspace_type = 'private' AND is_directory = FALSE", userID, agentID).
-		Scan(ctx, &result)
-
-	if err != nil {
-		log.Printf("Warning: failed to recalc quota for user %d agent %d: %v", userID, agentID, err)
-		return
-	}
-
-	_, _ = h.db.NewUpdate().Model((*models.WorkspaceQuota)(nil)).
-		Set("used_bytes = ?", result.TotalSize).
-		Set("file_count = ?", result.FileCount).
-		Set("updated_at = ?", time.Now()).
-		Where("user_id = ? AND agent_id = ?", userID, agentID).
-		Exec(ctx)
 }
 
 // storageItemsToProto converts storage list items to proto FileItem messages.
@@ -761,12 +118,14 @@ func storageItemsToProto(items []storage.ObjectInfo, basePrefix string) []*sacv1
 
 // sanitizePath cleans a file path, preventing directory traversal.
 func sanitizePath(p string) string {
-	// Remove any leading/trailing whitespace
 	p = strings.TrimSpace(p)
-	// Remove leading slashes
 	p = strings.TrimLeft(p, "/")
-	// Remove dangerous path components
 	p = strings.ReplaceAll(p, "..", "")
 	p = strings.ReplaceAll(p, "//", "/")
 	return p
+}
+
+// ossKeyPrefix returns the OSS key prefix for a user's agent workspace.
+func ossKeyPrefix(userID, agentID int64) string {
+	return fmt.Sprintf("users/%d/agents/%d/", userID, agentID)
 }

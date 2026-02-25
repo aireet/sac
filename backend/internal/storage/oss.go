@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+"github.com/rs/zerolog/log"
 	"time"
 
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
@@ -30,7 +30,7 @@ func NewOSSBackend(endpoint, keyID, keySecret, bucketName string) (*OSSBackend, 
 		return nil, fmt.Errorf("failed to get bucket %s: %w", bucketName, err)
 	}
 
-	log.Printf("OSS backend initialized: endpoint=%s, bucket=%s", endpoint, bucketName)
+	log.Info().Str("endpoint", endpoint).Str("bucket", bucketName).Msg("OSS backend initialized")
 	return &OSSBackend{bucket: bucket}, nil
 }
 

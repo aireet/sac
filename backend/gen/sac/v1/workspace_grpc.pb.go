@@ -19,25 +19,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	WorkspaceService_GetStatus_FullMethodName             = "/sac.v1.WorkspaceService/GetStatus"
-	WorkspaceService_ListFiles_FullMethodName             = "/sac.v1.WorkspaceService/ListFiles"
-	WorkspaceService_DeleteFile_FullMethodName            = "/sac.v1.WorkspaceService/DeleteFile"
-	WorkspaceService_CreateDirectory_FullMethodName       = "/sac.v1.WorkspaceService/CreateDirectory"
-	WorkspaceService_GetQuota_FullMethodName              = "/sac.v1.WorkspaceService/GetQuota"
-	WorkspaceService_ListPublicFiles_FullMethodName       = "/sac.v1.WorkspaceService/ListPublicFiles"
-	WorkspaceService_CreatePublicDirectory_FullMethodName = "/sac.v1.WorkspaceService/CreatePublicDirectory"
-	WorkspaceService_DeletePublicFile_FullMethodName      = "/sac.v1.WorkspaceService/DeletePublicFile"
-	WorkspaceService_ListGroupFiles_FullMethodName        = "/sac.v1.WorkspaceService/ListGroupFiles"
-	WorkspaceService_CreateGroupDirectory_FullMethodName  = "/sac.v1.WorkspaceService/CreateGroupDirectory"
-	WorkspaceService_DeleteGroupFile_FullMethodName       = "/sac.v1.WorkspaceService/DeleteGroupFile"
-	WorkspaceService_GetGroupQuota_FullMethodName         = "/sac.v1.WorkspaceService/GetGroupQuota"
-	WorkspaceService_ListOutputFiles_FullMethodName       = "/sac.v1.WorkspaceService/ListOutputFiles"
-	WorkspaceService_DeleteOutputFile_FullMethodName      = "/sac.v1.WorkspaceService/DeleteOutputFile"
-	WorkspaceService_CreateShare_FullMethodName           = "/sac.v1.WorkspaceService/CreateShare"
-	WorkspaceService_DeleteShare_FullMethodName           = "/sac.v1.WorkspaceService/DeleteShare"
-	WorkspaceService_GetSharedFileMeta_FullMethodName     = "/sac.v1.WorkspaceService/GetSharedFileMeta"
-	WorkspaceService_SyncToPod_FullMethodName             = "/sac.v1.WorkspaceService/SyncToPod"
-	WorkspaceService_InternalOutputDelete_FullMethodName  = "/sac.v1.WorkspaceService/InternalOutputDelete"
+	WorkspaceService_GetStatus_FullMethodName            = "/sac.v1.WorkspaceService/GetStatus"
+	WorkspaceService_ListOutputFiles_FullMethodName      = "/sac.v1.WorkspaceService/ListOutputFiles"
+	WorkspaceService_DeleteOutputFile_FullMethodName     = "/sac.v1.WorkspaceService/DeleteOutputFile"
+	WorkspaceService_CreateShare_FullMethodName          = "/sac.v1.WorkspaceService/CreateShare"
+	WorkspaceService_DeleteShare_FullMethodName          = "/sac.v1.WorkspaceService/DeleteShare"
+	WorkspaceService_GetSharedFileMeta_FullMethodName    = "/sac.v1.WorkspaceService/GetSharedFileMeta"
+	WorkspaceService_InternalOutputDelete_FullMethodName = "/sac.v1.WorkspaceService/InternalOutputDelete"
 )
 
 // WorkspaceServiceClient is the client API for WorkspaceService service.
@@ -46,20 +34,6 @@ const (
 type WorkspaceServiceClient interface {
 	// Status
 	GetStatus(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*WorkspaceStatusResponse, error)
-	// Private workspace
-	ListFiles(ctx context.Context, in *ListFilesRequest, opts ...grpc.CallOption) (*FileListResponse, error)
-	DeleteFile(ctx context.Context, in *DeleteFileRequest, opts ...grpc.CallOption) (*SuccessMessage, error)
-	CreateDirectory(ctx context.Context, in *CreateDirectoryRequest, opts ...grpc.CallOption) (*DirectoryResponse, error)
-	GetQuota(ctx context.Context, in *GetQuotaRequest, opts ...grpc.CallOption) (*WorkspaceQuota, error)
-	// Public workspace
-	ListPublicFiles(ctx context.Context, in *ListPublicFilesRequest, opts ...grpc.CallOption) (*FileListResponse, error)
-	CreatePublicDirectory(ctx context.Context, in *CreatePublicDirectoryRequest, opts ...grpc.CallOption) (*DirectoryResponse, error)
-	DeletePublicFile(ctx context.Context, in *DeletePublicFileRequest, opts ...grpc.CallOption) (*SuccessMessage, error)
-	// Group workspace
-	ListGroupFiles(ctx context.Context, in *ListGroupFilesRequest, opts ...grpc.CallOption) (*FileListResponse, error)
-	CreateGroupDirectory(ctx context.Context, in *CreateGroupDirectoryRequest, opts ...grpc.CallOption) (*DirectoryResponse, error)
-	DeleteGroupFile(ctx context.Context, in *DeleteGroupFileRequest, opts ...grpc.CallOption) (*SuccessMessage, error)
-	GetGroupQuota(ctx context.Context, in *GetGroupQuotaRequest, opts ...grpc.CallOption) (*GroupWorkspaceQuota, error)
 	// Output workspace
 	ListOutputFiles(ctx context.Context, in *ListOutputFilesRequest, opts ...grpc.CallOption) (*FileListResponse, error)
 	DeleteOutputFile(ctx context.Context, in *DeleteOutputFileRequest, opts ...grpc.CallOption) (*SuccessMessage, error)
@@ -68,8 +42,6 @@ type WorkspaceServiceClient interface {
 	DeleteShare(ctx context.Context, in *DeleteShareRequest, opts ...grpc.CallOption) (*SuccessMessage, error)
 	// Shared file (public, no auth)
 	GetSharedFileMeta(ctx context.Context, in *GetSharedFileRequest, opts ...grpc.CallOption) (*SharedFileMeta, error)
-	// Sync
-	SyncToPod(ctx context.Context, in *SyncToPodRequest, opts ...grpc.CallOption) (*SuccessMessage, error)
 	// Internal (sidecar, no auth)
 	InternalOutputDelete(ctx context.Context, in *InternalOutputDeleteRequest, opts ...grpc.CallOption) (*SuccessMessage, error)
 }
@@ -86,116 +58,6 @@ func (c *workspaceServiceClient) GetStatus(ctx context.Context, in *Empty, opts 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WorkspaceStatusResponse)
 	err := c.cc.Invoke(ctx, WorkspaceService_GetStatus_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *workspaceServiceClient) ListFiles(ctx context.Context, in *ListFilesRequest, opts ...grpc.CallOption) (*FileListResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FileListResponse)
-	err := c.cc.Invoke(ctx, WorkspaceService_ListFiles_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *workspaceServiceClient) DeleteFile(ctx context.Context, in *DeleteFileRequest, opts ...grpc.CallOption) (*SuccessMessage, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SuccessMessage)
-	err := c.cc.Invoke(ctx, WorkspaceService_DeleteFile_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *workspaceServiceClient) CreateDirectory(ctx context.Context, in *CreateDirectoryRequest, opts ...grpc.CallOption) (*DirectoryResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DirectoryResponse)
-	err := c.cc.Invoke(ctx, WorkspaceService_CreateDirectory_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *workspaceServiceClient) GetQuota(ctx context.Context, in *GetQuotaRequest, opts ...grpc.CallOption) (*WorkspaceQuota, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(WorkspaceQuota)
-	err := c.cc.Invoke(ctx, WorkspaceService_GetQuota_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *workspaceServiceClient) ListPublicFiles(ctx context.Context, in *ListPublicFilesRequest, opts ...grpc.CallOption) (*FileListResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FileListResponse)
-	err := c.cc.Invoke(ctx, WorkspaceService_ListPublicFiles_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *workspaceServiceClient) CreatePublicDirectory(ctx context.Context, in *CreatePublicDirectoryRequest, opts ...grpc.CallOption) (*DirectoryResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DirectoryResponse)
-	err := c.cc.Invoke(ctx, WorkspaceService_CreatePublicDirectory_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *workspaceServiceClient) DeletePublicFile(ctx context.Context, in *DeletePublicFileRequest, opts ...grpc.CallOption) (*SuccessMessage, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SuccessMessage)
-	err := c.cc.Invoke(ctx, WorkspaceService_DeletePublicFile_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *workspaceServiceClient) ListGroupFiles(ctx context.Context, in *ListGroupFilesRequest, opts ...grpc.CallOption) (*FileListResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FileListResponse)
-	err := c.cc.Invoke(ctx, WorkspaceService_ListGroupFiles_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *workspaceServiceClient) CreateGroupDirectory(ctx context.Context, in *CreateGroupDirectoryRequest, opts ...grpc.CallOption) (*DirectoryResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DirectoryResponse)
-	err := c.cc.Invoke(ctx, WorkspaceService_CreateGroupDirectory_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *workspaceServiceClient) DeleteGroupFile(ctx context.Context, in *DeleteGroupFileRequest, opts ...grpc.CallOption) (*SuccessMessage, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SuccessMessage)
-	err := c.cc.Invoke(ctx, WorkspaceService_DeleteGroupFile_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *workspaceServiceClient) GetGroupQuota(ctx context.Context, in *GetGroupQuotaRequest, opts ...grpc.CallOption) (*GroupWorkspaceQuota, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GroupWorkspaceQuota)
-	err := c.cc.Invoke(ctx, WorkspaceService_GetGroupQuota_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -252,16 +114,6 @@ func (c *workspaceServiceClient) GetSharedFileMeta(ctx context.Context, in *GetS
 	return out, nil
 }
 
-func (c *workspaceServiceClient) SyncToPod(ctx context.Context, in *SyncToPodRequest, opts ...grpc.CallOption) (*SuccessMessage, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SuccessMessage)
-	err := c.cc.Invoke(ctx, WorkspaceService_SyncToPod_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *workspaceServiceClient) InternalOutputDelete(ctx context.Context, in *InternalOutputDeleteRequest, opts ...grpc.CallOption) (*SuccessMessage, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SuccessMessage)
@@ -278,20 +130,6 @@ func (c *workspaceServiceClient) InternalOutputDelete(ctx context.Context, in *I
 type WorkspaceServiceServer interface {
 	// Status
 	GetStatus(context.Context, *Empty) (*WorkspaceStatusResponse, error)
-	// Private workspace
-	ListFiles(context.Context, *ListFilesRequest) (*FileListResponse, error)
-	DeleteFile(context.Context, *DeleteFileRequest) (*SuccessMessage, error)
-	CreateDirectory(context.Context, *CreateDirectoryRequest) (*DirectoryResponse, error)
-	GetQuota(context.Context, *GetQuotaRequest) (*WorkspaceQuota, error)
-	// Public workspace
-	ListPublicFiles(context.Context, *ListPublicFilesRequest) (*FileListResponse, error)
-	CreatePublicDirectory(context.Context, *CreatePublicDirectoryRequest) (*DirectoryResponse, error)
-	DeletePublicFile(context.Context, *DeletePublicFileRequest) (*SuccessMessage, error)
-	// Group workspace
-	ListGroupFiles(context.Context, *ListGroupFilesRequest) (*FileListResponse, error)
-	CreateGroupDirectory(context.Context, *CreateGroupDirectoryRequest) (*DirectoryResponse, error)
-	DeleteGroupFile(context.Context, *DeleteGroupFileRequest) (*SuccessMessage, error)
-	GetGroupQuota(context.Context, *GetGroupQuotaRequest) (*GroupWorkspaceQuota, error)
 	// Output workspace
 	ListOutputFiles(context.Context, *ListOutputFilesRequest) (*FileListResponse, error)
 	DeleteOutputFile(context.Context, *DeleteOutputFileRequest) (*SuccessMessage, error)
@@ -300,8 +138,6 @@ type WorkspaceServiceServer interface {
 	DeleteShare(context.Context, *DeleteShareRequest) (*SuccessMessage, error)
 	// Shared file (public, no auth)
 	GetSharedFileMeta(context.Context, *GetSharedFileRequest) (*SharedFileMeta, error)
-	// Sync
-	SyncToPod(context.Context, *SyncToPodRequest) (*SuccessMessage, error)
 	// Internal (sidecar, no auth)
 	InternalOutputDelete(context.Context, *InternalOutputDeleteRequest) (*SuccessMessage, error)
 	mustEmbedUnimplementedWorkspaceServiceServer()
@@ -317,39 +153,6 @@ type UnimplementedWorkspaceServiceServer struct{}
 func (UnimplementedWorkspaceServiceServer) GetStatus(context.Context, *Empty) (*WorkspaceStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetStatus not implemented")
 }
-func (UnimplementedWorkspaceServiceServer) ListFiles(context.Context, *ListFilesRequest) (*FileListResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListFiles not implemented")
-}
-func (UnimplementedWorkspaceServiceServer) DeleteFile(context.Context, *DeleteFileRequest) (*SuccessMessage, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DeleteFile not implemented")
-}
-func (UnimplementedWorkspaceServiceServer) CreateDirectory(context.Context, *CreateDirectoryRequest) (*DirectoryResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CreateDirectory not implemented")
-}
-func (UnimplementedWorkspaceServiceServer) GetQuota(context.Context, *GetQuotaRequest) (*WorkspaceQuota, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetQuota not implemented")
-}
-func (UnimplementedWorkspaceServiceServer) ListPublicFiles(context.Context, *ListPublicFilesRequest) (*FileListResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListPublicFiles not implemented")
-}
-func (UnimplementedWorkspaceServiceServer) CreatePublicDirectory(context.Context, *CreatePublicDirectoryRequest) (*DirectoryResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CreatePublicDirectory not implemented")
-}
-func (UnimplementedWorkspaceServiceServer) DeletePublicFile(context.Context, *DeletePublicFileRequest) (*SuccessMessage, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DeletePublicFile not implemented")
-}
-func (UnimplementedWorkspaceServiceServer) ListGroupFiles(context.Context, *ListGroupFilesRequest) (*FileListResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListGroupFiles not implemented")
-}
-func (UnimplementedWorkspaceServiceServer) CreateGroupDirectory(context.Context, *CreateGroupDirectoryRequest) (*DirectoryResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CreateGroupDirectory not implemented")
-}
-func (UnimplementedWorkspaceServiceServer) DeleteGroupFile(context.Context, *DeleteGroupFileRequest) (*SuccessMessage, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DeleteGroupFile not implemented")
-}
-func (UnimplementedWorkspaceServiceServer) GetGroupQuota(context.Context, *GetGroupQuotaRequest) (*GroupWorkspaceQuota, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetGroupQuota not implemented")
-}
 func (UnimplementedWorkspaceServiceServer) ListOutputFiles(context.Context, *ListOutputFilesRequest) (*FileListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListOutputFiles not implemented")
 }
@@ -364,9 +167,6 @@ func (UnimplementedWorkspaceServiceServer) DeleteShare(context.Context, *DeleteS
 }
 func (UnimplementedWorkspaceServiceServer) GetSharedFileMeta(context.Context, *GetSharedFileRequest) (*SharedFileMeta, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetSharedFileMeta not implemented")
-}
-func (UnimplementedWorkspaceServiceServer) SyncToPod(context.Context, *SyncToPodRequest) (*SuccessMessage, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SyncToPod not implemented")
 }
 func (UnimplementedWorkspaceServiceServer) InternalOutputDelete(context.Context, *InternalOutputDeleteRequest) (*SuccessMessage, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InternalOutputDelete not implemented")
@@ -406,204 +206,6 @@ func _WorkspaceService_GetStatus_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(WorkspaceServiceServer).GetStatus(ctx, req.(*Empty))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _WorkspaceService_ListFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListFilesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(WorkspaceServiceServer).ListFiles(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: WorkspaceService_ListFiles_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WorkspaceServiceServer).ListFiles(ctx, req.(*ListFilesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _WorkspaceService_DeleteFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DeleteFileRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(WorkspaceServiceServer).DeleteFile(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: WorkspaceService_DeleteFile_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WorkspaceServiceServer).DeleteFile(ctx, req.(*DeleteFileRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _WorkspaceService_CreateDirectory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CreateDirectoryRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(WorkspaceServiceServer).CreateDirectory(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: WorkspaceService_CreateDirectory_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WorkspaceServiceServer).CreateDirectory(ctx, req.(*CreateDirectoryRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _WorkspaceService_GetQuota_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetQuotaRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(WorkspaceServiceServer).GetQuota(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: WorkspaceService_GetQuota_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WorkspaceServiceServer).GetQuota(ctx, req.(*GetQuotaRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _WorkspaceService_ListPublicFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListPublicFilesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(WorkspaceServiceServer).ListPublicFiles(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: WorkspaceService_ListPublicFiles_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WorkspaceServiceServer).ListPublicFiles(ctx, req.(*ListPublicFilesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _WorkspaceService_CreatePublicDirectory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CreatePublicDirectoryRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(WorkspaceServiceServer).CreatePublicDirectory(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: WorkspaceService_CreatePublicDirectory_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WorkspaceServiceServer).CreatePublicDirectory(ctx, req.(*CreatePublicDirectoryRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _WorkspaceService_DeletePublicFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DeletePublicFileRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(WorkspaceServiceServer).DeletePublicFile(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: WorkspaceService_DeletePublicFile_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WorkspaceServiceServer).DeletePublicFile(ctx, req.(*DeletePublicFileRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _WorkspaceService_ListGroupFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListGroupFilesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(WorkspaceServiceServer).ListGroupFiles(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: WorkspaceService_ListGroupFiles_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WorkspaceServiceServer).ListGroupFiles(ctx, req.(*ListGroupFilesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _WorkspaceService_CreateGroupDirectory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CreateGroupDirectoryRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(WorkspaceServiceServer).CreateGroupDirectory(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: WorkspaceService_CreateGroupDirectory_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WorkspaceServiceServer).CreateGroupDirectory(ctx, req.(*CreateGroupDirectoryRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _WorkspaceService_DeleteGroupFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DeleteGroupFileRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(WorkspaceServiceServer).DeleteGroupFile(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: WorkspaceService_DeleteGroupFile_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WorkspaceServiceServer).DeleteGroupFile(ctx, req.(*DeleteGroupFileRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _WorkspaceService_GetGroupQuota_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetGroupQuotaRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(WorkspaceServiceServer).GetGroupQuota(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: WorkspaceService_GetGroupQuota_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WorkspaceServiceServer).GetGroupQuota(ctx, req.(*GetGroupQuotaRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -698,24 +300,6 @@ func _WorkspaceService_GetSharedFileMeta_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
-func _WorkspaceService_SyncToPod_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SyncToPodRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(WorkspaceServiceServer).SyncToPod(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: WorkspaceService_SyncToPod_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WorkspaceServiceServer).SyncToPod(ctx, req.(*SyncToPodRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _WorkspaceService_InternalOutputDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(InternalOutputDeleteRequest)
 	if err := dec(in); err != nil {
@@ -746,50 +330,6 @@ var WorkspaceService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _WorkspaceService_GetStatus_Handler,
 		},
 		{
-			MethodName: "ListFiles",
-			Handler:    _WorkspaceService_ListFiles_Handler,
-		},
-		{
-			MethodName: "DeleteFile",
-			Handler:    _WorkspaceService_DeleteFile_Handler,
-		},
-		{
-			MethodName: "CreateDirectory",
-			Handler:    _WorkspaceService_CreateDirectory_Handler,
-		},
-		{
-			MethodName: "GetQuota",
-			Handler:    _WorkspaceService_GetQuota_Handler,
-		},
-		{
-			MethodName: "ListPublicFiles",
-			Handler:    _WorkspaceService_ListPublicFiles_Handler,
-		},
-		{
-			MethodName: "CreatePublicDirectory",
-			Handler:    _WorkspaceService_CreatePublicDirectory_Handler,
-		},
-		{
-			MethodName: "DeletePublicFile",
-			Handler:    _WorkspaceService_DeletePublicFile_Handler,
-		},
-		{
-			MethodName: "ListGroupFiles",
-			Handler:    _WorkspaceService_ListGroupFiles_Handler,
-		},
-		{
-			MethodName: "CreateGroupDirectory",
-			Handler:    _WorkspaceService_CreateGroupDirectory_Handler,
-		},
-		{
-			MethodName: "DeleteGroupFile",
-			Handler:    _WorkspaceService_DeleteGroupFile_Handler,
-		},
-		{
-			MethodName: "GetGroupQuota",
-			Handler:    _WorkspaceService_GetGroupQuota_Handler,
-		},
-		{
 			MethodName: "ListOutputFiles",
 			Handler:    _WorkspaceService_ListOutputFiles_Handler,
 		},
@@ -808,10 +348,6 @@ var WorkspaceService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSharedFileMeta",
 			Handler:    _WorkspaceService_GetSharedFileMeta_Handler,
-		},
-		{
-			MethodName: "SyncToPod",
-			Handler:    _WorkspaceService_SyncToPod_Handler,
 		},
 		{
 			MethodName: "InternalOutputDelete",

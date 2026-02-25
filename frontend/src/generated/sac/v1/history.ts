@@ -53,3 +53,24 @@ export interface SessionSummary {
 export interface SessionListResponse {
   sessions: SessionSummary[];
 }
+
+export interface ListConversationsRequest {
+  agent_id: number;
+  session_id: string;
+  limit: number;
+  before: string;
+  after: string;
+}
+
+export interface ListSessionsRequest {
+  agent_id: number;
+}
+
+export interface HistoryService {
+  /** Internal: receive events from pods (no auth) */
+  ReceiveEvents(request: EventsRequest): Promise<EventsResponse>;
+  /** Protected: query conversations */
+  ListConversations(request: ListConversationsRequest): Promise<ConversationListResponse>;
+  /** Protected: list sessions */
+  ListSessions(request: ListSessionsRequest): Promise<SessionListResponse>;
+}

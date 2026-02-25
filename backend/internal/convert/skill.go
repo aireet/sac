@@ -19,9 +19,11 @@ func SkillToProto(m *models.Skill) *sacv1.Skill {
 		CreatedBy:   m.CreatedBy,
 		IsPublic:    m.IsPublic,
 		ForkedFrom:  m.ForkedFrom,
+		GroupId:     m.GroupID,
 		Version:     int32(m.Version),
 		CreatedAt:   timestamppb.New(m.CreatedAt),
 		UpdatedAt:   timestamppb.New(m.UpdatedAt),
+		Frontmatter: FrontmatterToProto(&m.Frontmatter),
 	}
 	for _, p := range m.Parameters {
 		pb.Parameters = append(pb.Parameters, &sacv1.SkillParameter{
@@ -35,6 +37,9 @@ func SkillToProto(m *models.Skill) *sacv1.Skill {
 	}
 	if m.Creator != nil {
 		pb.Creator = UserBriefToProto(m.Creator)
+	}
+	for _, f := range m.Files {
+		pb.Files = append(pb.Files, SkillFileToProto(&f))
 	}
 	return pb
 }
@@ -61,6 +66,56 @@ func SkillParametersFromProto(params []*sacv1.SkillParameter) models.SkillParame
 			DefaultValue: p.DefaultValue,
 			Options:      p.Options,
 		}
+	}
+	return out
+}
+
+func FrontmatterToProto(f *models.SkillFrontmatter) *sacv1.SkillFrontmatter {
+	if f == nil {
+		return nil
+	}
+	pb := &sacv1.SkillFrontmatter{
+		AllowedTools:           f.AllowedTools,
+		Model:                  f.Model,
+		Context:                f.Context,
+		Agent:                  f.Agent,
+		DisableModelInvocation: f.DisableModelInvocation,
+		ArgumentHint:           f.ArgumentHint,
+		UserInvocable:          f.UserInvocable,
+	}
+	return pb
+}
+
+func FrontmatterFromProto(pb *sacv1.SkillFrontmatter) models.SkillFrontmatter {
+	if pb == nil {
+		return models.SkillFrontmatter{}
+	}
+	return models.SkillFrontmatter{
+		AllowedTools:           pb.AllowedTools,
+		Model:                  pb.Model,
+		Context:                pb.Context,
+		Agent:                  pb.Agent,
+		DisableModelInvocation: pb.DisableModelInvocation,
+		ArgumentHint:           pb.ArgumentHint,
+		UserInvocable:          pb.UserInvocable,
+	}
+}
+
+func SkillFileToProto(f *models.SkillFile) *sacv1.SkillFile {
+	return &sacv1.SkillFile{
+		Id:          f.ID,
+		SkillId:     f.SkillID,
+		Filepath:    f.Filepath,
+		Size:        f.Size,
+		ContentType: f.ContentType,
+		CreatedAt:   timestamppb.New(f.CreatedAt),
+	}
+}
+
+func SkillFilesToProto(fs []models.SkillFile) []*sacv1.SkillFile {
+	out := make([]*sacv1.SkillFile, len(fs))
+	for i := range fs {
+		out[i] = SkillFileToProto(&fs[i])
 	}
 	return out
 }

@@ -6,6 +6,7 @@
 
 /* eslint-disable */
 import type { Agent } from "./agent";
+import type { Empty, SuccessMessage } from "./common";
 
 export const protobufPackage = "sac.v1";
 
@@ -131,4 +132,93 @@ export interface AgentWithStatusListResponse {
 
 export interface ResetPasswordRequest {
   new_password: string;
+}
+
+/** Request messages for RPCs that need path params */
+export interface UpdateSettingByKeyRequest {
+  key: string;
+  value?: any | undefined;
+  description?: string | undefined;
+}
+
+export interface UpdateUserRoleByIdRequest {
+  user_id: number;
+  role: string;
+}
+
+export interface GetUserSettingsRequest {
+  user_id: number;
+}
+
+export interface SetUserSettingByIdRequest {
+  user_id: number;
+  key: string;
+  value?: any | undefined;
+}
+
+export interface DeleteUserSettingRequest {
+  user_id: number;
+  key: string;
+}
+
+export interface GetUserAgentsRequest {
+  user_id: number;
+}
+
+export interface AdminAgentRequest {
+  user_id: number;
+  agent_id: number;
+}
+
+export interface UpdateAgentResourcesByIdRequest {
+  user_id: number;
+  agent_id: number;
+  cpu_request?: string | undefined;
+  cpu_limit?: string | undefined;
+  memory_request?: string | undefined;
+  memory_limit?: string | undefined;
+}
+
+export interface UpdateAgentImageByIdRequest {
+  user_id: number;
+  agent_id: number;
+  image: string;
+}
+
+export interface ResetPasswordByIdRequest {
+  user_id: number;
+  new_password: string;
+}
+
+export interface AdminGetConversationsRequest {
+  user_id: number;
+  agent_id: number;
+  session_id: string;
+  limit: number;
+  before: string;
+  start: string;
+  end: string;
+}
+
+export interface AdminService {
+  /** Settings */
+  GetSettings(request: Empty): Promise<SystemSettingListResponse>;
+  UpdateSetting(request: UpdateSettingByKeyRequest): Promise<SuccessMessage>;
+  /** Users */
+  GetUsers(request: Empty): Promise<AdminUserListResponse>;
+  UpdateUserRole(request: UpdateUserRoleByIdRequest): Promise<SuccessMessage>;
+  GetUserSettings(request: GetUserSettingsRequest): Promise<UserSettingListResponse>;
+  SetUserSetting(request: SetUserSettingByIdRequest): Promise<SuccessMessage>;
+  DeleteUserSetting(request: DeleteUserSettingRequest): Promise<SuccessMessage>;
+  GetUserAgents(request: GetUserAgentsRequest): Promise<AgentWithStatusListResponse>;
+  DeleteUserAgent(request: AdminAgentRequest): Promise<SuccessMessage>;
+  RestartUserAgent(request: AdminAgentRequest): Promise<SuccessMessage>;
+  UpdateAgentResources(request: UpdateAgentResourcesByIdRequest): Promise<SuccessMessage>;
+  UpdateAgentImage(request: UpdateAgentImageByIdRequest): Promise<SuccessMessage>;
+  BatchUpdateImage(request: BatchUpdateImageRequest): Promise<BatchUpdateImageResponse>;
+  ResetUserPassword(request: ResetPasswordByIdRequest): Promise<SuccessMessage>;
+  /** Conversations */
+  GetConversations(request: AdminGetConversationsRequest): Promise<AdminConversationListResponse>;
+  /** Maintenance */
+  TriggerMaintenance(request: Empty): Promise<SuccessMessage>;
 }

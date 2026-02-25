@@ -249,4 +249,9 @@ service AdminService {
   rpc GetConversations(AdminGetConversationsRequest) returns (AdminConversationListResponse) {
     option (google.api.http) = { get: "/api/admin/conversations" };
   }
+
+  // Maintenance
+  rpc TriggerMaintenance(Empty) returns (SuccessMessage) {
+    option (google.api.http) = { post: "/api/admin/maintenance/trigger" };
+  }
 }

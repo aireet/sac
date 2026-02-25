@@ -3,7 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
-	"log"
+"github.com/rs/zerolog/log"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -22,7 +22,7 @@ func Initialize(redisURL string) error {
 	if err := Client.Ping(context.Background()).Err(); err != nil {
 		return fmt.Errorf("redis ping failed: %w", err)
 	}
-	log.Printf("Redis connected: %s", redisURL)
+	log.Info().Str("url", redisURL).Msg("Redis connected")
 	return nil
 }
 

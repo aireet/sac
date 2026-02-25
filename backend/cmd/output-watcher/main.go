@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -14,7 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"g.echo.tech/dev/sac/pkg/logger"
 	"github.com/fsnotify/fsnotify"
+	"github.com/rs/zerolog/log"
 )
 
 const debounceTime = 500 * time.Millisecond
@@ -22,12 +23,14 @@ const debounceTime = 500 * time.Millisecond
 var watchDir = "/workspace/output"
 
 func main() {
+	logger.Init(os.Getenv("LOG_LEVEL"), os.Getenv("LOG_FORMAT"))
+
 	userID := os.Getenv("USER_ID")
 	agentID := os.Getenv("AGENT_ID")
 	apiURL := os.Getenv("SAC_API_URL")
 
 	if userID == "" || agentID == "" || apiURL == "" {
-		log.Fatal("USER_ID, AGENT_ID, and SAC_API_URL environment variables are required")
+		log.Fatal().Msg("USER_ID, AGENT_ID, and SAC_API_URL environment variables are required")
 	}
 
 	if dir := os.Getenv("WATCH_DIR"); dir != "" {
@@ -36,18 +39,18 @@ func main() {
 
 	// Ensure watch directory exists
 	if err := os.MkdirAll(watchDir, 0755); err != nil {
-		log.Fatalf("Failed to create watch directory %s: %v", watchDir, err)
+		log.Fatal().Err(err).Str("dir", watchDir).Msg("failed to create watch directory")
 	}
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Fatalf("Failed to create watcher: %v", err)
+		log.Fatal().Err(err).Msg("failed to create watcher")
 	}
 	defer watcher.Close()
 
 	// Add the root watch directory
 	if err := watcher.Add(watchDir); err != nil {
-		log.Fatalf("Failed to watch %s: %v", watchDir, err)
+		log.Fatal().Err(err).Str("dir", watchDir).Msg("failed to watch directory")
 	}
 
 	// Recursively add existing subdirectories
@@ -64,7 +67,7 @@ func main() {
 	// Upload existing files on startup
 	go uploadExistingFiles(apiURL, userID, agentID)
 
-	log.Printf("output-watcher started: watching %s (user=%s, agent=%s)", watchDir, userID, agentID)
+	log.Info().Str("dir", watchDir).Str("user_id", userID).Str("agent_id", agentID).Msg("output-watcher started")
 
 	// Debounce map: filepath -> timer
 	var mu sync.Mutex
@@ -87,7 +90,7 @@ func main() {
 				// Check if it's a new directory — start watching it
 				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
 					watcher.Add(event.Name)
-					log.Printf("Watching new directory: %s", event.Name)
+					log.Debug().Str("dir", event.Name).Msg("watching new directory")
 					continue
 				}
 			}
@@ -122,7 +125,7 @@ func main() {
 			if !ok {
 				return
 			}
-			log.Printf("Watcher error: %v", err)
+			log.Error().Err(err).Msg("watcher error")
 		}
 	}
 }
@@ -157,7 +160,7 @@ func uploadFile(apiURL, userID, agentID, filePath string) {
 
 	f, err := os.Open(filePath)
 	if err != nil {
-		log.Printf("Failed to open %s: %v", filePath, err)
+		log.Warn().Err(err).Str("path", filePath).Msg("failed to open file")
 		return
 	}
 	defer f.Close()
@@ -175,11 +178,11 @@ func uploadFile(apiURL, userID, agentID, filePath string) {
 
 	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
 	if err != nil {
-		log.Printf("Failed to create form file for %s: %v", rel, err)
+		log.Warn().Err(err).Str("path", rel).Msg("failed to create form file")
 		return
 	}
 	if _, err := io.Copy(part, f); err != nil {
-		log.Printf("Failed to copy file %s: %v", rel, err)
+		log.Warn().Err(err).Str("path", rel).Msg("failed to copy file")
 		return
 	}
 	writer.Close()
@@ -187,18 +190,18 @@ func uploadFile(apiURL, userID, agentID, filePath string) {
 	url := fmt.Sprintf("%s/api/internal/output/upload", apiURL)
 	resp, err := http.Post(url, writer.FormDataContentType(), &buf)
 	if err != nil {
-		log.Printf("Failed to upload %s: %v", rel, err)
+		log.Warn().Err(err).Str("path", rel).Msg("failed to upload file")
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		log.Printf("Upload %s failed (%d): %s", rel, resp.StatusCode, string(body))
+		log.Warn().Str("path", rel).Int("status", resp.StatusCode).Str("body", string(body)).Msg("upload failed")
 		return
 	}
 
-	log.Printf("Uploaded: %s", rel)
+	log.Debug().Str("path", rel).Msg("uploaded")
 }
 
 // deleteFile sends a delete notification to the internal API.
@@ -215,18 +218,18 @@ func deleteFile(apiURL, userID, agentID, filePath string) {
 	url := fmt.Sprintf("%s/api/internal/output/delete", apiURL)
 	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
-		log.Printf("Failed to delete %s: %v", rel, err)
+		log.Warn().Err(err).Str("path", rel).Msg("failed to delete file")
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		log.Printf("Delete %s failed (%d): %s", rel, resp.StatusCode, string(respBody))
+		log.Warn().Str("path", rel).Int("status", resp.StatusCode).Str("body", string(respBody)).Msg("delete failed")
 		return
 	}
 
-	log.Printf("Deleted: %s", rel)
+	log.Debug().Str("path", rel).Msg("deleted")
 }
 
 func mustParseInt(s string) int64 {

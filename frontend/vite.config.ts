@@ -14,6 +14,11 @@ export default defineConfig({
         ws: true,
         changeOrigin: true,
       },
+      '/api/skill-sync/watch': {
+        target: 'ws://localhost:8080',
+        ws: true,
+        changeOrigin: true,
+      },
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,

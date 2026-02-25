@@ -3,7 +3,9 @@ package admin
 import (
 	"context"
 	"fmt"
-	"log"
+"github.com/rs/zerolog/log"
+	"os"
+	"strings"
 	"time"
 
 	sacv1 "g.echo.tech/dev/sac/gen/sac/v1"
@@ -14,6 +16,7 @@ import (
 	"github.com/uptrace/bun"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -21,10 +24,11 @@ type Server struct {
 	sacv1.UnimplementedAdminServiceServer
 	db               *bun.DB
 	containerManager *container.Manager
+	maintenanceImage string
 }
 
-func NewServer2(db *bun.DB, cm *container.Manager) *Server {
-	return &Server{db: db, containerManager: cm}
+func NewServer2(db *bun.DB, cm *container.Manager, maintenanceImage string) *Server {
+	return &Server{db: db, containerManager: cm, maintenanceImage: maintenanceImage}
 }
 
 func (s *Server) GetSettings(ctx context.Context, _ *sacv1.Empty) (*sacv1.SystemSettingListResponse, error) {
@@ -57,6 +61,11 @@ func (s *Server) UpdateSetting(ctx context.Context, req *sacv1.UpdateSettingByKe
 	rows, _ := res.RowsAffected()
 	if rows == 0 {
 		return nil, grpcerr.NotFound("Setting not found")
+	}
+
+	// Reconcile CronJob when relevant settings change
+	if req.Key == "skill_sync_interval" || req.Key == "conversation_retention_days" {
+		go s.ReconcileMaintenanceCronJob(context.Background())
 	}
 
 	return &sacv1.SuccessMessage{Message: "Setting updated"}, nil
@@ -263,7 +272,7 @@ func (s *Server) DeleteUserAgent(ctx context.Context, req *sacv1.AdminAgentReque
 		Exec(ctx)
 
 	if err := s.containerManager.DeleteStatefulSet(ctx, userIDStr, req.AgentId); err != nil {
-		log.Printf("Warning: failed to delete StatefulSet for agent %d: %v", req.AgentId, err)
+		log.Warn().Err(err).Int64("agent_id", req.AgentId).Msg("failed to delete StatefulSet")
 	}
 
 	return &sacv1.SuccessMessage{Message: "Agent deleted successfully"}, nil
@@ -297,7 +306,7 @@ func (s *Server) RestartUserAgent(ctx context.Context, req *sacv1.AdminAgentRequ
 		return nil, grpcerr.Internal("Failed to restart agent", err)
 	}
 
-	log.Printf("Admin restarted agent %d (deleted StatefulSet) for user %d", req.AgentId, req.UserId)
+	log.Info().Int64("agent_id", req.AgentId).Int64("user_id", req.UserId).Msg("admin restarted agent")
 	return &sacv1.SuccessMessage{Message: "Agent is restarting"}, nil
 }
 
@@ -383,7 +392,7 @@ func (s *Server) UpdateAgentImage(ctx context.Context, req *sacv1.UpdateAgentIma
 		})).
 		Exec(ctx)
 
-	log.Printf("Admin updated agent %d image to %s for user %d", req.AgentId, req.Image, req.UserId)
+	log.Info().Int64("agent_id", req.AgentId).Str("image", req.Image).Int64("user_id", req.UserId).Msg("admin updated agent image")
 	return &sacv1.SuccessMessage{Message: "Agent image updated"}, nil
 }
 
@@ -470,7 +479,7 @@ func (s *Server) ResetUserPassword(ctx context.Context, req *sacv1.ResetPassword
 		return nil, grpcerr.NotFound("User not found")
 	}
 
-	log.Printf("Admin reset password for user %d", req.UserId)
+	log.Info().Int64("user_id", req.UserId).Msg("admin reset password")
 	return &sacv1.SuccessMessage{Message: "Password reset successfully"}, nil
 }
 
@@ -546,4 +555,78 @@ func (s *Server) GetConversations(ctx context.Context, req *sacv1.AdminGetConver
 		Conversations: convos,
 		Count:         int32(len(rows)),
 	}, nil
+}
+
+// maintenanceEnvVars builds the env vars needed by the maintenance Job/CronJob.
+func maintenanceEnvVars() []corev1.EnvVar {
+	keys := []string{
+		"DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME",
+		"K8S_NAMESPACE", "DOCKER_REGISTRY", "DOCKER_IMAGE", "SIDECAR_IMAGE",
+	}
+	var envs []corev1.EnvVar
+	for _, k := range keys {
+		envs = append(envs, corev1.EnvVar{Name: k, Value: os.Getenv(k)})
+	}
+	return envs
+}
+
+// TriggerMaintenance creates a one-off Job to run maintenance tasks.
+func (s *Server) TriggerMaintenance(ctx context.Context, _ *sacv1.Empty) (*sacv1.SuccessMessage, error) {
+	if s.maintenanceImage == "" {
+		return nil, grpcerr.Internal("maintenance image not configured", nil)
+	}
+	if err := s.containerManager.CreateOneOffJob(ctx, "maintenance", s.maintenanceImage, maintenanceEnvVars()); err != nil {
+		return nil, grpcerr.Internal("Failed to trigger maintenance", err)
+	}
+	return &sacv1.SuccessMessage{Message: "Maintenance job triggered"}, nil
+}
+
+// intervalToCron converts a Go duration string (e.g. "10m", "1h") to a cron expression.
+func intervalToCron(interval string) string {
+	dur, err := time.ParseDuration(interval)
+	if err != nil || dur < time.Minute {
+		return "*/10 * * * *" // default 10m
+	}
+
+	minutes := int(dur.Minutes())
+	if minutes <= 0 {
+		minutes = 10
+	}
+
+	if minutes < 60 {
+		return fmt.Sprintf("*/%d * * * *", minutes)
+	}
+
+	hours := minutes / 60
+	if hours < 24 {
+		return fmt.Sprintf("0 */%d * * *", hours)
+	}
+
+	return "0 0 * * *" // daily
+}
+
+// ReconcileMaintenanceCronJob reads the skill_sync_interval setting and ensures
+// the CronJob schedule matches. Call on startup and after updating the setting.
+func (s *Server) ReconcileMaintenanceCronJob(ctx context.Context) {
+	if s.maintenanceImage == "" {
+		log.Warn().Msg("maintenance: image not configured, skipping CronJob reconciliation")
+		return
+	}
+
+	interval := "10m"
+	var setting models.SystemSetting
+	err := s.db.NewSelect().Model(&setting).Where("key = ?", "skill_sync_interval").Scan(ctx)
+	if err == nil {
+		val := strings.Trim(string(setting.Value), "\"")
+		if val != "" {
+			interval = val
+		}
+	}
+
+	schedule := intervalToCron(interval)
+	envVars := maintenanceEnvVars()
+
+	if err := s.containerManager.EnsureCronJob(ctx, "maintenance", schedule, s.maintenanceImage, envVars); err != nil {
+		log.Error().Err(err).Msg("maintenance: failed to reconcile CronJob")
+	}
 }

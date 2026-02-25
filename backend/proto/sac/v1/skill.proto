@@ -15,6 +15,25 @@ message SkillParameter {
   repeated string options = 6;
 }
 
+message SkillFrontmatter {
+  repeated string allowed_tools = 1;
+  string model = 2;
+  string context = 3;
+  string agent = 4;
+  bool disable_model_invocation = 5;
+  string argument_hint = 6;
+  optional bool user_invocable = 7;
+}
+
+message SkillFile {
+  int64 id = 1;
+  int64 skill_id = 2;
+  string filepath = 3;
+  int64 size = 4;
+  string content_type = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
 message Skill {
   int64 id = 1;
   string name = 2;
@@ -32,6 +51,9 @@ message Skill {
   google.protobuf.Timestamp created_at = 14;
   google.protobuf.Timestamp updated_at = 15;
   UserBrief creator = 16;
+  SkillFrontmatter frontmatter = 17;
+  repeated SkillFile files = 18;
+  optional int64 group_id = 19;
 }
 
 message CreateSkillRequest {
@@ -43,6 +65,8 @@ message CreateSkillRequest {
   string command_name = 6;
   repeated SkillParameter parameters = 7;
   bool is_public = 8;
+  SkillFrontmatter frontmatter = 9;
+  optional int64 group_id = 10;
 }
 
 message UpdateSkillRequest {
@@ -54,10 +78,29 @@ message UpdateSkillRequest {
   optional string command_name = 6;
   repeated SkillParameter parameters = 7;
   optional bool is_public = 8;
+  SkillFrontmatter frontmatter = 9;
+  optional int64 group_id = 10;
 }
 
 message SkillListResponse {
   repeated Skill skills = 1;
+}
+
+message SkillFileListResponse {
+  repeated SkillFile files = 1;
+}
+
+message SkillFileContentResponse {
+  string filepath = 1;
+  string content = 2;
+  string content_type = 3;
+  int64 size = 4;
+}
+
+message SaveSkillFileContentRequest {
+  int64 skill_id = 1;
+  string filepath = 2;
+  string content = 3;
 }
 
 message GetSkillRequest {
@@ -74,6 +117,17 @@ message UpdateSkillByIdRequest {
   optional string command_name = 7;
   repeated SkillParameter parameters = 8;
   optional bool is_public = 9;
+  SkillFrontmatter frontmatter = 10;
+  optional int64 group_id = 11;
+}
+
+message ListGroupSkillsRequest {
+  int64 group_id = 1;
+}
+
+message ShareSkillToGroupRequest {
+  int64 id = 1;
+  int64 group_id = 2;
 }
 
 service SkillService {
@@ -97,5 +151,11 @@ service SkillService {
   }
   rpc ListPublicSkills(Empty) returns (SkillListResponse) {
     option (google.api.http) = { get: "/api/skills/public" };
+  }
+  rpc ListGroupSkills(ListGroupSkillsRequest) returns (SkillListResponse) {
+    option (google.api.http) = { get: "/api/skills/group/{group_id}" };
+  }
+  rpc ShareSkillToGroup(ShareSkillToGroupRequest) returns (SuccessMessage) {
+    option (google.api.http) = { post: "/api/skills/{id}/share-to-group", body: "*" };
   }
 }

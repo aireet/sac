@@ -19,13 +19,15 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SkillService_ListSkills_FullMethodName       = "/sac.v1.SkillService/ListSkills"
-	SkillService_GetSkill_FullMethodName         = "/sac.v1.SkillService/GetSkill"
-	SkillService_CreateSkill_FullMethodName      = "/sac.v1.SkillService/CreateSkill"
-	SkillService_UpdateSkill_FullMethodName      = "/sac.v1.SkillService/UpdateSkill"
-	SkillService_DeleteSkill_FullMethodName      = "/sac.v1.SkillService/DeleteSkill"
-	SkillService_ForkSkill_FullMethodName        = "/sac.v1.SkillService/ForkSkill"
-	SkillService_ListPublicSkills_FullMethodName = "/sac.v1.SkillService/ListPublicSkills"
+	SkillService_ListSkills_FullMethodName        = "/sac.v1.SkillService/ListSkills"
+	SkillService_GetSkill_FullMethodName          = "/sac.v1.SkillService/GetSkill"
+	SkillService_CreateSkill_FullMethodName       = "/sac.v1.SkillService/CreateSkill"
+	SkillService_UpdateSkill_FullMethodName       = "/sac.v1.SkillService/UpdateSkill"
+	SkillService_DeleteSkill_FullMethodName       = "/sac.v1.SkillService/DeleteSkill"
+	SkillService_ForkSkill_FullMethodName         = "/sac.v1.SkillService/ForkSkill"
+	SkillService_ListPublicSkills_FullMethodName  = "/sac.v1.SkillService/ListPublicSkills"
+	SkillService_ListGroupSkills_FullMethodName   = "/sac.v1.SkillService/ListGroupSkills"
+	SkillService_ShareSkillToGroup_FullMethodName = "/sac.v1.SkillService/ShareSkillToGroup"
 )
 
 // SkillServiceClient is the client API for SkillService service.
@@ -39,6 +41,8 @@ type SkillServiceClient interface {
 	DeleteSkill(ctx context.Context, in *GetSkillRequest, opts ...grpc.CallOption) (*SuccessMessage, error)
 	ForkSkill(ctx context.Context, in *GetSkillRequest, opts ...grpc.CallOption) (*Skill, error)
 	ListPublicSkills(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*SkillListResponse, error)
+	ListGroupSkills(ctx context.Context, in *ListGroupSkillsRequest, opts ...grpc.CallOption) (*SkillListResponse, error)
+	ShareSkillToGroup(ctx context.Context, in *ShareSkillToGroupRequest, opts ...grpc.CallOption) (*SuccessMessage, error)
 }
 
 type skillServiceClient struct {
@@ -119,6 +123,26 @@ func (c *skillServiceClient) ListPublicSkills(ctx context.Context, in *Empty, op
 	return out, nil
 }
 
+func (c *skillServiceClient) ListGroupSkills(ctx context.Context, in *ListGroupSkillsRequest, opts ...grpc.CallOption) (*SkillListResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SkillListResponse)
+	err := c.cc.Invoke(ctx, SkillService_ListGroupSkills_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *skillServiceClient) ShareSkillToGroup(ctx context.Context, in *ShareSkillToGroupRequest, opts ...grpc.CallOption) (*SuccessMessage, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SuccessMessage)
+	err := c.cc.Invoke(ctx, SkillService_ShareSkillToGroup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SkillServiceServer is the server API for SkillService service.
 // All implementations must embed UnimplementedSkillServiceServer
 // for forward compatibility.
@@ -130,6 +154,8 @@ type SkillServiceServer interface {
 	DeleteSkill(context.Context, *GetSkillRequest) (*SuccessMessage, error)
 	ForkSkill(context.Context, *GetSkillRequest) (*Skill, error)
 	ListPublicSkills(context.Context, *Empty) (*SkillListResponse, error)
+	ListGroupSkills(context.Context, *ListGroupSkillsRequest) (*SkillListResponse, error)
+	ShareSkillToGroup(context.Context, *ShareSkillToGroupRequest) (*SuccessMessage, error)
 	mustEmbedUnimplementedSkillServiceServer()
 }
 
@@ -160,6 +186,12 @@ func (UnimplementedSkillServiceServer) ForkSkill(context.Context, *GetSkillReque
 }
 func (UnimplementedSkillServiceServer) ListPublicSkills(context.Context, *Empty) (*SkillListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListPublicSkills not implemented")
+}
+func (UnimplementedSkillServiceServer) ListGroupSkills(context.Context, *ListGroupSkillsRequest) (*SkillListResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListGroupSkills not implemented")
+}
+func (UnimplementedSkillServiceServer) ShareSkillToGroup(context.Context, *ShareSkillToGroupRequest) (*SuccessMessage, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ShareSkillToGroup not implemented")
 }
 func (UnimplementedSkillServiceServer) mustEmbedUnimplementedSkillServiceServer() {}
 func (UnimplementedSkillServiceServer) testEmbeddedByValue()                      {}
@@ -308,6 +340,42 @@ func _SkillService_ListPublicSkills_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SkillService_ListGroupSkills_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListGroupSkillsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SkillServiceServer).ListGroupSkills(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SkillService_ListGroupSkills_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SkillServiceServer).ListGroupSkills(ctx, req.(*ListGroupSkillsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SkillService_ShareSkillToGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ShareSkillToGroupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SkillServiceServer).ShareSkillToGroup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SkillService_ShareSkillToGroup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SkillServiceServer).ShareSkillToGroup(ctx, req.(*ShareSkillToGroupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SkillService_ServiceDesc is the grpc.ServiceDesc for SkillService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -342,6 +410,14 @@ var SkillService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListPublicSkills",
 			Handler:    _SkillService_ListPublicSkills_Handler,
+		},
+		{
+			MethodName: "ListGroupSkills",
+			Handler:    _SkillService_ListGroupSkills_Handler,
+		},
+		{
+			MethodName: "ShareSkillToGroup",
+			Handler:    _SkillService_ShareSkillToGroup_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

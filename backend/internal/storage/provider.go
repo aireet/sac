@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"github.com/rs/zerolog/log"
 	"sync"
 
 	"github.com/uptrace/bun"
@@ -173,7 +173,7 @@ func (p *StorageProvider) GetClient(ctx context.Context) StorageBackend {
 
 	cfg, err := p.readConfig(ctx)
 	if err != nil {
-		log.Printf("Warning: failed to read storage config from settings: %v", err)
+		log.Warn().Err(err).Msg("failed to read storage config from settings")
 		return p.cache // return whatever we had
 	}
 
@@ -189,13 +189,13 @@ func (p *StorageProvider) GetClient(ctx context.Context) StorageBackend {
 	// Config changed or first call — create new backend
 	backend, err := createBackend(cfg)
 	if err != nil {
-		log.Printf("Warning: failed to create storage backend (%s) from settings: %v", cfg.Type, err)
+		log.Warn().Err(err).Str("type", string(cfg.Type)).Msg("failed to create storage backend")
 		return nil
 	}
 
 	p.cache = backend
 	p.configHash = hash
-	log.Printf("Storage backend (%s) (re)created from admin settings", cfg.Type)
+	log.Info().Str("type", string(cfg.Type)).Msg("storage backend (re)created from admin settings")
 	return backend
 }
 

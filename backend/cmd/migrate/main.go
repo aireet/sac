@@ -4,13 +4,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 
 	"g.echo.tech/dev/sac/internal/auth"
 	"g.echo.tech/dev/sac/internal/database"
 	"g.echo.tech/dev/sac/internal/models"
 	"g.echo.tech/dev/sac/migrations"
 	"g.echo.tech/dev/sac/pkg/config"
+	"g.echo.tech/dev/sac/pkg/logger"
+	"github.com/rs/zerolog/log"
 	"github.com/uptrace/bun/migrate"
 )
 
@@ -22,12 +23,14 @@ func main() {
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		log.Fatal().Err(err).Msg("failed to load config")
 	}
+
+	logger.Init(cfg.LogLevel, cfg.LogFormat)
 
 	// Initialize database
 	if err := database.Initialize(cfg); err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+		log.Fatal().Err(err).Msg("failed to initialize database")
 	}
 	defer database.Close()
 
@@ -36,46 +39,46 @@ func main() {
 
 	// Initialize migration tables if needed
 	if err := migrator.Init(ctx); err != nil {
-		log.Fatalf("Failed to initialize migrator: %v", err)
+		log.Fatal().Err(err).Msg("failed to initialize migrator")
 	}
 
 	switch action {
 	case "up":
 		if err := migrator.Lock(ctx); err != nil {
-			log.Fatalf("Failed to lock migrations: %v", err)
+			log.Fatal().Err(err).Msg("failed to lock migrations")
 		}
 		defer migrator.Unlock(ctx)
 
 		group, err := migrator.Migrate(ctx)
 		if err != nil {
-			log.Fatalf("Failed to migrate: %v", err)
+			log.Fatal().Err(err).Msg("failed to migrate")
 		}
 		if group.IsZero() {
-			log.Println("No new migrations to run")
+			log.Info().Msg("no new migrations to run")
 		} else {
-			log.Printf("Migrated to %s\n", group)
+			log.Info().Msgf("migrated to %s", group)
 		}
 
 	case "down":
 		if err := migrator.Lock(ctx); err != nil {
-			log.Fatalf("Failed to lock migrations: %v", err)
+			log.Fatal().Err(err).Msg("failed to lock migrations")
 		}
 		defer migrator.Unlock(ctx)
 
 		group, err := migrator.Rollback(ctx)
 		if err != nil {
-			log.Fatalf("Failed to rollback: %v", err)
+			log.Fatal().Err(err).Msg("failed to rollback")
 		}
 		if group.IsZero() {
-			log.Println("No migrations to rollback")
+			log.Info().Msg("no migrations to rollback")
 		} else {
-			log.Printf("Rolled back %s\n", group)
+			log.Info().Msgf("rolled back %s", group)
 		}
 
 	case "status":
 		ms, err := migrator.MigrationsWithStatus(ctx)
 		if err != nil {
-			log.Fatalf("Failed to get migration status: %v", err)
+			log.Fatal().Err(err).Msg("failed to get migration status")
 		}
 		fmt.Printf("Migrations: %s\n", ms)
 
@@ -83,17 +86,17 @@ func main() {
 		seedData(ctx)
 
 	default:
-		log.Fatalf("Unknown action: %s", action)
+		log.Fatal().Str("action", action).Msg("unknown action")
 	}
 }
 
 func seedData(ctx context.Context) {
-	log.Println("Seeding database...")
+	log.Info().Msg("seeding database")
 
 	// Hash default admin password
 	hashedPassword, err := auth.HashPassword("admin123")
 	if err != nil {
-		log.Fatalf("Failed to hash password: %v", err)
+		log.Fatal().Err(err).Msg("failed to hash password")
 	}
 
 	// Create admin user with password
@@ -110,9 +113,9 @@ func seedData(ctx context.Context) {
 		On("CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role").
 		Exec(ctx)
 	if err != nil {
-		log.Fatalf("Failed to create user: %v", err)
+		log.Fatal().Err(err).Msg("failed to create user")
 	}
-	log.Println("Created/updated admin user (password: admin123)")
+	log.Info().Msg("created/updated admin user (password: admin123)")
 
-	log.Println("Database seeding completed!")
+	log.Info().Msg("database seeding completed")
 }

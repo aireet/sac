@@ -67,7 +67,7 @@ logs:
 
 # --- Build targets ---
 
-build: build-api build-ws
+build: build-api build-ws build-maintenance
 
 build-api:
 	@echo "==> Building API Gateway"
@@ -76,6 +76,10 @@ build-api:
 build-ws:
 	@echo "==> Building WS Proxy"
 	@cd $(BACKEND) && go build -o bin/ws-proxy ./cmd/ws-proxy
+
+build-maintenance:
+	@echo "==> Building Maintenance"
+	@cd $(BACKEND) && go build -o bin/maintenance ./cmd/maintenance
 
 # --- Infra targets ---
 

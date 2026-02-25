@@ -11,6 +11,7 @@ RUN go mod download
 COPY backend/ .
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o api-gateway ./cmd/api-gateway
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o maintenance ./cmd/maintenance
 
 # Runtime stage
 FROM swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/alpine:3.19
@@ -21,6 +22,7 @@ RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.aliyun.com#g' /etc/
 WORKDIR /app
 
 COPY --from=builder /build/api-gateway .
+COPY --from=builder /build/maintenance .
 
 RUN addgroup -g 1000 appuser && \
     adduser -D -u 1000 -G appuser appuser && \

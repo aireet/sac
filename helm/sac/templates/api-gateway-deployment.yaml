@@ -58,6 +58,8 @@ spec:
               {{- else }}
               value: {{ .Values.redis.externalURL | quote }}
               {{- end }}
+            - name: LOG_LEVEL
+              value: {{ .Values.global.logLevel | quote }}
           resources:
             {{- toYaml .Values.apiGateway.resources | nindent 12 }}
           livenessProbe:

@@ -6,6 +6,9 @@
         <n-tag v-if="skill.is_official" type="success" size="small" round>Official</n-tag>
         <n-tag v-else-if="skill.is_public" type="info" size="small" round>Public</n-tag>
         <n-tag v-else size="small" round>Private</n-tag>
+        <n-tag v-if="skill.frontmatter?.model" size="small" round type="warning">{{ skill.frontmatter.model }}</n-tag>
+        <n-tag v-if="hasToolRestrictions" size="small" round>Tools</n-tag>
+        <n-tag v-if="fileCount > 0" size="small" round>{{ fileCount }} file{{ fileCount > 1 ? 's' : '' }}</n-tag>
       </div>
     </div>
 
@@ -67,10 +70,11 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { NText, NTag, NEllipsis, NButton, NTooltip, NPopconfirm } from 'naive-ui'
 import type { Skill } from '../../services/skillAPI'
 
-defineProps<{
+const props = defineProps<{
   skill: Skill
   installed: boolean
   installing: boolean
@@ -85,6 +89,12 @@ defineEmits<{
   delete: [skill: Skill]
   fork: [skill: Skill]
 }>()
+
+const hasToolRestrictions = computed(() =>
+  (props.skill.frontmatter?.allowed_tools?.length ?? 0) > 0
+)
+
+const fileCount = computed(() => props.skill.files?.length ?? 0)
 </script>
 
 <style scoped>
@@ -120,6 +130,8 @@ defineEmits<{
 .card-badges {
   display: flex;
   gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .card-body {

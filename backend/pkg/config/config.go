@@ -33,6 +33,10 @@ type Config struct {
 
 	// Redis
 	RedisURL string
+
+	// Logging
+	LogLevel  string
+	LogFormat string
 }
 
 func Load() (*Config, error) {
@@ -65,6 +69,10 @@ func Load() (*Config, error) {
 
 		// Redis
 		RedisURL: getEnv("REDIS_URL", ""),
+
+		// Logging
+		LogLevel:  getEnv("LOG_LEVEL", "info"),
+		LogFormat: getEnv("LOG_FORMAT", "json"),
 	}, nil
 }
 

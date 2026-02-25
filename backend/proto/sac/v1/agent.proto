@@ -64,6 +64,10 @@ message AgentStatus {
   string cpu_limit = 6;
   string memory_request = 7;
   string memory_limit = 8;
+  string cpu_usage = 9;
+  string memory_usage = 10;
+  double cpu_usage_percent = 11;
+  double memory_usage_percent = 12;
 }
 
 message ClaudeMDPreview {

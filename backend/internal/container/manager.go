@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/rs/zerolog/log"
 	"io"
-	"log"
 	"path/filepath"
 	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -21,10 +22,12 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/client-go/util/homedir"
+	metricsv "k8s.io/metrics/pkg/client/clientset/versioned"
 )
 
 type Manager struct {
 	clientset      *kubernetes.Clientset
+	metricsClient  metricsv.Interface
 	restConfig     *rest.Config
 	namespace      string
 	dockerImage    string
@@ -50,15 +53,22 @@ func NewManager(kubeconfigPath, namespace, dockerRegistry, dockerImage string, e
 		if err != nil {
 			return nil, fmt.Errorf("failed to build config: %w", err)
 		}
-		log.Printf("Using kubeconfig: %s", kubeconfigPath)
+		log.Info().Str("path", kubeconfigPath).Msg("using kubeconfig")
 	} else {
-		log.Println("Using in-cluster Kubernetes config")
+		log.Info().Msg("using in-cluster Kubernetes config")
 	}
 
 	// Create clientset
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	// Create metrics client (best-effort, nil if unavailable)
+	mc, mcErr := metricsv.NewForConfig(config)
+	if mcErr != nil {
+		log.Warn().Err(mcErr).Msg("metrics client unavailable, pod usage will not be reported")
+		mc = nil
 	}
 
 	if namespace == "" {
@@ -72,6 +82,7 @@ func NewManager(kubeconfigPath, namespace, dockerRegistry, dockerImage string, e
 
 	return &Manager{
 		clientset:      clientset,
+		metricsClient:  mc,
 		restConfig:     config,
 		namespace:      namespace,
 		dockerImage:    dockerImage,
@@ -200,7 +211,7 @@ func (m *Manager) CreatePod(ctx context.Context, userID, sessionID string, agent
 		return nil, fmt.Errorf("failed to create pod: %w", err)
 	}
 
-	log.Printf("Pod %s created successfully", podName)
+	log.Debug().Str("pod", podName).Msg("pod created")
 	return createdPod, nil
 }
 
@@ -229,7 +240,7 @@ func (m *Manager) DeletePod(ctx context.Context, userID, sessionID string) error
 		return fmt.Errorf("failed to delete pod: %w", err)
 	}
 
-	log.Printf("Pod %s deleted successfully", podName)
+	log.Debug().Str("pod", podName).Msg("pod deleted")
 	return nil
 }
 
@@ -283,7 +294,7 @@ func (m *Manager) CreatePVC(ctx context.Context, userID, sessionID string) error
 		return fmt.Errorf("failed to create pvc: %w", err)
 	}
 
-	log.Printf("PVC %s created successfully", pvcName)
+	log.Debug().Str("pvc", pvcName).Msg("PVC created")
 	return nil
 }
 
@@ -296,7 +307,7 @@ func (m *Manager) DeletePodByName(ctx context.Context, podName string) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete pod %s: %w", podName, err)
 	}
-	log.Printf("Pod %s force-deleted (will be recreated by StatefulSet)", podName)
+	log.Debug().Str("pod", podName).Msg("pod force-deleted (will be recreated by StatefulSet)")
 	return nil
 }
 
@@ -427,12 +438,12 @@ func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID 
 	_, svcErr := m.clientset.CoreV1().Services(m.namespace).Create(ctx, headlessSvc, metav1.CreateOptions{})
 	if svcErr != nil {
 		if apierrors.IsAlreadyExists(svcErr) {
-			log.Printf("Headless Service %s already exists, reusing", name)
+			log.Debug().Str("service", name).Msg("headless service already exists, reusing")
 		} else {
 			return fmt.Errorf("failed to create headless service: %w", svcErr)
 		}
 	} else {
-		log.Printf("Headless Service %s created successfully", name)
+		log.Debug().Str("service", name).Msg("headless service created")
 	}
 
 	// Build sidecar container (output-watcher)
@@ -572,7 +583,7 @@ func (m *Manager) CreateStatefulSet(ctx context.Context, userID string, agentID 
 		return fmt.Errorf("failed to create statefulset: %w", err)
 	}
 
-	log.Printf("StatefulSet %s created successfully", name)
+	log.Info().Str("name", name).Msg("StatefulSet created")
 	return nil
 }
 
@@ -598,7 +609,7 @@ func (m *Manager) UpdateStatefulSetImage(ctx context.Context, userID string, age
 		return fmt.Errorf("failed to update statefulset %s image: %w", name, err)
 	}
 
-	log.Printf("StatefulSet %s image updated to %s", name, image)
+	log.Info().Str("name", name).Str("image", image).Msg("StatefulSet image updated")
 	return nil
 }
 
@@ -632,24 +643,24 @@ func (m *Manager) DeleteStatefulSet(ctx context.Context, userID string, agentID 
 		return fmt.Errorf("failed to delete statefulset: %w", err)
 	}
 	if err == nil {
-		log.Printf("StatefulSet %s deleted successfully", name)
+		log.Info().Str("name", name).Msg("StatefulSet deleted")
 	}
 
 	// Delete headless service
 	err = m.clientset.CoreV1().Services(m.namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
-		log.Printf("Warning: failed to delete headless service %s: %v", name, err)
+		log.Warn().Err(err).Str("service", name).Msg("failed to delete headless service")
 	} else if err == nil {
-		log.Printf("Headless Service %s deleted successfully", name)
+		log.Debug().Str("service", name).Msg("headless service deleted")
 	}
 
 	// Delete orphan pod (StatefulSet pod naming: {name}-0)
 	podName := fmt.Sprintf("%s-0", name)
 	err = m.clientset.CoreV1().Pods(m.namespace).Delete(ctx, podName, metav1.DeleteOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
-		log.Printf("Warning: failed to delete pod %s: %v", podName, err)
+		log.Warn().Err(err).Str("pod", podName).Msg("failed to delete pod")
 	} else if err == nil {
-		log.Printf("Pod %s deleted successfully", podName)
+		log.Debug().Str("pod", podName).Msg("pod deleted")
 	}
 
 	return nil
@@ -675,14 +686,18 @@ func (m *Manager) GetStatefulSetPodIP(ctx context.Context, userID string, agentI
 
 // PodInfo contains detailed information about a StatefulSet's pod.
 type PodInfo struct {
-	PodName       string `json:"pod_name"`
-	Status        string `json:"status"`
-	RestartCount  int32  `json:"restart_count"`
-	CPURequest    string `json:"cpu_request"`
-	CPULimit      string `json:"cpu_limit"`
-	MemoryRequest string `json:"memory_request"`
-	MemoryLimit   string `json:"memory_limit"`
-	Image         string `json:"image"`
+	PodName            string  `json:"pod_name"`
+	Status             string  `json:"status"`
+	RestartCount       int32   `json:"restart_count"`
+	CPURequest         string  `json:"cpu_request"`
+	CPULimit           string  `json:"cpu_limit"`
+	MemoryRequest      string  `json:"memory_request"`
+	MemoryLimit        string  `json:"memory_limit"`
+	Image              string  `json:"image"`
+	CPUUsage           string  `json:"cpu_usage"`
+	MemoryUsage        string  `json:"memory_usage"`
+	CPUUsagePercent    float64 `json:"cpu_usage_percent"`
+	MemoryUsagePercent float64 `json:"memory_usage_percent"`
 }
 
 // GetStatefulSetPodInfo returns detailed info for a StatefulSet's pod.
@@ -739,7 +754,55 @@ func (m *Manager) GetStatefulSetPodInfo(ctx context.Context, userID string, agen
 		}
 	}
 
+	// Fetch real-time resource usage from Metrics Server (best-effort)
+	m.enrichPodMetrics(ctx, podName, &info)
+
 	return info
+}
+
+// enrichPodMetrics queries the Metrics Server for real-time CPU/memory usage
+// and populates the usage fields in PodInfo. Fails silently if unavailable.
+func (m *Manager) enrichPodMetrics(ctx context.Context, podName string, info *PodInfo) {
+	if m.metricsClient == nil {
+		return
+	}
+
+	podMetrics, err := m.metricsClient.MetricsV1beta1().PodMetricses(m.namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return
+	}
+
+	// Sum usage across all containers (claude-code + sidecar)
+	var cpuTotal, memTotal int64
+	for _, c := range podMetrics.Containers {
+		cpuTotal += c.Usage.Cpu().MilliValue()
+		memTotal += c.Usage.Memory().Value()
+	}
+
+	info.CPUUsage = fmt.Sprintf("%dm", cpuTotal)
+	info.MemoryUsage = formatMemory(memTotal)
+
+	// Calculate percentages against limits
+	if info.CPULimit != "" {
+		if lim, err := resource.ParseQuantity(info.CPULimit); err == nil && lim.MilliValue() > 0 {
+			info.CPUUsagePercent = float64(cpuTotal) / float64(lim.MilliValue()) * 100
+		}
+	}
+	if info.MemoryLimit != "" {
+		if lim, err := resource.ParseQuantity(info.MemoryLimit); err == nil && lim.Value() > 0 {
+			info.MemoryUsagePercent = float64(memTotal) / float64(lim.Value()) * 100
+		}
+	}
+}
+
+// formatMemory converts bytes to a human-readable string (Mi/Gi).
+func formatMemory(bytes int64) string {
+	const gi = 1024 * 1024 * 1024
+	const mi = 1024 * 1024
+	if bytes >= gi {
+		return fmt.Sprintf("%.1fGi", float64(bytes)/float64(gi))
+	}
+	return fmt.Sprintf("%dMi", bytes/mi)
 }
 
 // ExecInPod executes a command inside a pod using SPDY remotecommand.
@@ -812,6 +875,22 @@ func (m *Manager) ListFilesInPod(ctx context.Context, podName, dirPath string) (
 	return files, nil
 }
 
+// RestartClaudeCodeProcess kills the Claude Code process in a pod, triggering auto-restart.
+// The pod's entrypoint script (/tmp/claude-loop.sh) will automatically restart Claude Code.
+func (m *Manager) RestartClaudeCodeProcess(ctx context.Context, podName string) error {
+	// Use pkill with exact match to avoid killing other processes
+	cmd := []string{"pkill", "-9", "-f", "^claude$"}
+	_, stderr, err := m.ExecInPod(ctx, podName, cmd, nil)
+	if err != nil {
+		// pkill returns exit code 1 if no process matched, which is fine
+		if !strings.Contains(stderr, "no process found") && stderr != "" {
+			return fmt.Errorf("failed to restart Claude Code in pod %s: %w (stderr: %s)", podName, err, stderr)
+		}
+	}
+	log.Debug().Str("pod", podName).Msg("restarted Claude Code process")
+	return nil
+}
+
 // WaitForStatefulSetReady polls until the StatefulSet pod is Running.
 func (m *Manager) WaitForStatefulSetReady(ctx context.Context, userID string, agentID int64, maxRetries int, retryInterval time.Duration) error {
 	name := m.statefulSetName(userID, agentID)
@@ -820,7 +899,7 @@ func (m *Manager) WaitForStatefulSetReady(ctx context.Context, userID string, ag
 	for i := 0; i < maxRetries; i++ {
 		pod, err := m.clientset.CoreV1().Pods(m.namespace).Get(ctx, podName, metav1.GetOptions{})
 		if err == nil && pod.Status.Phase == corev1.PodRunning {
-			log.Printf("StatefulSet pod %s is ready", podName)
+			log.Info().Str("pod", podName).Msg("StatefulSet pod is ready")
 			return nil
 		}
 
@@ -830,4 +909,126 @@ func (m *Manager) WaitForStatefulSetReady(ctx context.Context, userID string, ag
 	}
 
 	return fmt.Errorf("timeout waiting for statefulset pod %s to be ready", podName)
+}
+
+// maintenancePodSpec builds a PodSpec for the maintenance Job/CronJob.
+func (m *Manager) maintenancePodSpec(image string, envVars []corev1.EnvVar) corev1.PodSpec {
+	return corev1.PodSpec{
+		RestartPolicy: corev1.RestartPolicyNever,
+		Containers: []corev1.Container{
+			{
+				Name:    "maintenance",
+				Image:   image,
+				Command: []string{"/app/maintenance"},
+				Env:     envVars,
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("100m"),
+						corev1.ResourceMemory: resource.MustParse("128Mi"),
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("500m"),
+						corev1.ResourceMemory: resource.MustParse("256Mi"),
+					},
+				},
+			},
+		},
+	}
+}
+
+// EnsureCronJob creates or updates a CronJob with the given schedule.
+func (m *Manager) EnsureCronJob(ctx context.Context, name, schedule, image string, envVars []corev1.EnvVar) error {
+	podSpec := m.maintenancePodSpec(image, envVars)
+	backoffLimit := int32(3)
+	ttl := int32(300)
+
+	cronJob := &batchv1.CronJob{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"app": "maintenance",
+			},
+		},
+		Spec: batchv1.CronJobSpec{
+			Schedule:          schedule,
+			ConcurrencyPolicy: batchv1.ForbidConcurrent,
+			JobTemplate: batchv1.JobTemplateSpec{
+				Spec: batchv1.JobSpec{
+					BackoffLimit:            &backoffLimit,
+					TTLSecondsAfterFinished: &ttl,
+					Template: corev1.PodTemplateSpec{
+						Spec: podSpec,
+					},
+				},
+			},
+		},
+	}
+
+	existing, err := m.clientset.BatchV1().CronJobs(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to get cronjob %s: %w", name, err)
+		}
+		// Create
+		_, err = m.clientset.BatchV1().CronJobs(m.namespace).Create(ctx, cronJob, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to create cronjob %s: %w", name, err)
+		}
+		log.Info().Str("name", name).Str("schedule", schedule).Msg("CronJob created")
+		return nil
+	}
+
+	// Update
+	existing.Spec = cronJob.Spec
+	_, err = m.clientset.BatchV1().CronJobs(m.namespace).Update(ctx, existing, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update cronjob %s: %w", name, err)
+	}
+	log.Info().Str("name", name).Str("schedule", schedule).Msg("CronJob updated")
+	return nil
+}
+
+// CreateOneOffJob creates a single Job for manual skill sync trigger.
+func (m *Manager) CreateOneOffJob(ctx context.Context, name, image string, envVars []corev1.EnvVar) error {
+	podSpec := m.maintenancePodSpec(image, envVars)
+	backoffLimit := int32(3)
+	ttl := int32(300)
+
+	jobName := fmt.Sprintf("%s-%d", name, time.Now().Unix())
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      jobName,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"app": "maintenance",
+			},
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit:            &backoffLimit,
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: podSpec,
+			},
+		},
+	}
+
+	_, err := m.clientset.BatchV1().Jobs(m.namespace).Create(ctx, job, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create job %s: %w", jobName, err)
+	}
+	log.Info().Str("name", jobName).Msg("one-off Job created")
+	return nil
+}
+
+// DeleteCronJob removes a CronJob, tolerating NotFound.
+func (m *Manager) DeleteCronJob(ctx context.Context, name string) error {
+	err := m.clientset.BatchV1().CronJobs(m.namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete cronjob %s: %w", name, err)
+	}
+	if err == nil {
+		log.Info().Str("name", name).Msg("CronJob deleted")
+	}
+	return nil
 }

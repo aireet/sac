@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+"github.com/rs/zerolog/log"
 	"net/http"
 	"time"
 
@@ -62,8 +62,7 @@ func NewS3CompatBackend(cfg S3CompatConfig) (*S3CompatBackend, error) {
 	client := s3.New(s3.Options{}, opts)
 	presigner := s3.NewPresignClient(client)
 
-	log.Printf("S3-compat backend initialized: endpoint=%s, bucket=%s, pathStyle=%v",
-		cfg.Endpoint, cfg.Bucket, cfg.UsePathStyle)
+	log.Info().Str("endpoint", cfg.Endpoint).Str("bucket", cfg.Bucket).Bool("pathStyle", cfg.UsePathStyle).Msg("S3-compat backend initialized")
 
 	return &S3CompatBackend{
 		client:    client,

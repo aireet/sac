@@ -3,7 +3,6 @@ package skill
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	sacv1 "g.echo.tech/dev/sac/gen/sac/v1"
@@ -30,7 +29,10 @@ func (s *Server) ListSkills(ctx context.Context, _ *sacv1.Empty) (*sacv1.SkillLi
 	var skills []models.Skill
 	err := s.db.NewSelect().
 		Model(&skills).
-		Where("is_official = ? OR created_by = ? OR is_public = ?", true, userID, true).
+		Relation("Files").
+		Where(`is_official = ? OR created_by = ? OR is_public = ?
+			OR group_id IN (SELECT group_id FROM group_members WHERE user_id = ?)`,
+			true, userID, true, userID).
 		Order("category ASC", "name ASC").
 		Scan(ctx)
 	if err != nil {
@@ -42,7 +44,7 @@ func (s *Server) ListSkills(ctx context.Context, _ *sacv1.Empty) (*sacv1.SkillLi
 
 func (s *Server) GetSkill(ctx context.Context, req *sacv1.GetSkillRequest) (*sacv1.Skill, error) {
 	var skill models.Skill
-	err := s.db.NewSelect().Model(&skill).Where("id = ?", req.Id).Scan(ctx)
+	err := s.db.NewSelect().Model(&skill).Relation("Files").Where("sk.id = ?", req.Id).Scan(ctx)
 	if err != nil {
 		return nil, grpcerr.NotFound("Skill not found", err)
 	}
@@ -64,11 +66,20 @@ func (s *Server) CreateSkill(ctx context.Context, req *sacv1.CreateSkillRequest)
 		Prompt:      req.Prompt,
 		CommandName: req.CommandName,
 		Parameters:  convert.SkillParametersFromProto(req.Parameters),
+		Frontmatter: convert.FrontmatterFromProto(req.Frontmatter),
 		IsPublic:    req.IsPublic,
+		GroupID:     req.GroupId,
 		CreatedBy:   userID,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 		IsOfficial:  false,
+	}
+
+	// Validate group membership if group_id is set
+	if skill.GroupID != nil && *skill.GroupID > 0 {
+		if !s.isGroupMember(ctx, *skill.GroupID, userID) {
+			return nil, grpcerr.Forbidden("You are not a member of this group")
+		}
 	}
 
 	if skill.CommandName == "" {
@@ -143,6 +154,17 @@ func (s *Server) UpdateSkill(ctx context.Context, req *sacv1.UpdateSkillByIdRequ
 	if req.IsPublic != nil {
 		updateData.IsPublic = *req.IsPublic
 	}
+	if req.Frontmatter != nil {
+		updateData.Frontmatter = convert.FrontmatterFromProto(req.Frontmatter)
+	}
+	if req.GroupId != nil {
+		if *req.GroupId > 0 && !s.isGroupMember(ctx, *req.GroupId, userID) {
+			return nil, grpcerr.Forbidden("You are not a member of this group")
+		}
+		updateData.GroupID = req.GroupId
+	}
+
+	columns := []string{"name", "description", "icon", "category", "prompt", "command_name", "parameters", "is_public", "updated_at", "version", "frontmatter", "group_id"}
 
 	if updateData.CommandName == "" && updateData.Name != "" {
 		updateData.CommandName = SanitizeCommandName(updateData.Name)
@@ -165,7 +187,7 @@ func (s *Server) UpdateSkill(ctx context.Context, req *sacv1.UpdateSkillByIdRequ
 
 	_, err = s.db.NewUpdate().
 		Model(&updateData).
-		Column("name", "description", "icon", "category", "prompt", "command_name", "parameters", "is_public", "updated_at", "version").
+		Column(columns...).
 		Where("id = ?", req.Id).
 		Exec(ctx)
 	if err != nil {
@@ -173,7 +195,7 @@ func (s *Server) UpdateSkill(ctx context.Context, req *sacv1.UpdateSkillByIdRequ
 	}
 
 	var updatedSkill models.Skill
-	err = s.db.NewSelect().Model(&updatedSkill).Where("id = ?", req.Id).Scan(ctx)
+	err = s.db.NewSelect().Model(&updatedSkill).Relation("Files").Where("sk.id = ?", req.Id).Scan(ctx)
 	if err != nil {
 		return nil, grpcerr.Internal("Failed to reload skill after update", err)
 	}
@@ -197,29 +219,13 @@ func (s *Server) DeleteSkill(ctx context.Context, req *sacv1.GetSkillRequest) (*
 		return nil, grpcerr.Forbidden("Cannot delete official skills")
 	}
 
-	var agentSkills []models.AgentSkill
-	_ = s.db.NewSelect().Model(&agentSkills).Where("skill_id = ?", req.Id).Scan(ctx)
+	// Remove agent_skills rows — agents can no longer see this skill.
+	// Pod file cleanup is handled by the periodic sync cronjob.
+	_, _ = s.db.NewDelete().Model((*models.AgentSkill)(nil)).Where("skill_id = ?", req.Id).Exec(ctx)
 
 	_, err = s.db.NewDelete().Model(&skill).Where("id = ?", req.Id).Exec(ctx)
 	if err != nil {
 		return nil, grpcerr.Internal("Failed to delete skill", err)
-	}
-
-	if skill.CommandName != "" {
-		go func() {
-			bgCtx := context.Background()
-			for _, as := range agentSkills {
-				var agent models.Agent
-				err := s.db.NewSelect().Model(&agent).Where("id = ?", as.AgentID).Scan(bgCtx)
-				if err != nil {
-					continue
-				}
-				userIDStr := fmt.Sprintf("%d", agent.CreatedBy)
-				if err := s.syncService.RemoveSkillFromAgent(bgCtx, userIDStr, as.AgentID, skill.CommandName); err != nil {
-					log.Printf("Warning: failed to remove skill /%s from agent %d: %v", skill.CommandName, as.AgentID, err)
-				}
-			}
-		}()
 	}
 
 	return &sacv1.SuccessMessage{Message: "Skill deleted successfully"}, nil
@@ -263,6 +269,7 @@ func (s *Server) ForkSkill(ctx context.Context, req *sacv1.GetSkillRequest) (*sa
 		Prompt:      originalSkill.Prompt,
 		CommandName: cmdName,
 		Parameters:  originalSkill.Parameters,
+		Frontmatter: originalSkill.Frontmatter,
 		IsOfficial:  false,
 		CreatedBy:   userID,
 		IsPublic:    false,
@@ -276,6 +283,12 @@ func (s *Server) ForkSkill(ctx context.Context, req *sacv1.GetSkillRequest) (*sa
 		return nil, grpcerr.Internal("Failed to fork skill", err)
 	}
 
+	// Copy attached files from original skill
+	fileCount, _ := s.db.NewSelect().Model((*models.SkillFile)(nil)).Where("skill_id = ?", req.Id).Count(ctx)
+	if fileCount > 0 {
+		go s.syncService.CopySkillFiles(context.Background(), originalSkill.ID, forkedSkill.ID)
+	}
+
 	return convert.SkillToProto(&forkedSkill), nil
 }
 
@@ -283,6 +296,7 @@ func (s *Server) ListPublicSkills(ctx context.Context, _ *sacv1.Empty) (*sacv1.S
 	var skills []models.Skill
 	err := s.db.NewSelect().
 		Model(&skills).
+		Relation("Files").
 		Where("is_public = ? OR is_official = ?", true, true).
 		Relation("Creator").
 		Order("category ASC", "name ASC").
@@ -292,4 +306,72 @@ func (s *Server) ListPublicSkills(ctx context.Context, _ *sacv1.Empty) (*sacv1.S
 	}
 
 	return &sacv1.SkillListResponse{Skills: convert.SkillsToProto(skills)}, nil
+}
+
+func (s *Server) ListGroupSkills(ctx context.Context, req *sacv1.ListGroupSkillsRequest) (*sacv1.SkillListResponse, error) {
+	userID := ctxkeys.UserID(ctx)
+
+	if req.GroupId == 0 {
+		return nil, grpcerr.BadRequest("group_id is required")
+	}
+	if !s.isGroupMember(ctx, req.GroupId, userID) {
+		return nil, grpcerr.Forbidden("Not a member of this group")
+	}
+
+	var skills []models.Skill
+	err := s.db.NewSelect().
+		Model(&skills).
+		Relation("Files").
+		Relation("Creator").
+		Where("group_id = ?", req.GroupId).
+		Order("name ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, grpcerr.Internal("Failed to retrieve group skills", err)
+	}
+
+	return &sacv1.SkillListResponse{Skills: convert.SkillsToProto(skills)}, nil
+}
+
+func (s *Server) ShareSkillToGroup(ctx context.Context, req *sacv1.ShareSkillToGroupRequest) (*sacv1.SuccessMessage, error) {
+	userID := ctxkeys.UserID(ctx)
+
+	if req.Id == 0 || req.GroupId == 0 {
+		return nil, grpcerr.BadRequest("skill id and group_id are required")
+	}
+
+	var skill models.Skill
+	err := s.db.NewSelect().Model(&skill).Where("id = ?", req.Id).Scan(ctx)
+	if err != nil {
+		return nil, grpcerr.NotFound("Skill not found", err)
+	}
+
+	if skill.CreatedBy != userID {
+		return nil, grpcerr.Forbidden("You can only share your own skills")
+	}
+
+	if !s.isGroupMember(ctx, req.GroupId, userID) {
+		return nil, grpcerr.Forbidden("Not a member of this group")
+	}
+
+	groupID := req.GroupId
+	_, err = s.db.NewUpdate().
+		Model((*models.Skill)(nil)).
+		Set("group_id = ?", groupID).
+		Set("updated_at = ?", time.Now()).
+		Set("version = version + 1").
+		Where("id = ?", req.Id).
+		Exec(ctx)
+	if err != nil {
+		return nil, grpcerr.Internal("Failed to share skill to group", err)
+	}
+
+	return &sacv1.SuccessMessage{Message: "Skill shared to group"}, nil
+}
+
+func (s *Server) isGroupMember(ctx context.Context, groupID, userID int64) bool {
+	exists, _ := s.db.NewSelect().Model((*models.GroupMember)(nil)).
+		Where("group_id = ? AND user_id = ?", groupID, userID).
+		Exists(ctx)
+	return exists
 }

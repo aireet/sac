@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,8 +24,10 @@ import (
 	"g.echo.tech/dev/sac/internal/storage"
 	"g.echo.tech/dev/sac/internal/workspace"
 	"g.echo.tech/dev/sac/pkg/config"
+	"g.echo.tech/dev/sac/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"github.com/rs/zerolog/log"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -34,12 +36,14 @@ func main() {
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		log.Fatal().Err(err).Msg("failed to load config")
 	}
+
+	logger.Init(cfg.LogLevel, cfg.LogFormat)
 
 	// Initialize database
 	if err := database.Initialize(cfg); err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+		log.Fatal().Err(err).Msg("failed to initialize database")
 	}
 	defer database.Close()
 
@@ -49,35 +53,39 @@ func main() {
 
 	containerMgr, err := container.NewManager(cfg.KubeconfigPath, cfg.Namespace, cfg.DockerRegistry, cfg.DockerImage, cfg.SidecarImage)
 	if err != nil {
-		log.Fatalf("Failed to create container manager: %v", err)
+		log.Fatal().Err(err).Msg("failed to create container manager")
 	}
 
 	storageProvider := storage.NewStorageProvider(database.DB)
-	workspaceSyncSvc := workspace.NewSyncService(database.DB, storageProvider, containerMgr)
 
 	// Initialize Redis (optional)
 	var outputHub *workspace.OutputHub
+	var syncHub *skill.SyncHub
 	if cfg.RedisURL == "" {
-		log.Printf("Warning: REDIS_URL not set, output watch disabled")
+		log.Warn().Msg("REDIS_URL not set, output watch disabled")
 	} else if err := sacredis.Initialize(cfg.RedisURL); err != nil {
-		log.Printf("Warning: Redis not available, output watch disabled: %v", err)
+		log.Warn().Err(err).Msg("Redis not available, output watch disabled")
 	} else {
 		defer sacredis.Close()
 		outputHub = workspace.NewOutputHub(sacredis.Client)
+		syncHub = skill.NewSyncHub(sacredis.Client)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		go outputHub.Start(ctx)
+		go syncHub.Start(ctx)
 	}
 
 	// ---- gRPC Server (in-process, no network listener) ----
-	// NOTE: No interceptor here — auth is handled by HTTP middleware before
-	// requests reach the gRPC-gateway. RegisterXxxHandlerServer (in-process)
-	// bypasses gRPC interceptors, so auth must happen at the HTTP layer.
 	grpcServer := grpc.NewServer()
 
 	// Create skill handler to get SyncService (shared dependency)
-	skillHandler := skill.NewHandler(database.DB, containerMgr)
+	skillHandler := skill.NewHandler(database.DB, containerMgr, storageProvider)
 	syncService := skillHandler.GetSyncService()
+
+	// Wire sync progress publisher (nil-safe: if syncHub is nil, events are dropped)
+	if syncHub != nil {
+		syncService.SetPublisher(syncHub)
+	}
 
 	// Register all gRPC service implementations
 	authServer := auth.NewServer(database.DB, jwtService, settingsService)
@@ -93,16 +101,16 @@ func main() {
 	historyServer := history.NewServer(database.DB)
 	sacv1.RegisterHistoryServiceServer(grpcServer, historyServer)
 
-	agentServer := agent.NewServer(database.DB, containerMgr, syncService, settingsService)
+	agentServer := agent.NewServer(database.DB, containerMgr, syncService, settingsService, syncHub)
 	sacv1.RegisterAgentServiceServer(grpcServer, agentServer)
 
-	sessionServer := session.NewServer(database.DB, containerMgr, syncService, settingsService, workspaceSyncSvc)
+	sessionServer := session.NewServer(database.DB, containerMgr, syncService, settingsService, storageProvider)
 	sacv1.RegisterSessionServiceServer(grpcServer, sessionServer)
 
-	adminServer := admin.NewServer2(database.DB, containerMgr)
+	adminServer := admin.NewServer2(database.DB, containerMgr, fmt.Sprintf("%s/%s", cfg.DockerRegistry, cfg.DockerImage))
 	sacv1.RegisterAdminServiceServer(grpcServer, adminServer)
 
-	workspaceServer := workspace.NewWorkspaceServer(database.DB, storageProvider, workspaceSyncSvc, outputHub)
+	workspaceServer := workspace.NewWorkspaceServer(database.DB, storageProvider, outputHub)
 	sacv1.RegisterWorkspaceServiceServer(grpcServer, workspaceServer)
 
 	// ---- gRPC-Gateway Mux (in-process calls) ----
@@ -153,20 +161,20 @@ func main() {
 		c.JSON(200, gin.H{"status": "healthy"})
 	})
 
-	// Workspace handler for file upload/download/WS/SSE endpoints
-	workspaceHandler := workspace.NewHandler(database.DB, storageProvider, workspaceSyncSvc, outputHub, jwtService)
+	// Workspace handler for output file download/WS/SSE endpoints
+	workspaceHandler := workspace.NewHandler(database.DB, storageProvider, outputHub, jwtService)
 
 	// Internal routes (no JWT, pod-internal calls) — only multipart upload
 	internalGroup := router.Group("/api/internal")
 	internalGroup.POST("/output/upload", workspaceHandler.RequireOSS(), workspaceHandler.InternalOutputUpload)
 
-	// History internal route (pod-internal, no JWT) — kept on Gin for backward compat
-	// Note: ReceiveEvents is also on gRPC-gateway, but pods may call the REST endpoint directly
+	// History internal route (pod-internal, no JWT)
 	historyHandler := history.NewHandler(database.DB)
 	historyHandler.RegisterInternalRoutes(internalGroup)
 
 	// Public routes (no auth) — WS and shared file download
 	router.GET("/api/workspace/output/watch", workspaceHandler.WatchOutput)
+	router.GET("/api/skill-sync/watch", skill.WatchSync(syncHub, jwtService))
 	router.GET("/api/s/:code/raw", workspaceHandler.RequireOSS(), workspaceHandler.DownloadSharedFile)
 
 	// Protected file routes (JWT auth + multipart/streaming)
@@ -174,14 +182,10 @@ func main() {
 	protected.Use(auth.AuthMiddleware(jwtService))
 	{
 		ws := protected.Group("/workspace")
-		ws.POST("/upload", workspaceHandler.RequireOSS(), workspaceHandler.Upload)
-		ws.POST("/public/upload", workspaceHandler.RequireOSS(), workspaceHandler.UploadPublic)
-		ws.POST("/group/upload", workspaceHandler.RequireOSS(), workspaceHandler.UploadGroup)
-		ws.GET("/files/download", workspaceHandler.RequireOSS(), workspaceHandler.DownloadFile)
-		ws.GET("/public/files/download", workspaceHandler.RequireOSS(), workspaceHandler.DownloadPublicFile)
-		ws.GET("/group/files/download", workspaceHandler.RequireOSS(), workspaceHandler.DownloadGroupFile)
 		ws.GET("/output/files/download", workspaceHandler.RequireOSS(), workspaceHandler.DownloadOutputFile)
-		ws.GET("/sync-stream", workspaceHandler.SyncToPodStream)
+
+		// Skill file management (multipart upload, not suitable for gRPC-gateway)
+		skillHandler.RegisterFileRoutes(protected)
 
 		// CSV exports (streaming response, not suitable for gRPC-gateway)
 		protected.GET("/conversations/export", historyHandler.ExportConversations)
@@ -193,17 +197,18 @@ func main() {
 	}
 
 	// Fallback: all unmatched routes go to gRPC-gateway with JWT auth injected.
-	// RegisterXxxHandlerServer (in-process) bypasses gRPC interceptors, so we
-	// parse the JWT here and inject user claims into the request context.
 	router.NoRoute(gatewayAuthMiddleware(jwtService, gwMux))
+
+	// Reconcile maintenance CronJob on startup
+	go adminServer.ReconcileMaintenanceCronJob(context.Background())
 
 	// Start server
 	addr := "0.0.0.0:" + cfg.APIGatewayPort
-	log.Printf("API Gateway starting on %s (hybrid Gin + gRPC-gateway)", addr)
+	log.Info().Str("addr", addr).Msg("API Gateway starting (hybrid Gin + gRPC-gateway)")
 
 	go func() {
 		if err := router.Run(addr); err != nil {
-			log.Fatalf("Failed to start server: %v", err)
+			log.Fatal().Err(err).Msg("failed to start server")
 		}
 	}()
 
@@ -212,13 +217,13 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down API Gateway...")
+	log.Info().Msg("shutting down API Gateway")
 	grpcServer.GracefulStop()
 }
 
 func must(err error) {
 	if err != nil {
-		log.Fatalf("Failed to register gateway handler: %v", err)
+		log.Fatal().Err(err).Msg("failed to register gateway handler")
 	}
 }
 
@@ -252,8 +257,6 @@ func (w *gatewayResponseWriter) Write(b []byte) (int, error) {
 }
 
 // gatewayAuthMiddleware wraps the gRPC-gateway mux with JWT authentication.
-// It parses the Authorization header, injects user claims into the context,
-// and enforces auth/admin requirements that the gRPC interceptor used to handle.
 func gatewayAuthMiddleware(jwtService *auth.JWTService, gwMux http.Handler) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path

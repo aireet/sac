@@ -5,6 +5,7 @@
 // source: sac/v1/session.proto
 
 /* eslint-disable */
+import type { Empty, SuccessMessage } from "./common";
 
 export const protobufPackage = "sac.v1";
 
@@ -35,4 +36,15 @@ export interface Session {
 
 export interface UserSessionListResponse {
   sessions: Session[];
+}
+
+export interface GetSessionRequest {
+  session_id: string;
+}
+
+export interface SessionService {
+  CreateSession(request: CreateSessionRequest): Promise<CreateSessionResponse>;
+  ListSessions(request: Empty): Promise<UserSessionListResponse>;
+  GetSession(request: GetSessionRequest): Promise<Session>;
+  DeleteSession(request: GetSessionRequest): Promise<SuccessMessage>;
 }

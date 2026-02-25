@@ -153,11 +153,7 @@
                 :agent-id="selectedAgentId"
                 :agent="selectedAgent"
                 :pod-status="podStatuses.get(selectedAgentId) || null"
-                :installed-skills="selectedAgent.installed_skills"
-                @execute-command="handleExecuteCommand"
                 @restart="handleRestartFromPanel"
-                @skills-changed="handleSkillsChanged"
-                @open-marketplace="viewMode = 'marketplace'"
                 @agent-updated="handleAgentUpdated"
                 @edit-claude-m-d="openClaudeMDEditor"
               />
@@ -257,7 +253,15 @@
             @mousedown="startResize"
           />
           <div class="right-panel" :style="{ width: rightPanelWidth + 'px' }">
-            <WorkspacePanel :agent-id="selectedAgentId" @open-file="handleOpenFile" />
+            <WorkspacePanel
+              :agent-id="selectedAgentId"
+              :installed-skills="selectedAgent?.installed_skills"
+              :sync-progress="syncProgress"
+              @open-file="handleOpenFile"
+              @execute-command="handleExecuteCommand"
+              @skills-changed="handleSkillsChanged"
+              @open-marketplace="viewMode = 'marketplace'"
+            />
           </div>
         </template>
       </n-layout>
@@ -337,12 +341,11 @@ import FilePreview from '../components/Workspace/FilePreview.vue'
 import { getAgent, getAgents, getAgentStatuses, updateAgent, restartAgent, previewClaudeMD, type Agent, type AgentStatus } from '../services/agentAPI'
 import { createSession, waitForSessionReady } from '../services/sessionAPI'
 import {
-  fetchFileBlob, fetchPublicFileBlob, fetchGroupFileBlob, fetchOutputFileBlob,
-  downloadFile, downloadPublicFile, downloadGroupFile, downloadOutputFile,
-  uploadFile, uploadPublicFile, uploadGroupFile,
-  syncWorkspaceToPodStream,
+  fetchOutputFileBlob,
+  downloadOutputFile,
   type WorkspaceFile, type SpaceTab,
 } from '../services/workspaceAPI'
+import { watchSkillSync, type SkillSyncEvent } from '../services/skillSyncWS'
 import { getFileCategory, type FileCategory, MAX_TEXT_PREVIEW_BYTES, MAX_CSV_PREVIEW_BYTES, MAX_CSV_PREVIEW_ROWS, MAX_IMAGE_PREVIEW_BYTES } from '../utils/fileTypes'
 import { listGroups, type Group } from '../services/groupAPI'
 import { extractApiError } from '../utils/error'
@@ -435,8 +438,6 @@ const startResize = (e: MouseEvent) => {
 
 // --- File Editor (center overlay) ---
 const editorFile = ref<WorkspaceFile | null>(null)
-const editorSpaceTab = ref<SpaceTab>('private')
-const editorGroupId = ref<number | undefined>(undefined)
 const editorCategory = ref<FileCategory>('binary')
 const editorContent = ref('')
 const editorOriginalContent = ref('')
@@ -447,15 +448,12 @@ const csvColumns = ref<Array<{ title: string; key: string }>>([])
 const csvData = ref<Array<Record<string, string>>>([])
 const editorDirty = computed(() => editorCategory.value === 'text' && editorContent.value !== editorOriginalContent.value)
 const editorCanSave = computed(() => {
-  if (editorSpaceTab.value === 'output') return false
-  if (editorSpaceTab.value === 'public' && !authStore.isAdmin) return false
-  return true
+  // Output workspace is read-only
+  return false
 })
 
-const handleOpenFile = async (file: WorkspaceFile, spaceTab: SpaceTab, groupId?: number) => {
+const handleOpenFile = async (file: WorkspaceFile, _spaceTab: SpaceTab) => {
   editorFile.value = file
-  editorSpaceTab.value = spaceTab
-  editorGroupId.value = groupId
   editorCategory.value = getFileCategory(file.name)
   editorContent.value = ''
   editorOriginalContent.value = ''
@@ -468,21 +466,7 @@ const handleOpenFile = async (file: WorkspaceFile, spaceTab: SpaceTab, groupId?:
   }
 
   try {
-    let blob: Blob
-    switch (spaceTab) {
-      case 'private':
-        blob = await fetchFileBlob(selectedAgentId.value, file.path)
-        break
-      case 'public':
-        blob = await fetchPublicFileBlob(file.path)
-        break
-      case 'group':
-        blob = await fetchGroupFileBlob(groupId!, file.path)
-        break
-      case 'output':
-        blob = await fetchOutputFileBlob(selectedAgentId.value, file.path)
-        break
-    }
+    const blob = await fetchOutputFileBlob(selectedAgentId.value, file.path)
 
     if (editorCategory.value === 'text') {
       if (file.size > MAX_TEXT_PREVIEW_BYTES) {
@@ -552,59 +536,13 @@ const parseCsv = (text: string, isTsv = false) => {
 }
 
 const handleEditorSave = async () => {
-  if (!editorFile.value || !editorDirty.value) return
-  editorSaving.value = true
-  try {
-    const blob = new Blob([editorContent.value], { type: 'text/plain' })
-    const f = new File([blob], editorFile.value.name)
-    // Extract the directory path (parent of the file)
-    const parts = editorFile.value.path.split('/')
-    parts.pop() // remove filename
-    let dirPath = parts.join('/')
-    // Ensure trailing slash for non-root dirs (backend concatenates path + filename)
-    if (dirPath && !dirPath.endsWith('/')) dirPath += '/'
-    if (!dirPath) dirPath = '/'
-
-    switch (editorSpaceTab.value) {
-      case 'private':
-        await uploadFile(selectedAgentId.value, f, dirPath)
-        break
-      case 'public':
-        await uploadPublicFile(f, dirPath)
-        break
-      case 'group':
-        await uploadGroupFile(editorGroupId.value!, f, dirPath)
-        break
-      case 'output':
-        // output is read-only, save should not be reachable
-        break
-    }
-    editorOriginalContent.value = editorContent.value
-    message.success('File saved')
-  } catch (err) {
-    console.error('Save failed:', err)
-    message.error('Failed to save file')
-  } finally {
-    editorSaving.value = false
-  }
+  // Output workspace is read-only, save is not supported
+  return
 }
 
 const handleEditorDownload = () => {
   if (!editorFile.value) return
-  switch (editorSpaceTab.value) {
-    case 'private':
-      downloadFile(selectedAgentId.value, editorFile.value.path)
-      break
-    case 'public':
-      downloadPublicFile(editorFile.value.path)
-      break
-    case 'group':
-      if (editorGroupId.value) downloadGroupFile(editorGroupId.value, editorFile.value.path)
-      break
-    case 'output':
-      downloadOutputFile(selectedAgentId.value, editorFile.value.path)
-      break
-  }
+  downloadOutputFile(selectedAgentId.value, editorFile.value.path)
 }
 
 const closeEditor = () => {
@@ -638,6 +576,44 @@ const pollStatuses = async () => {
   }
 }
 
+// --- Skill sync progress (WebSocket watch) ---
+const syncProgress = ref<Map<number, SkillSyncEvent>>(new Map())
+let syncWatchAbort: (() => void) | null = null
+
+const startSyncWatch = () => {
+  stopSyncWatch()
+  if (!selectedAgentId.value) return
+  syncWatchAbort = watchSkillSync(selectedAgentId.value, (event) => {
+    if (event.action === 'complete' || event.action === 'error') {
+      // For batch sync (skill_id=0), clear ALL entries then show final message briefly
+      // For single skill, just update that one entry
+      if (!event.skill_id) {
+        // Batch completion — clear all per-skill progress entries
+        syncProgress.value = new Map([[0, event]])
+      } else {
+        syncProgress.value.set(event.skill_id, event)
+        syncProgress.value = new Map(syncProgress.value)
+      }
+      setTimeout(() => {
+        syncProgress.value = new Map()
+      }, 3000)
+      // Refresh agent data to update installed_skills
+      handleSkillsChanged()
+    } else {
+      syncProgress.value.set(event.skill_id, event)
+      syncProgress.value = new Map(syncProgress.value)
+    }
+  })
+}
+
+const stopSyncWatch = () => {
+  if (syncWatchAbort) {
+    syncWatchAbort()
+    syncWatchAbort = null
+  }
+  syncProgress.value = new Map()
+}
+
 const agentOptions = computed(() => {
   return agents.value.map(agent => ({
     label: `${agent.icon || '🤖'} ${agent.name}`,
@@ -662,6 +638,9 @@ const handleAgentSelect = async (agentId: number) => {
       selectedAgent.value = await getAgent(agentId)
       activeTab.value = 'skills'
 
+      // Start sync watch for the new agent
+      startSyncWatch()
+
       // Clean up old WS connection (backend manages session lifecycle)
       terminalRef.value?.cleanup()
       sessionId.value = ''
@@ -676,6 +655,7 @@ const handleAgentSelect = async (agentId: number) => {
     }
   } else {
     selectedAgent.value = null
+    stopSyncWatch()
   }
 }
 
@@ -691,20 +671,6 @@ const createSessionForAgent = async (agentId: number) => {
     if (response.status !== 'running') {
       loadingMsg.content = 'Waiting for container to start...'
       await waitForSessionReady(response.session_id)
-    }
-
-    // New StatefulSet — sync workspace files with progress
-    if (response.is_new) {
-      loadingMsg.content = 'Syncing workspace files...'
-      await syncWorkspaceToPodStream(agentId, (e) => {
-        if (e.error) return
-        if (e.total === 0) {
-          loadingMsg.content = 'No files to sync'
-        } else {
-          const pct = Math.round((e.synced / e.total) * 100)
-          loadingMsg.content = `Syncing files ${e.synced}/${e.total} (${pct}%)${e.file ? ': ' + e.file : ''}`
-        }
-      })
     }
 
     sessionId.value = response.session_id
@@ -889,6 +855,7 @@ onUnmounted(() => {
     clearInterval(pollTimer)
     pollTimer = null
   }
+  stopSyncWatch()
 })
 </script>
 

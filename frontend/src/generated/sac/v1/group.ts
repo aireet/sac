@@ -5,7 +5,7 @@
 // source: sac/v1/group.proto
 
 /* eslint-disable */
-import type { UserBrief } from "./common";
+import type { Empty, SuccessMessage, UserBrief } from "./common";
 
 export const protobufPackage = "sac.v1";
 
@@ -69,4 +69,60 @@ export interface GroupListResponse {
 
 export interface GroupMemberListResponse {
   members: GroupMember[];
+}
+
+/** Request messages for RPCs that need path params */
+export interface GetGroupRequest {
+  id: number;
+}
+
+export interface UpdateGroupByIdRequest {
+  id: number;
+  name?: string | undefined;
+  description?: string | undefined;
+  claude_md_template?: string | undefined;
+}
+
+export interface AddMemberByGroupRequest {
+  group_id: number;
+  user_id: number;
+  role: string;
+}
+
+export interface RemoveMemberRequest {
+  group_id: number;
+  user_id: number;
+}
+
+export interface UpdateMemberRoleByGroupRequest {
+  group_id: number;
+  user_id: number;
+  role: string;
+}
+
+export interface UpdateTemplateByGroupRequest {
+  group_id: number;
+  claude_md_template: string;
+}
+
+/** User-facing group service (requires membership) */
+export interface GroupService {
+  ListGroups(request: Empty): Promise<GroupListResponse>;
+  GetGroup(request: GetGroupRequest): Promise<Group>;
+  ListMembers(request: GetGroupRequest): Promise<GroupMemberListResponse>;
+  GetTemplate(request: GetGroupRequest): Promise<GroupTemplateResponse>;
+  UpdateTemplate(request: UpdateTemplateByGroupRequest): Promise<SuccessMessage>;
+}
+
+/** Admin group management service */
+export interface AdminGroupService {
+  ListAllGroups(request: Empty): Promise<GroupListResponse>;
+  CreateGroup(request: CreateGroupRequest): Promise<Group>;
+  UpdateGroup(request: UpdateGroupByIdRequest): Promise<SuccessMessage>;
+  DeleteGroup(request: GetGroupRequest): Promise<SuccessMessage>;
+  ListMembersAdmin(request: GetGroupRequest): Promise<GroupMemberListResponse>;
+  AddMember(request: AddMemberByGroupRequest): Promise<GroupMember>;
+  RemoveMember(request: RemoveMemberRequest): Promise<SuccessMessage>;
+  UpdateMemberRole(request: UpdateMemberRoleByGroupRequest): Promise<SuccessMessage>;
+  AdminUpdateTemplate(request: UpdateTemplateByGroupRequest): Promise<SuccessMessage>;
 }

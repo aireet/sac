@@ -5,7 +5,7 @@
 // source: sac/v1/auth.proto
 
 /* eslint-disable */
-import type { UserBrief } from "./common";
+import type { Empty, SuccessMessage, UserBrief } from "./common";
 
 export const protobufPackage = "sac.v1";
 
@@ -47,4 +47,17 @@ export interface ChangePasswordRequest {
 
 export interface RegistrationModeResponse {
   mode: string;
+}
+
+export interface SearchUsersRequest {
+  q: string;
+}
+
+export interface AuthService {
+  Register(request: RegisterRequest): Promise<AuthResponse>;
+  Login(request: LoginRequest): Promise<AuthResponse>;
+  GetRegistrationMode(request: Empty): Promise<RegistrationModeResponse>;
+  GetCurrentUser(request: Empty): Promise<User>;
+  ChangePassword(request: ChangePasswordRequest): Promise<SuccessMessage>;
+  SearchUsers(request: SearchUsersRequest): Promise<UserBriefListResponse>;
 }

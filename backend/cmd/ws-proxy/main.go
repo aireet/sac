@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -10,19 +9,23 @@ import (
 	"g.echo.tech/dev/sac/internal/database"
 	"g.echo.tech/dev/sac/internal/websocket"
 	"g.echo.tech/dev/sac/pkg/config"
+	"g.echo.tech/dev/sac/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog/log"
 )
 
 func main() {
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		log.Fatal().Err(err).Msg("failed to load config")
 	}
+
+	logger.Init(cfg.LogLevel, cfg.LogFormat)
 
 	// Initialize database
 	if err := database.Initialize(cfg); err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+		log.Fatal().Err(err).Msg("failed to initialize database")
 	}
 	defer database.Close()
 
@@ -41,12 +44,12 @@ func main() {
 
 	// Start server (listen on all interfaces for remote debugging)
 	addr := "0.0.0.0:" + cfg.WSProxyPort
-	log.Printf("WebSocket Proxy starting on %s", addr)
+	log.Info().Str("addr", addr).Msg("WebSocket Proxy starting")
 
 	// Graceful shutdown
 	go func() {
 		if err := router.Run(addr); err != nil {
-			log.Fatalf("Failed to start server: %v", err)
+			log.Fatal().Err(err).Msg("failed to start server")
 		}
 	}()
 
@@ -55,5 +58,5 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down WebSocket Proxy...")
+	log.Info().Msg("shutting down WebSocket Proxy")
 }

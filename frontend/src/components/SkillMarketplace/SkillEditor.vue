@@ -1,5 +1,5 @@
 <template>
-  <div class="skill-editor-overlay">
+  <div class="skill-editor-overlay" @dragover.prevent @drop.prevent>
     <!-- Title bar -->
     <div class="editor-titlebar">
       <div class="titlebar-left">
@@ -23,61 +23,63 @@
     <div class="editor-main">
       <!-- Left panel: metadata + file tree -->
       <div class="left-panel">
-        <!-- Skill metadata section -->
+        <!-- Skill metadata section (collapsible) -->
         <div class="meta-section">
-          <div class="meta-section-title">
-            <n-text depth="3" style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px">Skill Info</n-text>
-          </div>
+          <n-collapse :default-expanded-names="skill ? [] : ['info']" :arrow-placement="'left'">
+            <n-collapse-item title="Skill Info" name="info">
+              <div class="meta-fields">
+                <div class="meta-field">
+                  <label class="meta-label">Name</label>
+                  <n-input v-model:value="meta.name" placeholder="My Skill" size="small" :disabled="readonly" />
+                </div>
 
-          <div class="meta-field">
-            <label class="meta-label">Name</label>
-            <n-input v-model:value="meta.name" placeholder="My Skill" size="small" :disabled="readonly" />
-          </div>
+                <div class="meta-field">
+                  <label class="meta-label">Command</label>
+                  <n-input v-model:value="meta.command_name" placeholder="auto-generated" size="small" :disabled="readonly">
+                    <template #prefix><span style="color: rgba(255,255,255,0.3)">/</span></template>
+                  </n-input>
+                </div>
 
-          <div class="meta-field">
-            <label class="meta-label">Command</label>
-            <n-input v-model:value="meta.command_name" placeholder="auto-generated" size="small" :disabled="readonly">
-              <template #prefix><span style="color: rgba(255,255,255,0.3)">/</span></template>
-            </n-input>
-          </div>
+                <div class="meta-field">
+                  <label class="meta-label">Description</label>
+                  <n-input
+                    v-model:value="meta.description"
+                    type="textarea"
+                    placeholder="What does this skill do?"
+                    size="small"
+                    :autosize="{ minRows: 2, maxRows: 4 }"
+                    :disabled="readonly"
+                  />
+                </div>
 
-          <div class="meta-field">
-            <label class="meta-label">Description</label>
-            <n-input
-              v-model:value="meta.description"
-              type="textarea"
-              placeholder="What does this skill do?"
-              size="small"
-              :autosize="{ minRows: 2, maxRows: 4 }"
-              :disabled="readonly"
-            />
-          </div>
-
-          <div class="meta-row">
-            <div class="meta-field" style="flex: 1">
-              <label class="meta-label">Icon</label>
-              <n-select
-                v-model:value="meta.icon"
-                :options="iconOptions"
-                :render-label="renderIconLabel"
-                size="small"
-                :disabled="readonly"
-              />
-            </div>
-            <div class="meta-field" style="flex: 1">
-              <label class="meta-label">Visibility</label>
-              <n-select
-                :value="meta.is_public ? 'public' : 'private'"
-                :options="[
-                  { label: 'Private', value: 'private' },
-                  { label: 'Public', value: 'public' },
-                ]"
-                size="small"
-                :disabled="readonly"
-                @update:value="(v: string) => meta.is_public = v === 'public'"
-              />
-            </div>
-          </div>
+                <div class="meta-row">
+                  <div class="meta-field" style="flex: 1">
+                    <label class="meta-label">Icon</label>
+                    <n-select
+                      v-model:value="meta.icon"
+                      :options="iconOptions"
+                      :render-label="renderIconLabel"
+                      size="small"
+                      :disabled="readonly"
+                    />
+                  </div>
+                  <div class="meta-field" style="flex: 1">
+                    <label class="meta-label">Visibility</label>
+                    <n-select
+                      :value="meta.is_public ? 'public' : 'private'"
+                      :options="[
+                        { label: 'Private', value: 'private' },
+                        { label: 'Public', value: 'public' },
+                      ]"
+                      size="small"
+                      :disabled="readonly"
+                      @update:value="(v: string) => meta.is_public = v === 'public'"
+                    />
+                  </div>
+                </div>
+              </div>
+            </n-collapse-item>
+          </n-collapse>
         </div>
 
         <!-- File tree -->
@@ -119,7 +121,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, h } from 'vue'
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
-import { NInput, NSelect, NButton, NText, NIcon, useMessage } from 'naive-ui'
+import { NInput, NSelect, NButton, NText, NIcon, NCollapse, NCollapseItem, useMessage } from 'naive-ui'
 import { ArrowBack } from '@vicons/ionicons5'
 import SkillEditorSidebar from './SkillEditorSidebar.vue'
 import {
@@ -190,9 +192,7 @@ const currentLanguage = computed(() => {
 
 const binaryFile = computed(() => {
   if (activeFile.value === 'SKILL.md') return false
-  const f = attachedFiles.value.find(f => f.filepath === activeFile.value)
-  if (!f) return false
-  return isBinaryContentType(f.content_type)
+  return isBinaryFile(activeFile.value)
 })
 
 // --- Init ---
@@ -237,8 +237,7 @@ function switchFile(filepath: string) {
 
 async function loadFileContent(filepath: string) {
   if (!currentSkillId.value) return
-  const f = attachedFiles.value.find(f => f.filepath === filepath)
-  if (f && isBinaryContentType(f.content_type)) return
+  if (isBinaryFile(filepath)) return
   try {
     const resp = await getSkillFileContent(currentSkillId.value, filepath)
     fileCache.value.set(filepath, resp.content)
@@ -445,11 +444,24 @@ function languageFromPath(filepath: string): string {
   return map[ext] || 'plaintext'
 }
 
-function isBinaryContentType(ct: string): boolean {
-  if (!ct) return false
-  return ct.startsWith('image/') || ct.startsWith('audio/') || ct.startsWith('video/')
-    || ct === 'application/octet-stream' || ct === 'application/zip'
-    || ct === 'application/pdf' || ct === 'application/gzip'
+const textExtensions = new Set([
+  'md', 'txt', 'json', 'yaml', 'yml', 'toml', 'xml', 'csv', 'tsv', 'ini', 'cfg', 'conf',
+  'js', 'ts', 'jsx', 'tsx', 'mjs', 'cjs', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'c', 'cpp', 'h', 'hpp',
+  'html', 'htm', 'css', 'scss', 'less', 'sass', 'vue', 'svelte',
+  'sh', 'bash', 'zsh', 'fish', 'bat', 'cmd', 'ps1',
+  'sql', 'graphql', 'gql', 'proto', 'env', 'gitignore', 'dockerignore',
+  'makefile', 'dockerfile', 'editorconfig', 'eslintrc', 'prettierrc',
+  'r', 'R', 'lua', 'swift', 'dart', 'scala', 'clj', 'ex', 'exs', 'erl', 'hs',
+  'log', 'lock', 'map', 'svg', 'properties',
+])
+
+function isBinaryFile(filepath: string): boolean {
+  const name = filepath.split('/').pop()?.toLowerCase() ?? ''
+  // Files with no extension that are known text files
+  if (['makefile', 'dockerfile', 'gemfile', 'rakefile', 'procfile', 'requirements'].includes(name)) return false
+  const ext = name.split('.').pop() ?? ''
+  if (!ext || ext === name) return false // no extension → assume text
+  return !textExtensions.has(ext)
 }
 
 const iconOptions = [
@@ -546,15 +558,32 @@ const renderIconLabel = (option: any) => {
 
 /* Metadata section */
 .meta-section {
-  padding: 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   flex-shrink: 0;
-  overflow-y: auto;
-  max-height: 50%;
 }
 
-.meta-section-title {
-  margin-bottom: 10px;
+.meta-section :deep(.n-collapse) {
+  border: none;
+}
+
+.meta-section :deep(.n-collapse-item) {
+  border: none !important;
+}
+
+.meta-section :deep(.n-collapse-item__header) {
+  padding: 8px 12px !important;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.meta-section :deep(.n-collapse-item__content-inner) {
+  padding: 0 12px 12px !important;
+}
+
+.meta-fields {
+  display: flex;
+  flex-direction: column;
 }
 
 .meta-field {

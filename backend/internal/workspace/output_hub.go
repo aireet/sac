@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+"github.com/rs/zerolog/log"
 	"strings"
 	"sync"
 
@@ -59,7 +59,7 @@ func (h *OutputHub) Start(ctx context.Context) {
 
 			var event OutputEvent
 			if err := json.Unmarshal([]byte(msg.Payload), &event); err != nil {
-				log.Printf("OutputHub: bad event payload: %v", err)
+				log.Warn().Err(err).Msg("OutputHub: bad event payload")
 				continue
 			}
 
@@ -81,12 +81,12 @@ func (h *OutputHub) Start(ctx context.Context) {
 func (h *OutputHub) Publish(ctx context.Context, userID, agentID int64, event OutputEvent) {
 	data, err := json.Marshal(event)
 	if err != nil {
-		log.Printf("OutputHub: marshal error: %v", err)
+		log.Warn().Err(err).Msg("OutputHub: marshal error")
 		return
 	}
 	channel := fmt.Sprintf("sac:output:%d:%d", userID, agentID)
 	if err := h.rdb.Publish(ctx, channel, data).Err(); err != nil {
-		log.Printf("OutputHub: publish error: %v", err)
+		log.Warn().Err(err).Msg("OutputHub: publish error")
 	}
 }
 

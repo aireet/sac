@@ -5,6 +5,7 @@
 // source: sac/v1/workspace.proto
 
 /* eslint-disable */
+import type { Empty, FileListResponse, SuccessMessage } from "./common";
 
 export const protobufPackage = "sac.v1";
 
@@ -25,43 +26,8 @@ export interface WorkspaceFile {
   updated_at?: string | undefined;
 }
 
-export interface WorkspaceQuota {
-  user_id: number;
-  agent_id: number;
-  used_bytes: number;
-  max_bytes: number;
-  file_count: number;
-  max_file_count: number;
-}
-
-export interface GroupWorkspaceQuota {
-  group_id: number;
-  used_bytes: number;
-  max_bytes: number;
-  file_count: number;
-  max_file_count: number;
-}
-
 export interface WorkspaceStatusResponse {
   configured: boolean;
-}
-
-export interface CreateDirectoryRequest {
-  path: string;
-  agent_id: number;
-}
-
-export interface CreatePublicDirectoryRequest {
-  path: string;
-}
-
-export interface CreateGroupDirectoryRequest {
-  path: string;
-  group_id: number;
-}
-
-export interface SyncToPodRequest {
-  agent_id: number;
 }
 
 export interface CreateShareRequest {
@@ -84,4 +50,37 @@ export interface InternalOutputDeleteRequest {
   user_id: number;
   agent_id: number;
   path: string;
+}
+
+export interface ListOutputFilesRequest {
+  agent_id: number;
+  path: string;
+}
+
+export interface DeleteOutputFileRequest {
+  agent_id: number;
+  path: string;
+}
+
+export interface DeleteShareRequest {
+  code: string;
+}
+
+export interface GetSharedFileRequest {
+  code: string;
+}
+
+export interface WorkspaceService {
+  /** Status */
+  GetStatus(request: Empty): Promise<WorkspaceStatusResponse>;
+  /** Output workspace */
+  ListOutputFiles(request: ListOutputFilesRequest): Promise<FileListResponse>;
+  DeleteOutputFile(request: DeleteOutputFileRequest): Promise<SuccessMessage>;
+  /** Output sharing */
+  CreateShare(request: CreateShareRequest): Promise<ShareResponse>;
+  DeleteShare(request: DeleteShareRequest): Promise<SuccessMessage>;
+  /** Shared file (public, no auth) */
+  GetSharedFileMeta(request: GetSharedFileRequest): Promise<SharedFileMeta>;
+  /** Internal (sidecar, no auth) */
+  InternalOutputDelete(request: InternalOutputDeleteRequest): Promise<SuccessMessage>;
 }

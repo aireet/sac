@@ -38,3 +38,7 @@ export interface SuccessMessage {
 export interface ErrorMessage {
   error: string;
 }
+
+/** Empty is used for RPCs that take no parameters. */
+export interface Empty {
+}

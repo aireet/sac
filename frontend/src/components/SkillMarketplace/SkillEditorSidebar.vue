@@ -1,5 +1,12 @@
 <template>
-  <div class="sidebar">
+  <div
+    class="sidebar"
+    :class="{ 'drop-active': dragOver }"
+    @dragover.prevent="handleDragOver"
+    @dragenter.prevent="handleDragEnter"
+    @dragleave="handleDragLeave"
+    @drop.prevent="handleDrop"
+  >
     <div class="sidebar-header">
       <n-text depth="3" style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px">Explorer</n-text>
     </div>
@@ -20,14 +27,8 @@
       </n-button>
     </div>
 
-    <!-- Tree body (drop zone) -->
-    <div
-      class="sidebar-body"
-      :class="{ 'drop-active': dragOver }"
-      @dragover.prevent="handleDragOver"
-      @dragleave="handleDragLeave"
-      @drop.prevent="handleDrop"
-    >
+    <!-- Tree body -->
+    <div class="sidebar-body">
       <n-tree
         block-line
         :data="treeData"
@@ -40,9 +41,6 @@
         :node-props="getNodeProps"
         @update:expanded-keys="handleExpandedKeysUpdate"
       />
-      <div v-if="dragOver" class="drop-overlay">
-        <n-text depth="3" style="font-size: 12px">Drop files or folders here</n-text>
-      </div>
     </div>
 
     <!-- Actions -->
@@ -90,6 +88,11 @@
     >
       <n-input v-model:value="newFileName" placeholder="File name (e.g. notes.txt)" @keyup.enter="handleCreateFile" />
     </n-modal>
+
+    <!-- Drop overlay -->
+    <div v-if="dragOver" class="drop-overlay">
+      <n-text depth="3" style="font-size: 12px">Drop files or folders here</n-text>
+    </div>
   </div>
 </template>
 
@@ -133,6 +136,7 @@ const newFolderName = ref('')
 const showNewFile = ref(false)
 const newFileName = ref('')
 const pendingDirs = ref(new Set<string>())
+const collapsedDirs = ref(new Set<string>())
 
 // --- Icon mapping ---
 const iconComponents: Record<string, Component> = {
@@ -191,8 +195,8 @@ const treeData = computed(() => {
       parent.children!.push(node)
     }
 
-    // Auto-expand
-    if (!expandedKeys.value.includes(node.key as string)) {
+    // Auto-expand new dirs (unless user manually collapsed them)
+    if (!collapsedDirs.value.has(node.key as string) && !expandedKeys.value.includes(node.key as string)) {
       expandedKeys.value = [...expandedKeys.value, node.key as string]
     }
     return node
@@ -323,8 +327,12 @@ const getNodeProps = ({ option }: { option: TreeOption }) => {
         const idx = expandedKeys.value.indexOf(key)
         if (idx >= 0) {
           expandedKeys.value = expandedKeys.value.filter(k => k !== key)
+          collapsedDirs.value.add(key)
+          collapsedDirs.value = new Set(collapsedDirs.value)
         } else {
           expandedKeys.value = [...expandedKeys.value, key]
+          collapsedDirs.value.delete(key)
+          collapsedDirs.value = new Set(collapsedDirs.value)
         }
       }
     },
@@ -332,11 +340,16 @@ const getNodeProps = ({ option }: { option: TreeOption }) => {
 }
 
 const handleExpandedKeysUpdate = (keys: string[]) => {
-  const newDirs = keys.filter(k => !expandedKeys.value.includes(k))
+  // Track dirs that were collapsed
+  const removed = expandedKeys.value.filter(k => !keys.includes(k))
+  for (const k of removed) collapsedDirs.value.add(k)
+  const added = keys.filter(k => !expandedKeys.value.includes(k))
+  for (const k of added) collapsedDirs.value.delete(k)
+  collapsedDirs.value = new Set(collapsedDirs.value)
+
   expandedKeys.value = keys
-  if (newDirs.length > 0) {
-    // Extract dir path from key (strip __dir__ prefix)
-    const lastKey = newDirs[newDirs.length - 1]!
+  if (added.length > 0) {
+    const lastKey = added[added.length - 1]!
     if (lastKey.startsWith('__dir__')) {
       activeDir.value = lastKey.substring(7)
     }
@@ -373,19 +386,27 @@ function handleCreateFile() {
 
 // --- Drag & drop ---
 const dragOver = ref(false)
-let dragLeaveTimer = 0
+let dragCounter = 0
 
-function handleDragOver() {
-  clearTimeout(dragLeaveTimer)
+function handleDragEnter() {
+  dragCounter++
   dragOver.value = true
 }
 
+function handleDragOver() {
+  // just needs to exist to allow drop (prevent default is on the template)
+}
+
 function handleDragLeave() {
-  // Small delay to avoid flicker when moving between child elements
-  dragLeaveTimer = window.setTimeout(() => { dragOver.value = false }, 50)
+  dragCounter--
+  if (dragCounter <= 0) {
+    dragCounter = 0
+    dragOver.value = false
+  }
 }
 
 async function handleDrop(e: DragEvent) {
+  dragCounter = 0
   dragOver.value = false
   if (props.readonly || !props.skillId || !e.dataTransfer) return
 
@@ -408,7 +429,7 @@ async function handleDrop(e: DragEvent) {
         const file = await entryToFile(entry as FileSystemFileEntry)
         if (file) singleFiles.push(file)
       } else if (entry.isDirectory) {
-        await readDirectoryEntry(entry as FileSystemDirectoryEntry, '', files)
+        await readDirectoryEntry(entry as FileSystemDirectoryEntry, entry.name, files)
       }
     }
   }
@@ -466,6 +487,24 @@ async function readDirectoryEntry(
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
+}
+
+.sidebar.drop-active {
+  background: rgba(99, 180, 255, 0.06);
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed rgba(99, 180, 255, 0.4);
+  border-radius: 6px;
+  pointer-events: none;
+  background: rgba(99, 180, 255, 0.04);
 }
 
 .sidebar-header {
@@ -494,24 +533,6 @@ async function readDirectoryEntry(
   overflow-y: auto;
   padding: 0 4px 8px;
   min-height: 0;
-  position: relative;
-  transition: background 0.15s;
-}
-
-.sidebar-body.drop-active {
-  background: rgba(99, 180, 255, 0.06);
-}
-
-.drop-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px dashed rgba(99, 180, 255, 0.4);
-  border-radius: 6px;
-  pointer-events: none;
-  background: rgba(99, 180, 255, 0.04);
 }
 
 .sidebar-actions {

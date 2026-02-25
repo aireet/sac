@@ -392,3 +392,11 @@ func (s *Server) getMemberCountsServer(ctx context.Context, ids []int64) map[int
 	}
 	return countMap
 }
+
+func groupIDs(groups []models.Group) []int64 {
+	ids := make([]int64, len(groups))
+	for i, g := range groups {
+		ids[i] = g.ID
+	}
+	return ids
+}

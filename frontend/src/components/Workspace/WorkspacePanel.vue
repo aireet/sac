@@ -1,246 +1,156 @@
 <template>
   <div class="workspace-panel">
-    <!-- Header: Tabs + Quota -->
-    <div class="ws-header">
-      <n-tabs v-model:value="spaceTab" type="line" size="small">
-        <n-tab-pane name="output">
-          <template #tab>
-            <n-space :size="4" align="center">
-              <n-icon size="14"><ConstructOutline /></n-icon>
-              <span>Output</span>
-              <span v-if="outputBadgeCount > 0" class="output-badge">{{ outputBadgeCount }}</span>
-            </n-space>
-          </template>
-        </n-tab-pane>
-        <n-tab-pane name="private">
-          <template #tab>
-            <n-space :size="4" align="center">
-              <n-icon size="14"><LockClosedOutline /></n-icon>
-              <span>Private</span>
-            </n-space>
-          </template>
-        </n-tab-pane>
-        <n-tab-pane name="public">
-          <template #tab>
-            <n-space :size="4" align="center">
-              <n-icon size="14"><GlobeOutline /></n-icon>
-              <span>Public</span>
-            </n-space>
-          </template>
-        </n-tab-pane>
-        <n-tab-pane name="group">
-          <template #tab>
-            <n-space :size="4" align="center">
-              <n-icon size="14"><PeopleOutline /></n-icon>
-              <span>Group</span>
-            </n-space>
-          </template>
-        </n-tab-pane>
-      </n-tabs>
-
-      <!-- Group selector (only shown on group tab) -->
-      <div v-if="spaceTab === 'group'" class="ws-group-selector">
-        <n-select
-          v-model:value="selectedGroupId"
-          :options="groupOptions"
-          :loading="loadingGroups"
-          placeholder="Select a group"
-          size="small"
-          style="flex: 1"
-        />
-      </div>
-
-      <!-- Quota display for private workspace -->
-      <div v-if="spaceTab === 'private' && quota" class="ws-quota">
-        <n-progress
-          type="line"
-          :percentage="quotaPercent"
-          :status="quotaPercent > 90 ? 'error' : quotaPercent > 70 ? 'warning' : 'success'"
-          :show-indicator="false"
-          :height="4"
-        />
-        <n-text depth="3" style="font-size: 11px">
-          {{ formatBytes(quota.used_bytes) }} / {{ formatBytes(quota.max_bytes) }}
-          ({{ quota.file_count }} / {{ quota.max_file_count }} files)
-        </n-text>
-      </div>
-
-      <!-- Quota display for group workspace -->
-      <div v-if="spaceTab === 'group' && groupQuota && selectedGroupId" class="ws-quota">
-        <n-progress
-          type="line"
-          :percentage="groupQuotaPercent"
-          :status="groupQuotaPercent > 90 ? 'error' : groupQuotaPercent > 70 ? 'warning' : 'success'"
-          :show-indicator="false"
-          :height="4"
-        />
-        <n-text depth="3" style="font-size: 11px">
-          {{ formatBytes(groupQuota.used_bytes) }} / {{ formatBytes(groupQuota.max_bytes) }}
-          ({{ groupQuota.file_count }} / {{ groupQuota.max_file_count }} files)
-        </n-text>
-      </div>
-    </div>
-
-    <!-- Toolbar -->
-    <div class="ws-toolbar">
-      <n-input v-model:value="searchQuery" placeholder="Search files..." size="small" clearable style="flex: 1" />
-      <n-space :size="4" style="flex-shrink: 0">
-        <n-upload
-          v-if="canUpload"
-          :show-file-list="false"
-          :custom-request="handleUpload"
-          :multiple="true"
-        >
-          <n-button size="small" type="primary">Upload</n-button>
-        </n-upload>
-        <n-button v-if="canUpload" size="small" @click="showNewFile = true">
-          New File
-        </n-button>
-        <n-button v-if="canUpload" size="small" @click="showNewFolder = true">
-          New Folder
-        </n-button>
-        <n-tooltip trigger="hover">
-          <template #trigger>
-            <n-button size="small" quaternary @click="refreshTree">
-              <template #icon><n-icon><RefreshOutline /></n-icon></template>
-            </n-button>
-          </template>
-          Refresh file list
-        </n-tooltip>
-        <n-tooltip trigger="hover">
-          <template #trigger>
-            <n-button size="small" quaternary @click="handleSyncToPod" :loading="syncing">
-              <template #icon><n-icon :class="{ 'sync-spin': syncing }"><SyncOutline /></n-icon></template>
-            </n-button>
-          </template>
-          Sync all workspace files to agent
-        </n-tooltip>
-      </n-space>
-    </div>
-
-    <!-- Active directory indicator -->
-    <div v-if="activeDir !== '/'" class="ws-active-dir">
-      <n-icon :size="12" style="flex-shrink: 0"><FolderOutline /></n-icon>
-      <n-text depth="3" style="font-size: 11px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
-        {{ activeDir }}
-      </n-text>
-      <n-button size="tiny" quaternary @click="activeDir = '/'">
-        <n-icon :size="12"><CloseOutline /></n-icon>
-      </n-button>
-    </div>
-
-    <!-- Batch bar -->
-    <div v-if="checkedKeys.length > 0" class="ws-batch-bar">
-      <n-text depth="3" style="font-size: 12px">{{ checkedKeys.length }} selected</n-text>
-      <n-button size="tiny" @click="handleBatchDownload">Download</n-button>
-      <n-popconfirm v-if="canEdit" @positive-click="handleBatchDelete">
-        <template #trigger>
-          <n-button size="tiny" type="error">Delete</n-button>
+    <n-tabs v-model:value="panelTab" type="segment" size="small" style="padding: 8px 12px 0">
+      <n-tab-pane name="output">
+        <template #tab>
+          <n-space :size="4" align="center">
+            <span>Output</span>
+            <span v-if="outputBadgeCount > 0" class="output-badge">{{ outputBadgeCount }}</span>
+          </n-space>
         </template>
-        Delete {{ checkedKeys.length }} items?
-      </n-popconfirm>
-      <n-button size="tiny" quaternary @click="checkedKeys = []">Clear</n-button>
-    </div>
 
-    <!-- Upload progress overlay -->
-    <div v-if="uploading" class="ws-sync-overlay">
-      <div class="ws-sync-content" style="width: 70%; max-width: 300px">
-        <n-text style="font-size: 13px; color: #63e2b7; margin-bottom: 4px">
-          {{ uploadStatus }}
-        </n-text>
-        <n-progress
-          type="line"
-          :percentage="uploadProgress"
-          :indicator-placement="'inside'"
-          processing
-          :height="20"
-        />
-      </div>
-    </div>
+        <!-- Toolbar -->
+        <div class="ws-toolbar">
+          <n-input v-model:value="searchQuery" placeholder="Search files..." size="small" clearable style="flex: 1" />
+          <n-space :size="4" style="flex-shrink: 0">
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button size="small" quaternary @click="refreshTree">
+                  <template #icon><n-icon><RefreshOutline /></n-icon></template>
+                </n-button>
+              </template>
+              Refresh file list
+            </n-tooltip>
+          </n-space>
+        </div>
 
-    <!-- Sync overlay -->
-    <div v-if="syncing" class="ws-sync-overlay">
-      <div class="ws-sync-content" style="width: 70%; max-width: 300px">
-        <n-text style="font-size: 13px; color: #63e2b7; margin-bottom: 4px">
-          {{ syncStatus }}
-        </n-text>
-        <n-progress
-          type="line"
-          :percentage="syncProgress"
-          :indicator-placement="'inside'"
-          processing
-          :height="20"
-        />
-      </div>
-    </div>
+        <!-- Active directory indicator -->
+        <div v-if="activeDir !== '/'" class="ws-active-dir">
+          <n-icon :size="12" style="flex-shrink: 0"><FolderOutline /></n-icon>
+          <n-text depth="3" style="font-size: 11px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+            {{ activeDir }}
+          </n-text>
+          <n-button size="tiny" quaternary @click="activeDir = '/'">
+            <n-icon :size="12"><CloseOutline /></n-icon>
+          </n-button>
+        </div>
 
-    <!-- Body: Tree -->
-    <div class="ws-body">
-      <!-- No group selected placeholder -->
-      <div v-if="spaceTab === 'group' && !selectedGroupId" class="ws-placeholder">
-        <n-empty description="Select a group to browse files">
+        <!-- Batch bar -->
+        <div v-if="checkedKeys.length > 0" class="ws-batch-bar">
+          <n-text depth="3" style="font-size: 12px">{{ checkedKeys.length }} selected</n-text>
+          <n-button size="tiny" @click="handleBatchDownload">Download</n-button>
+          <n-popconfirm v-if="canEdit" @positive-click="handleBatchDelete">
+            <template #trigger>
+              <n-button size="tiny" type="error">Delete</n-button>
+            </template>
+            Delete {{ checkedKeys.length }} items?
+          </n-popconfirm>
+          <n-button size="tiny" quaternary @click="checkedKeys = []">Clear</n-button>
+        </div>
+
+        <!-- Body: Tree -->
+        <div class="ws-body">
+          <div class="ws-content">
+            <n-spin :show="rootLoading">
+              <n-tree
+                v-if="treeData.length > 0 || rootLoading"
+                block-line
+                :data="treeData"
+                :pattern="searchQuery"
+                :filter="treeFilter"
+                :selectable="false"
+                :checkable="true"
+                :cascade="false"
+                :checked-keys="checkedKeys"
+                :expanded-keys="expandedKeys"
+                :on-load="handleTreeLoad"
+                :render-prefix="renderPrefix"
+                :render-suffix="renderSuffix"
+                :node-props="getNodeProps"
+                @update:checked-keys="handleCheckedKeysUpdate"
+                @update:expanded-keys="handleExpandedKeysUpdate"
+              />
+              <n-empty v-else-if="!rootLoading" description="No files" style="margin-top: 40px" />
+            </n-spin>
+          </div>
+        </div>
+      </n-tab-pane>
+      <n-tab-pane name="skills" tab="Skills">
+        <!-- Skill actions bar -->
+        <div class="skills-toolbar">
+          <n-button size="tiny" quaternary @click="emit('openMarketplace')">+ Install</n-button>
+          <n-button v-if="outdatedCount > 0" size="tiny" type="warning" :loading="syncing" @click="handleSyncSkills">
+            Sync {{ outdatedCount }}
+          </n-button>
+        </div>
+
+        <!-- Global sync progress bar -->
+        <div v-if="activeSyncCount > 0" class="sync-status-bar">
+          <n-spin :size="12" />
+          <n-text depth="3" style="font-size: 12px; margin-left: 6px">
+            {{ [...(syncProgress?.values() ?? [])].find(e => e.action === 'progress')?.message || 'Syncing...' }}
+          </n-text>
+        </div>
+
+        <div class="skills-list" v-if="installedSkills && installedSkills.length > 0">
+          <div
+            v-for="as in installedSkills"
+            :key="as.id"
+            class="skill-item"
+            @click="as.skill && emit('executeCommand', '/' + as.skill.command_name)"
+          >
+            <span class="skill-icon">{{ as.skill?.icon || '🔧' }}</span>
+            <div class="skill-info">
+              <n-space align="center" :size="4">
+                <span class="skill-name">{{ as.skill?.name || 'Unknown' }}</span>
+                <n-tag v-if="as.skill && isOutdated(as)" type="warning" size="tiny" round :bordered="false" style="font-size: 10px; padding: 0 5px; height: 16px">NEW</n-tag>
+              </n-space>
+              <div class="skill-cmd">/{{ as.skill?.command_name }}</div>
+              <div v-if="as.skill && getSyncEvent(as.skill.id)" class="skill-sync-progress">
+                <n-text :type="getSyncEvent(as.skill.id)!.action === 'error' ? 'error' : getSyncEvent(as.skill.id)!.action === 'complete' ? 'success' : 'info'" style="font-size: 11px">
+                  {{ getSyncEvent(as.skill.id)!.message }}
+                </n-text>
+              </div>
+            </div>
+            <n-tag v-if="as.skill?.is_official" size="tiny" type="info" :bordered="false">Official</n-tag>
+            <n-tag v-else-if="as.skill?.group_id" size="tiny" type="warning" :bordered="false">Group</n-tag>
+            <n-tag v-else-if="as.skill?.is_public" size="tiny" type="success" :bordered="false">Public</n-tag>
+            <n-tag v-else size="tiny" :bordered="false">Private</n-tag>
+            <div class="skill-actions" @click.stop>
+              <n-tooltip trigger="hover" v-if="as.skill">
+                <template #trigger>
+                  <n-button size="tiny" quaternary circle @click="openDetail(as.skill!)">
+                    <template #icon><n-icon :size="14"><EyeOutline /></n-icon></template>
+                  </n-button>
+                </template>
+                View skill
+              </n-tooltip>
+              <n-popconfirm @positive-click="as.skill && handleUninstall(as.skill.id)">
+                <template #trigger>
+                  <n-button size="tiny" quaternary circle type="error" title="Uninstall">
+                    <template #icon><n-icon :size="14"><CloseOutline /></n-icon></template>
+                  </n-button>
+                </template>
+                Uninstall this skill?
+              </n-popconfirm>
+            </div>
+          </div>
+        </div>
+        <n-empty v-else description="No skills installed" size="small" style="margin-top: 40px">
           <template #extra>
+            <n-button size="small" @click="emit('openMarketplace')">Browse Marketplace</n-button>
           </template>
         </n-empty>
-      </div>
-      <div
-        v-else
-        class="ws-content"
-        :class="{ 'drag-over': dragOver }"
-        @dragover.prevent
-        @dragenter.prevent="onDragEnter"
-        @dragleave="onDragLeave"
-        @drop.prevent="handleDrop"
-      >
-        <n-spin :show="rootLoading">
-          <n-tree
-            v-if="treeData.length > 0 || rootLoading"
-            block-line
-            :data="treeData"
-            :pattern="searchQuery"
-            :filter="treeFilter"
-            :selectable="false"
-            :checkable="true"
-            :cascade="false"
-            :checked-keys="checkedKeys"
-            :expanded-keys="expandedKeys"
-            :on-load="handleTreeLoad"
-            :render-prefix="renderPrefix"
-            :render-suffix="renderSuffix"
-            :node-props="getNodeProps"
-            @update:checked-keys="handleCheckedKeysUpdate"
-            @update:expanded-keys="handleExpandedKeysUpdate"
-          />
-          <n-empty v-else-if="!rootLoading" description="No files" style="margin-top: 40px" />
-        </n-spin>
-      </div>
-    </div>
+      </n-tab-pane>
+    </n-tabs>
 
-    <!-- New folder dialog -->
-    <n-modal
-      v-model:show="showNewFolder"
-      preset="dialog"
-      title="New Folder"
-      positive-text="Create"
-      negative-text="Cancel"
-      @positive-click="handleCreateFolder"
-    >
-      <n-input v-model:value="newFolderName" placeholder="Folder name" @keyup.enter="handleCreateFolder" />
-    </n-modal>
-
-    <!-- New file dialog -->
-    <n-modal
-      v-model:show="showNewFile"
-      preset="dialog"
-      title="New File"
-      positive-text="Create"
-      negative-text="Cancel"
-      @positive-click="handleCreateFile"
-    >
-      <n-input v-model:value="newFileName" placeholder="File name (e.g. notes.txt)" @keyup.enter="handleCreateFile" />
-    </n-modal>
-
-    <!-- Group Manager modal -->
+    <!-- Skill preview (readonly editor) -->
+    <SkillEditor
+      v-if="showSkillDetail && detailSkill"
+      :skill="detailSkill"
+      :readonly="true"
+      @close="showSkillDetail = false"
+    />
 
     <!-- Share link modal -->
     <n-modal v-model:show="showShareModal">
@@ -265,75 +175,57 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, h, type Component } from 'vue'
 import {
-  NTabs, NTabPane, NSpace, NIcon, NText, NButton, NUpload, NSpin,
-  NEmpty, NPopconfirm, NModal, NInput, NInputGroup, NCard, NProgress, NTree, NSelect, NTooltip,
+  NSpace, NIcon, NText, NButton, NSpin, NTabs, NTabPane, NTag,
+  NEmpty, NPopconfirm, NModal, NInput, NInputGroup, NCard, NTree, NTooltip,
   useMessage, useDialog,
-  type UploadCustomRequestOptions, type TreeOption,
+  type TreeOption,
 } from 'naive-ui'
 import {
-  LockClosedOutline, GlobeOutline, RefreshOutline, DocumentOutline,
+  RefreshOutline, DocumentOutline,
   DownloadOutline, TrashOutline, FolderOutline, CodeSlashOutline,
   DocumentTextOutline, ImageOutline, SettingsOutline, CloseOutline,
-  PeopleOutline, ConstructOutline, SyncOutline, ShareSocialOutline,
+  ShareSocialOutline, EyeOutline,
 } from '@vicons/ionicons5'
+import type { AgentSkill } from '../../generated/sac/v1/agent'
+import type { Skill } from '../../generated/sac/v1/skill'
+import type { SkillSyncEvent } from '../../services/skillSyncWS'
+import SkillEditor from '../SkillMarketplace/SkillEditor.vue'
+import { syncAgentSkills } from '../../services/skillAPI'
+import { uninstallSkill } from '../../services/agentAPI'
+import { extractApiError } from '../../utils/error'
 import {
-  listFiles, uploadFile, downloadFile, deleteFile, createDirectory, getQuota,
-  listPublicFiles, uploadPublicFile, downloadPublicFile, deletePublicFile,
-  createPublicDirectory,
-  listGroupFiles, uploadGroupFile, downloadGroupFile, deleteGroupFile,
-  createGroupDirectory, getGroupQuota,
   listOutputFiles, downloadOutputFile, deleteOutputFile, shareOutputFile, deleteShare,
-  syncWorkspaceToPodStream, watchOutputFiles,
-  type WorkspaceFile, type WorkspaceQuota, type GroupWorkspaceQuota, type SpaceTab,
+  watchOutputFiles,
+  type WorkspaceFile, type SpaceTab,
 } from '../../services/workspaceAPI'
-import { listGroups, type Group } from '../../services/groupAPI'
 import { getFileIcon } from '../../utils/fileTypes'
-import { useAuthStore } from '../../stores/auth'
 
 const props = defineProps<{
   agentId: number
+  installedSkills?: AgentSkill[]
+  syncProgress?: Map<number, SkillSyncEvent>
 }>()
 
 const emit = defineEmits<{
-  openFile: [file: WorkspaceFile, spaceTab: SpaceTab, groupId?: number]
+  openFile: [file: WorkspaceFile, spaceTab: SpaceTab]
+  executeCommand: [command: string]
+  skillsChanged: []
+  openMarketplace: []
 }>()
 
 const message = useMessage()
 const dialog = useDialog()
-const authStore = useAuthStore()
 
 // --- State ---
+const panelTab = ref('output')
 const spaceTab = ref<SpaceTab>('output')
 const treeData = ref<TreeOption[]>([])
 const expandedKeys = ref<string[]>([])
 const checkedKeys = ref<string[]>([])
 const activeDir = ref('/')
 const rootLoading = ref(false)
-const quota = ref<WorkspaceQuota | null>(null)
 const searchQuery = ref('')
-const dragOver = ref(false)
-const dragCounter = ref(0)
-const showNewFolder = ref(false)
-const newFolderName = ref('')
-const showNewFile = ref(false)
-const newFileName = ref('')
 const outputBadgeCount = ref(0)
-
-// Group state
-const groups = ref<Group[]>([])
-const selectedGroupId = ref<number | null>(null)
-const loadingGroups = ref(false)
-const groupQuota = ref<GroupWorkspaceQuota | null>(null)
-
-// Sync state
-const syncing = ref(false)
-const syncProgress = ref(0)
-const syncStatus = ref('')
-
-// Upload progress state
-const uploading = ref(false)
-const uploadProgress = ref(0)
-const uploadStatus = ref('')
 
 // Share state
 const showShareModal = ref(false)
@@ -341,36 +233,58 @@ const shareUrl = ref('')
 const shareCode = ref('')
 const sharingFile = ref(false)
 
+// Skill management state
+const showSkillDetail = ref(false)
+const detailSkill = ref<Skill | null>(null)
+const syncing = ref(false)
+
+// --- Skill helpers ---
+const activeSyncCount = computed(() => props.syncProgress?.size ?? 0)
+
+function getSyncEvent(skillId: number): SkillSyncEvent | undefined {
+  return props.syncProgress?.get(skillId)
+}
+
+const outdatedCount = computed(() => {
+  if (!props.installedSkills) return 0
+  return props.installedSkills.filter(as => isOutdated(as)).length
+})
+
+function isOutdated(as: AgentSkill): boolean {
+  if (!as.skill) return false
+  return as.synced_version < as.skill.version
+}
+
+function openDetail(skill: Skill) {
+  detailSkill.value = skill
+  showSkillDetail.value = true
+}
+
+async function handleUninstall(skillId: number) {
+  try {
+    await uninstallSkill(props.agentId, skillId)
+    message.success('Skill uninstalled')
+    emit('skillsChanged')
+  } catch (error) {
+    message.error(extractApiError(error, 'Failed to uninstall'))
+  }
+}
+
+async function handleSyncSkills() {
+  syncing.value = true
+  try {
+    await syncAgentSkills(props.agentId)
+    message.success('Skills synced')
+    emit('skillsChanged')
+  } catch (error) {
+    message.error(extractApiError(error, 'Sync failed'))
+  } finally {
+    syncing.value = false
+  }
+}
+
 // --- Computed ---
-const isAdmin = computed(() => authStore.isAdmin)
-const canEdit = computed(() => {
-  if (spaceTab.value === 'private') return true
-  if (spaceTab.value === 'public') return isAdmin.value
-  if (spaceTab.value === 'group') return !!selectedGroupId.value // group members can edit
-  if (spaceTab.value === 'output') return true // allow delete
-  return false
-})
-
-const canUpload = computed(() => {
-  return canEdit.value && spaceTab.value !== 'output'
-})
-
-const quotaPercent = computed(() => {
-  if (!quota.value || quota.value.max_bytes === 0) return 0
-  return Math.round((quota.value.used_bytes / quota.value.max_bytes) * 100)
-})
-
-const groupQuotaPercent = computed(() => {
-  if (!groupQuota.value || groupQuota.value.max_bytes === 0) return 0
-  return Math.round((groupQuota.value.used_bytes / groupQuota.value.max_bytes) * 100)
-})
-
-const groupOptions = computed(() => {
-  return groups.value.map(g => ({
-    label: g.name,
-    value: g.id,
-  }))
-})
+const canEdit = computed(() => true) // allow delete on output
 
 // --- Icon mapping ---
 const iconComponents: Record<string, Component> = {
@@ -491,7 +405,7 @@ const getNodeProps = ({ option }: { option: TreeOption }) => {
           expandedKeys.value = [...expandedKeys.value, key]
         }
       } else {
-        emit('openFile', file, spaceTab.value, selectedGroupId.value ?? undefined)
+        emit('openFile', file, spaceTab.value)
       }
     },
   }
@@ -512,24 +426,10 @@ const handleCheckedKeysUpdate = (keys: Array<string | number>) => {
 
 // --- Data loading ---
 const listFilesForTab = async (path: string) => {
-  switch (spaceTab.value) {
-    case 'private':
-      return listFiles(props.agentId, path)
-    case 'public':
-      return listPublicFiles(path)
-    case 'group':
-      if (!selectedGroupId.value) throw new Error('No group selected')
-      return listGroupFiles(selectedGroupId.value, path)
-    case 'output':
-      return listOutputFiles(props.agentId, path)
-  }
+  return listOutputFiles(props.agentId, path)
 }
 
 const loadRootFiles = async () => {
-  if (spaceTab.value === 'group' && !selectedGroupId.value) {
-    treeData.value = []
-    return
-  }
   rootLoading.value = true
   try {
     const result = await listFilesForTab('/')
@@ -596,266 +496,25 @@ const refreshTree = () => {
   loadRootFiles()
 }
 
-const loadQuota = async () => {
-  try {
-    quota.value = await getQuota(props.agentId)
-  } catch {
-    // ignore
-  }
-}
-
-const loadGroupQuota = async () => {
-  if (!selectedGroupId.value) return
-  try {
-    groupQuota.value = await getGroupQuota(selectedGroupId.value)
-  } catch {
-    // ignore
-  }
-}
-
-const loadGroups = async () => {
-  loadingGroups.value = true
-  try {
-    groups.value = (await listGroups()) || []
-  } catch {
-    groups.value = []
-  } finally {
-    loadingGroups.value = false
-  }
-}
-
 // --- File operations ---
-const handleUpload = async ({ file, onFinish, onError }: UploadCustomRequestOptions) => {
-  if (!file.file) return
-  uploading.value = true
-  uploadProgress.value = 0
-  uploadStatus.value = `Uploading ${file.name}...`
-  const onProg = (p: number) => { uploadProgress.value = p }
-  try {
-    switch (spaceTab.value) {
-      case 'private':
-        await uploadFile(props.agentId, file.file, activeDir.value, onProg)
-        break
-      case 'public':
-        await uploadPublicFile(file.file, activeDir.value, onProg)
-        break
-      case 'group':
-        if (!selectedGroupId.value) return
-        await uploadGroupFile(selectedGroupId.value, file.file, activeDir.value, onProg)
-        break
-    }
-    message.success(`Uploaded ${file.name}`)
-    onFinish()
-    await reloadDir(activeDir.value)
-    if (spaceTab.value === 'private') loadQuota()
-    if (spaceTab.value === 'group') loadGroupQuota()
-  } catch (err) {
-    console.error('Upload failed:', err)
-    message.error(`Failed to upload ${file.name}`)
-    onError()
-  } finally {
-    uploading.value = false
-  }
-}
-
 const handleDownloadFile = (file: WorkspaceFile) => {
-  switch (spaceTab.value) {
-    case 'private':
-      downloadFile(props.agentId, file.path)
-      break
-    case 'public':
-      downloadPublicFile(file.path)
-      break
-    case 'group':
-      if (selectedGroupId.value) downloadGroupFile(selectedGroupId.value, file.path)
-      break
-    case 'output':
-      downloadOutputFile(props.agentId, file.path)
-      break
-  }
+  downloadOutputFile(props.agentId, file.path)
 }
 
 const handleDeleteFile = async (file: WorkspaceFile) => {
   try {
     const deletePath = file.is_directory ? file.path + '/' : file.path
-    switch (spaceTab.value) {
-      case 'private':
-        await deleteFile(props.agentId, deletePath)
-        break
-      case 'public':
-        await deletePublicFile(deletePath)
-        break
-      case 'group':
-        if (!selectedGroupId.value) return
-        await deleteGroupFile(selectedGroupId.value, deletePath)
-        break
-      case 'output':
-        await deleteOutputFile(props.agentId, deletePath)
-        break
-    }
+    await deleteOutputFile(props.agentId, deletePath)
     message.success(`Deleted ${file.name}`)
     // Reload parent directory
     const parts = file.path.replace(/\/$/, '').split('/')
     parts.pop()
     const parentDir = parts.join('/') || '/'
     await reloadDir(parentDir)
-    if (spaceTab.value === 'private') loadQuota()
-    if (spaceTab.value === 'group') loadGroupQuota()
   } catch (err) {
     console.error('Delete failed:', err)
     message.error(`Failed to delete ${file.name}`)
   }
-}
-
-const handleCreateFolder = async () => {
-  if (!newFolderName.value.trim()) return
-  const folderPath = activeDir.value === '/'
-    ? newFolderName.value.trim()
-    : activeDir.value.replace(/\/$/, '') + '/' + newFolderName.value.trim()
-  try {
-    switch (spaceTab.value) {
-      case 'private':
-        await createDirectory(props.agentId, folderPath)
-        break
-      case 'public':
-        await createPublicDirectory(folderPath)
-        break
-      case 'group':
-        if (!selectedGroupId.value) return
-        await createGroupDirectory(selectedGroupId.value, folderPath)
-        break
-    }
-    message.success(`Created folder "${newFolderName.value}"`)
-    newFolderName.value = ''
-    showNewFolder.value = false
-    await reloadDir(activeDir.value)
-  } catch (err) {
-    console.error('Create folder failed:', err)
-    message.error('Failed to create folder')
-  }
-}
-
-const handleCreateFile = async () => {
-  const name = newFileName.value.trim()
-  if (!name) return
-  const emptyFile = new File([''], name, { type: 'text/plain' })
-  try {
-    switch (spaceTab.value) {
-      case 'private':
-        await uploadFile(props.agentId, emptyFile, activeDir.value)
-        break
-      case 'public':
-        await uploadPublicFile(emptyFile, activeDir.value)
-        break
-      case 'group':
-        if (!selectedGroupId.value) return
-        await uploadGroupFile(selectedGroupId.value, emptyFile, activeDir.value)
-        break
-    }
-    message.success(`Created file "${name}"`)
-    newFileName.value = ''
-    showNewFile.value = false
-    await reloadDir(activeDir.value)
-    if (spaceTab.value === 'private') loadQuota()
-    if (spaceTab.value === 'group') loadGroupQuota()
-    // Open the newly created file in editor
-    const filePath = activeDir.value === '/'
-      ? name
-      : activeDir.value.replace(/\/$/, '') + '/' + name
-    const newWsFile: WorkspaceFile = { name, path: filePath, size: 0, is_directory: false }
-    emit('openFile', newWsFile, spaceTab.value, selectedGroupId.value ?? undefined)
-  } catch (err) {
-    console.error('Create file failed:', err)
-    message.error('Failed to create file')
-  }
-}
-
-// --- Sync to Pod ---
-const handleSyncToPod = async () => {
-  syncing.value = true
-  syncProgress.value = 0
-  syncStatus.value = 'Preparing...'
-  try {
-    await syncWorkspaceToPodStream(props.agentId, (e) => {
-      if (e.error) {
-        message.error(`Sync error: ${e.error}`)
-        return
-      }
-      if (e.total === 0) {
-        syncStatus.value = 'No files to sync'
-        syncProgress.value = 100
-      } else {
-        syncProgress.value = Math.round((e.synced / e.total) * 100)
-        syncStatus.value = e.file
-          ? `${e.synced}/${e.total}: ${e.file}`
-          : `0/${e.total} files...`
-      }
-    })
-    message.success('Workspace synced to agent')
-    refreshTree()
-  } catch (err) {
-    console.error('Sync failed:', err)
-    message.error('Failed to sync workspace to agent')
-  } finally {
-    syncing.value = false
-  }
-}
-
-// --- Drag & Drop ---
-const onDragEnter = (e: DragEvent) => {
-  e.preventDefault()
-  dragCounter.value++
-  dragOver.value = true
-}
-
-const onDragLeave = () => {
-  dragCounter.value--
-  if (dragCounter.value <= 0) {
-    dragCounter.value = 0
-    dragOver.value = false
-  }
-}
-
-const handleDrop = async (e: DragEvent) => {
-  dragCounter.value = 0
-  dragOver.value = false
-  if (!canEdit.value) return
-  const droppedFiles = e.dataTransfer?.files
-  if (!droppedFiles?.length) return
-  const total = droppedFiles.length
-  uploading.value = true
-  uploadProgress.value = 0
-  let succeeded = 0
-  for (let i = 0; i < total; i++) {
-    const f = droppedFiles[i]!
-    uploadStatus.value = total > 1 ? `Uploading ${i + 1}/${total}: ${f.name}` : `Uploading ${f.name}...`
-    uploadProgress.value = 0
-    const onProg = (p: number) => { uploadProgress.value = p }
-    try {
-      switch (spaceTab.value) {
-        case 'private':
-          await uploadFile(props.agentId, f, activeDir.value, onProg)
-          break
-        case 'public':
-          await uploadPublicFile(f, activeDir.value, onProg)
-          break
-        case 'group':
-          if (!selectedGroupId.value) continue
-          await uploadGroupFile(selectedGroupId.value, f, activeDir.value, onProg)
-          break
-      }
-      succeeded++
-    } catch {
-      message.error(`Failed to upload ${f.name}`)
-    }
-  }
-  uploading.value = false
-  if (succeeded > 0) {
-    message.success(total === 1 ? `Uploaded ${droppedFiles[0]!.name}` : `Uploaded ${succeeded}/${total} files`)
-  }
-  await reloadDir(activeDir.value)
-  if (spaceTab.value === 'private') loadQuota()
-  if (spaceTab.value === 'group') loadGroupQuota()
 }
 
 // --- Batch operations ---
@@ -949,32 +608,6 @@ const handleDeleteShare = async () => {
 }
 
 // --- Watchers ---
-watch(spaceTab, (newTab) => {
-  expandedKeys.value = []
-  checkedKeys.value = []
-  activeDir.value = '/'
-  searchQuery.value = ''
-  if (newTab === 'group') {
-    loadGroups()
-    if (selectedGroupId.value) {
-      loadRootFiles()
-      loadGroupQuota()
-    }
-  } else {
-    loadRootFiles()
-  }
-})
-
-watch(selectedGroupId, () => {
-  if (spaceTab.value !== 'group') return
-  expandedKeys.value = []
-  checkedKeys.value = []
-  activeDir.value = '/'
-  searchQuery.value = ''
-  loadRootFiles()
-  loadGroupQuota()
-})
-
 watch(() => props.agentId, () => {
   expandedKeys.value = []
   checkedKeys.value = []
@@ -982,7 +615,6 @@ watch(() => props.agentId, () => {
   searchQuery.value = ''
   outputBadgeCount.value = 0
   loadRootFiles()
-  loadQuota()
   startOutputWatch()
 })
 
@@ -1014,17 +646,11 @@ const startOutputWatch = () => {
     // Flash highlight on the affected file
     flashHighlight(event.path, event.action as 'upload' | 'delete')
 
-    if (spaceTab.value === 'output') {
-      // Already on Working tab, just refresh
-      if (!rootLoading.value) loadRootFiles()
-    } else {
-      // Increment badge and auto-switch to Working tab
-      outputBadgeCount.value++
-      spaceTab.value = 'output'
-    }
+    // Refresh file list
+    if (!rootLoading.value) loadRootFiles()
   }, () => {
     // onReconnect: refresh file list to catch events missed during disconnect
-    if (spaceTab.value === 'output' && !rootLoading.value) {
+    if (!rootLoading.value) {
       loadRootFiles()
     }
   })
@@ -1037,16 +663,8 @@ const stopOutputWatch = () => {
   }
 }
 
-// Clear badge when switching to output tab
-watch(spaceTab, (newTab) => {
-  if (newTab === 'output') {
-    outputBadgeCount.value = 0
-  }
-})
-
 onMounted(() => {
   loadRootFiles()
-  loadQuota()
   startOutputWatch()
 })
 
@@ -1063,20 +681,106 @@ onUnmounted(() => {
   position: relative;
 }
 
-.ws-header {
-  padding: 12px 12px 0;
+.workspace-panel :deep(.n-tabs) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-panel :deep(.n-tabs .n-tab-pane) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-panel :deep(.n-tabs-pane-wrapper) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.skills-list {
+  padding: 8px 4px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.skill-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.skill-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.skill-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  width: 28px;
+  text-align: center;
+}
+
+.skill-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.skill-name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.skill-cmd {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  font-family: monospace;
+}
+
+.sync-status-bar {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: rgba(14, 165, 233, 0.06);
+  border-bottom: 1px solid rgba(14, 165, 233, 0.1);
   flex-shrink: 0;
 }
 
-.ws-group-selector {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 8px;
+.skill-sync-progress {
+  margin-top: 2px;
 }
 
-.ws-quota {
-  margin-top: 4px;
+.skills-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+.skill-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+
+.skill-item:hover .skill-actions {
+  opacity: 1;
 }
 
 .ws-toolbar {
@@ -1111,51 +815,9 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-.ws-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 200px;
-}
-
 .ws-content {
   min-height: 100%;
   border-radius: 8px;
-  transition: border 0.2s, background 0.2s;
-  border: 2px solid transparent;
-}
-
-.ws-content.drag-over {
-  border: 2px dashed #0ea5e9;
-  background: rgba(14, 165, 233, 0.04);
-}
-
-.ws-sync-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(2px);
-  border-radius: 8px;
-}
-
-.ws-sync-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-
-.sync-spin {
-  animation: sync-rotate 1s linear infinite;
-}
-
-@keyframes sync-rotate {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 
 /* Tree node styles */

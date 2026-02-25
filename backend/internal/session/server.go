@@ -3,7 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
-	"log"
+	"github.com/rs/zerolog/log"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +16,7 @@ import (
 	"g.echo.tech/dev/sac/internal/grpcerr"
 	"g.echo.tech/dev/sac/internal/models"
 	"g.echo.tech/dev/sac/internal/skill"
+	"g.echo.tech/dev/sac/internal/storage"
 	"g.echo.tech/dev/sac/internal/workspace"
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -28,16 +29,16 @@ type Server struct {
 	containerManager *container.Manager
 	syncService      *skill.SyncService
 	settingsService  *admin.SettingsService
-	workspaceSyncSvc *workspace.SyncService
+	storageProvider  *storage.StorageProvider
 }
 
-func NewServer(db *bun.DB, containerManager *container.Manager, syncService *skill.SyncService, settingsService *admin.SettingsService, workspaceSyncSvc *workspace.SyncService) *Server {
+func NewServer(db *bun.DB, containerManager *container.Manager, syncService *skill.SyncService, settingsService *admin.SettingsService, storageProvider *storage.StorageProvider) *Server {
 	return &Server{
 		db:               db,
 		containerManager: containerManager,
 		syncService:      syncService,
 		settingsService:  settingsService,
-		workspaceSyncSvc: workspaceSyncSvc,
+		storageProvider:  storageProvider,
 	}
 }
 
@@ -76,7 +77,7 @@ func (s *Server) CreateSession(ctx context.Context, req *sacv1.CreateSessionRequ
 				Where("id = ?", existing.ID).
 				Exec(ctx)
 
-			log.Printf("Reusing existing session: sessionID=%s, agentID=%d, podIP=%s", existing.SessionID, req.AgentId, podIP)
+			log.Info().Str("session_id", existing.SessionID).Int64("agent_id", req.AgentId).Str("pod_ip", podIP).Msg("reusing existing session")
 
 			return &sacv1.CreateSessionResponse{
 				SessionId: existing.SessionID,
@@ -86,7 +87,7 @@ func (s *Server) CreateSession(ctx context.Context, req *sacv1.CreateSessionRequ
 			}, nil
 		}
 
-		log.Printf("Existing session %s has unhealthy pod, marking as deleted", existing.SessionID)
+		log.Warn().Str("session_id", existing.SessionID).Msg("existing session has unhealthy pod, marking as deleted")
 		_, _ = s.db.NewUpdate().
 			Model((*models.Session)(nil)).
 			Set("status = ?", models.SessionStatusDeleted).
@@ -97,7 +98,7 @@ func (s *Server) CreateSession(ctx context.Context, req *sacv1.CreateSessionRequ
 
 	// Create new session
 	sessionID := uuid.New().String()
-	log.Printf("Creating session: userID=%s, sessionID=%s, agentID=%d", userIDStr, sessionID, req.AgentId)
+	log.Info().Str("user_id", userIDStr).Str("session_id", sessionID).Int64("agent_id", req.AgentId).Msg("creating session")
 
 	// Close sessions for OTHER agents
 	_, err = s.db.NewUpdate().
@@ -113,7 +114,7 @@ func (s *Server) CreateSession(ctx context.Context, req *sacv1.CreateSessionRequ
 		})).
 		Exec(ctx)
 	if err != nil {
-		log.Printf("Warning: failed to auto-close other agent sessions: %v", err)
+		log.Warn().Err(err).Msg("failed to auto-close other agent sessions")
 	}
 
 	// Load agent configuration
@@ -131,7 +132,7 @@ func (s *Server) CreateSession(ctx context.Context, req *sacv1.CreateSessionRequ
 	sts, err := s.containerManager.GetStatefulSet(ctx, userIDStr, req.AgentId)
 	if err != nil {
 		isNewStatefulSet = true
-		log.Printf("StatefulSet not found, creating it...")
+		log.Info().Msg("StatefulSet not found, creating")
 
 		limits := s.settingsService.GetResourceLimits(ctx, userID)
 		rc := &container.ResourceConfig{
@@ -160,10 +161,10 @@ func (s *Server) CreateSession(ctx context.Context, req *sacv1.CreateSessionRequ
 		}
 
 		if err := s.containerManager.WaitForStatefulSetReady(ctx, userIDStr, req.AgentId, 60, 5*time.Second); err != nil {
-			log.Printf("Warning: %v", err)
+			log.Warn().Err(err).Msg("waiting for pod readiness")
 		}
 	} else {
-		log.Printf("Using existing StatefulSet: %s", sts.Name)
+		log.Info().Str("name", sts.Name).Msg("using existing StatefulSet")
 	}
 
 	podIP, err := s.containerManager.GetStatefulSetPodIP(ctx, userIDStr, req.AgentId)
@@ -173,22 +174,23 @@ func (s *Server) CreateSession(ctx context.Context, req *sacv1.CreateSessionRequ
 
 	if isNewStatefulSet {
 		if err := s.syncService.SyncAllSkillsToAgent(ctx, userIDStr, req.AgentId); err != nil {
-			log.Printf("Warning: failed to sync skills to agent %d: %v", req.AgentId, err)
+			log.Warn().Err(err).Int64("agent_id", req.AgentId).Msg("failed to sync skills")
 		}
 		s.writeClaudeMD(ctx, userIDStr, req.AgentId, agent.Instructions)
+		if err := workspace.RestoreOutputFiles(ctx, s.db, s.storageProvider, s.containerManager, userID, req.AgentId); err != nil {
+			log.Warn().Err(err).Int64("agent_id", req.AgentId).Msg("failed to restore output files")
+		}
 	} else {
 		go func() {
 			bgCtx := context.Background()
-			if s.workspaceSyncSvc != nil {
-				if err := s.workspaceSyncSvc.SyncWorkspaceToPod(bgCtx, userIDStr, req.AgentId); err != nil {
-					log.Printf("Warning: background workspace sync failed: %v", err)
-				}
-			}
 			if err := s.syncService.SyncAllSkillsToAgent(bgCtx, userIDStr, req.AgentId); err != nil {
-				log.Printf("Warning: background skill sync failed: %v", err)
+				log.Warn().Err(err).Msg("background skill sync failed")
 			}
 			s.writeClaudeMD(bgCtx, userIDStr, req.AgentId, agent.Instructions)
-			log.Printf("Background sync completed for user %s agent %d", userIDStr, req.AgentId)
+			if err := workspace.RestoreOutputFiles(bgCtx, s.db, s.storageProvider, s.containerManager, userID, req.AgentId); err != nil {
+				log.Warn().Err(err).Msg("background output file restore failed")
+			}
+			log.Debug().Str("user_id", userIDStr).Int64("agent_id", req.AgentId).Msg("background sync completed")
 		}()
 	}
 
@@ -289,7 +291,7 @@ func (s *Server) getGroupTemplates(ctx context.Context, userID int64) []string {
 		OrderExpr("g.name ASC").
 		Scan(ctx, &templates)
 	if err != nil {
-		log.Printf("Warning: failed to get group templates for user %d: %v", userID, err)
+		log.Warn().Err(err).Int64("user_id", userID).Msg("failed to get group templates")
 		return nil
 	}
 	return templates
@@ -316,6 +318,6 @@ func (s *Server) writeClaudeMD(ctx context.Context, userIDStr string, agentID in
 	content := strings.Join(parts, "\n\n---\n\n")
 	podName := fmt.Sprintf("claude-code-%s-%d-0", userIDStr, agentID)
 	if err := s.containerManager.WriteFileInPod(ctx, podName, "/workspace/CLAUDE.md", content); err != nil {
-		log.Printf("Warning: failed to write CLAUDE.md to pod %s: %v", podName, err)
+		log.Warn().Err(err).Str("pod", podName).Msg("failed to write CLAUDE.md")
 	}
 }

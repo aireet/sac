@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
+	"github.com/rs/zerolog/log"
 	"strings"
 	"time"
 
@@ -24,14 +24,23 @@ type Server struct {
 	containerManager *container.Manager
 	syncService      *skill.SyncService
 	settingsService  *admin.SettingsService
+	syncHub          *skill.SyncHub
 }
 
-func NewServer(db *bun.DB, containerManager *container.Manager, syncService *skill.SyncService, settingsService *admin.SettingsService) *Server {
+func NewServer(db *bun.DB, containerManager *container.Manager, syncService *skill.SyncService, settingsService *admin.SettingsService, syncHub *skill.SyncHub) *Server {
 	return &Server{
 		db:               db,
 		containerManager: containerManager,
 		syncService:      syncService,
 		settingsService:  settingsService,
+		syncHub:          syncHub,
+	}
+}
+
+// publishSync is a nil-safe helper that sends a sync progress event.
+func (s *Server) publishSync(ctx context.Context, userID int64, agentID int64, event skill.SkillSyncEvent) {
+	if s.syncHub != nil {
+		s.syncHub.Publish(ctx, userID, agentID, event)
 	}
 }
 
@@ -158,7 +167,7 @@ func (s *Server) UpdateAgent(ctx context.Context, req *sacv1.UpdateAgentByIdRequ
 			Exec(ctx)
 
 		if err := s.containerManager.DeleteStatefulSet(ctx, userIDStr, req.Id); err != nil {
-			log.Printf("Note: no existing StatefulSet to delete for agent %d: %v", req.Id, err)
+			log.Debug().Err(err).Int64("agent_id", req.Id).Msg("no existing StatefulSet to delete")
 		}
 	}
 
@@ -196,7 +205,7 @@ func (s *Server) DeleteAgent(ctx context.Context, req *sacv1.GetAgentRequest) (*
 		Exec(ctx)
 
 	if err := s.containerManager.DeleteStatefulSet(ctx, userIDStr, req.Id); err != nil {
-		log.Printf("Warning: failed to delete StatefulSet for agent %d: %v", req.Id, err)
+		log.Warn().Err(err).Int64("agent_id", req.Id).Msg("failed to delete StatefulSet")
 	}
 
 	return &sacv1.SuccessMessage{Message: "Agent deleted successfully"}, nil
@@ -228,11 +237,11 @@ func (s *Server) RestartAgent(ctx context.Context, req *sacv1.GetAgentRequest) (
 		Exec(ctx)
 
 	if err := s.containerManager.DeleteStatefulSet(ctx, userIDStr, req.Id); err != nil {
-		log.Printf("Failed to delete StatefulSet for agent %d: %v", req.Id, err)
+		log.Error().Err(err).Int64("agent_id", req.Id).Msg("failed to delete StatefulSet")
 		return nil, grpcerr.Internal("Failed to restart agent", err)
 	}
 
-	log.Printf("Restarted agent %d (deleted StatefulSet) for user %s", req.Id, userIDStr)
+	log.Info().Int64("agent_id", req.Id).Str("user_id", userIDStr).Msg("restarted agent")
 	return &sacv1.SuccessMessage{Message: "Agent is restarting"}, nil
 }
 
@@ -284,8 +293,31 @@ func (s *Server) InstallSkill(ctx context.Context, req *sacv1.InstallSkillByAgen
 		bgCtx := context.Background()
 		userIDStr := fmt.Sprintf("%d", userID)
 		if err := s.syncService.SyncSkillToAgent(bgCtx, userIDStr, req.AgentId, &sk); err != nil {
-			log.Printf("Warning: failed to sync skill /%s to agent %d: %v", sk.CommandName, req.AgentId, err)
+			log.Warn().Err(err).Str("command", sk.CommandName).Int64("agent_id", req.AgentId).Msg("failed to sync skill")
+			s.publishSync(bgCtx, userID, req.AgentId, skill.SkillSyncEvent{
+				Action: "error", SkillID: sk.ID, SkillName: sk.Name,
+				CommandName: sk.CommandName, AgentID: req.AgentId,
+				Step: "done", Message: "Failed to sync skill",
+			})
+			return
 		}
+
+		// Restart Claude Code process to reload skills
+		s.publishSync(bgCtx, userID, req.AgentId, skill.SkillSyncEvent{
+			Action: "progress", SkillID: sk.ID, SkillName: sk.Name,
+			CommandName: sk.CommandName, AgentID: req.AgentId,
+			Step: "restarting_process", Message: "Restarting Claude Code...",
+		})
+		podName := fmt.Sprintf("claude-code-%s-%d-0", userIDStr, req.AgentId)
+		if err := s.containerManager.RestartClaudeCodeProcess(bgCtx, podName); err != nil {
+			log.Warn().Err(err).Str("pod", podName).Msg("failed to restart Claude Code")
+		}
+
+		s.publishSync(bgCtx, userID, req.AgentId, skill.SkillSyncEvent{
+			Action: "complete", SkillID: sk.ID, SkillName: sk.Name,
+			CommandName: sk.CommandName, AgentID: req.AgentId,
+			Step: "done", Message: fmt.Sprintf("Skill %s installed", sk.Name),
+		})
 	}()
 
 	return &sacv1.SuccessMessage{Message: "Skill installed successfully"}, nil
@@ -318,8 +350,21 @@ func (s *Server) UninstallSkill(ctx context.Context, req *sacv1.UninstallSkillRe
 			bgCtx := context.Background()
 			userIDStr := fmt.Sprintf("%d", userID)
 			if err := s.syncService.RemoveSkillFromAgent(bgCtx, userIDStr, req.AgentId, sk.CommandName); err != nil {
-				log.Printf("Warning: failed to remove skill /%s from agent %d: %v", sk.CommandName, req.AgentId, err)
+				log.Warn().Err(err).Str("command", sk.CommandName).Int64("agent_id", req.AgentId).Msg("failed to remove skill")
+				return
 			}
+
+			// Restart Claude Code process to reload skills
+			podName := fmt.Sprintf("claude-code-%s-%d-0", userIDStr, req.AgentId)
+			if err := s.containerManager.RestartClaudeCodeProcess(bgCtx, podName); err != nil {
+				log.Warn().Err(err).Str("pod", podName).Msg("failed to restart Claude Code")
+			}
+
+			s.publishSync(bgCtx, userID, req.AgentId, skill.SkillSyncEvent{
+				Action: "complete", SkillID: req.SkillId, SkillName: sk.Name,
+				CommandName: sk.CommandName, AgentID: req.AgentId,
+				Step: "done", Message: fmt.Sprintf("Skill %s uninstalled", sk.Name),
+			})
 		}()
 	}
 
@@ -339,7 +384,7 @@ func (s *Server) SyncSkills(ctx context.Context, req *sacv1.GetAgentRequest) (*s
 
 	userIDStr := fmt.Sprintf("%d", userID)
 	if err := s.syncService.SyncAllSkillsToAgent(ctx, userIDStr, req.Id); err != nil {
-		log.Printf("Failed to sync skills for agent %d: %v", req.Id, err)
+		log.Error().Err(err).Int64("agent_id", req.Id).Msg("failed to sync skills")
 		return nil, grpcerr.Internal("Failed to sync skills", err)
 	}
 
@@ -364,14 +409,18 @@ func (s *Server) GetAgentStatuses(ctx context.Context, _ *sacv1.Empty) (*sacv1.A
 	for _, aid := range agentIDs {
 		info := s.containerManager.GetStatefulSetPodInfo(ctx, userIDStr, aid)
 		statuses = append(statuses, &sacv1.AgentStatus{
-			AgentId:       aid,
-			PodName:       info.PodName,
-			Status:        info.Status,
-			RestartCount:  info.RestartCount,
-			CpuRequest:    info.CPURequest,
-			CpuLimit:      info.CPULimit,
-			MemoryRequest: info.MemoryRequest,
-			MemoryLimit:   info.MemoryLimit,
+			AgentId:            aid,
+			PodName:            info.PodName,
+			Status:             info.Status,
+			RestartCount:       info.RestartCount,
+			CpuRequest:         info.CPURequest,
+			CpuLimit:           info.CPULimit,
+			MemoryRequest:      info.MemoryRequest,
+			MemoryLimit:        info.MemoryLimit,
+			CpuUsage:           info.CPUUsage,
+			MemoryUsage:        info.MemoryUsage,
+			CpuUsagePercent:    info.CPUUsagePercent,
+			MemoryUsagePercent: info.MemoryUsagePercent,
 		})
 	}
 
@@ -415,7 +464,7 @@ func (s *Server) getGroupTemplates(ctx context.Context, userID int64) []string {
 		OrderExpr("g.name ASC").
 		Scan(ctx, &templates)
 	if err != nil {
-		log.Printf("Warning: failed to get group templates for user %d: %v", userID, err)
+		log.Warn().Err(err).Int64("user_id", userID).Msg("failed to get group templates")
 		return nil
 	}
 	return templates

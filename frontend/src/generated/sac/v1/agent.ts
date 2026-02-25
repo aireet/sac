@@ -5,6 +5,7 @@
 // source: sac/v1/agent.proto
 
 /* eslint-disable */
+import type { Empty, SuccessMessage } from "./common";
 import type { Skill } from "./skill";
 
 export const protobufPackage = "sac.v1";
@@ -65,6 +66,10 @@ export interface AgentStatus {
   cpu_limit: string;
   memory_request: string;
   memory_limit: string;
+  cpu_usage: string;
+  memory_usage: string;
+  cpu_usage_percent: number;
+  memory_usage_percent: number;
 }
 
 export interface ClaudeMDPreview {
@@ -78,4 +83,42 @@ export interface AgentListResponse {
 
 export interface AgentStatusListResponse {
   statuses: AgentStatus[];
+}
+
+/** Request messages for RPCs that need path/query params */
+export interface GetAgentRequest {
+  id: number;
+}
+
+export interface UpdateAgentByIdRequest {
+  id: number;
+  name?: string | undefined;
+  description?: string | undefined;
+  icon?: string | undefined;
+  instructions?: string | undefined;
+  config?: { [key: string]: any } | undefined;
+}
+
+export interface InstallSkillByAgentRequest {
+  agent_id: number;
+  skill_id: number;
+}
+
+export interface UninstallSkillRequest {
+  agent_id: number;
+  skill_id: number;
+}
+
+export interface AgentService {
+  ListAgents(request: Empty): Promise<AgentListResponse>;
+  GetAgent(request: GetAgentRequest): Promise<Agent>;
+  CreateAgent(request: CreateAgentRequest): Promise<Agent>;
+  UpdateAgent(request: UpdateAgentByIdRequest): Promise<Agent>;
+  DeleteAgent(request: GetAgentRequest): Promise<SuccessMessage>;
+  RestartAgent(request: GetAgentRequest): Promise<SuccessMessage>;
+  InstallSkill(request: InstallSkillByAgentRequest): Promise<SuccessMessage>;
+  UninstallSkill(request: UninstallSkillRequest): Promise<SuccessMessage>;
+  SyncSkills(request: GetAgentRequest): Promise<SuccessMessage>;
+  GetAgentStatuses(request: Empty): Promise<AgentStatusListResponse>;
+  PreviewClaudeMD(request: GetAgentRequest): Promise<ClaudeMDPreview>;
 }

@@ -1,16 +1,22 @@
 package skill
 
 import (
+	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
-	"log"
+	"io"
+	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	sacv1 "g.echo.tech/dev/sac/gen/sac/v1"
 	"g.echo.tech/dev/sac/internal/container"
 	"g.echo.tech/dev/sac/internal/convert"
 	"g.echo.tech/dev/sac/internal/models"
+	"g.echo.tech/dev/sac/internal/storage"
 	"g.echo.tech/dev/sac/pkg/protobind"
 	"g.echo.tech/dev/sac/pkg/response"
 	"github.com/gin-gonic/gin"
@@ -22,10 +28,10 @@ type Handler struct {
 	syncService *SyncService
 }
 
-func NewHandler(db *bun.DB, containerManager *container.Manager) *Handler {
+func NewHandler(db *bun.DB, containerManager *container.Manager, storageProvider *storage.StorageProvider) *Handler {
 	return &Handler{
 		db:          db,
-		syncService: NewSyncService(db, containerManager),
+		syncService: NewSyncService(db, containerManager, storageProvider),
 	}
 }
 
@@ -34,430 +40,330 @@ func (h *Handler) GetSyncService() *SyncService {
 	return h.syncService
 }
 
-// CreateSkill creates a new skill
-func (h *Handler) CreateSkill(c *gin.Context) {
-	userID, exists := c.Get("userID")
-	if !exists {
-		response.Unauthorized(c, "User not authenticated")
+// RegisterFileRoutes registers skill file management routes (multipart upload, not suitable for gRPC-gateway).
+func (h *Handler) RegisterFileRoutes(router *gin.RouterGroup) {
+	router.POST("/skills/:id/files", h.UploadSkillFile)
+	router.GET("/skills/:id/files", h.ListSkillFiles)
+	router.DELETE("/skills/:id/files", h.DeleteSkillFile)
+	router.GET("/skills/:id/files/download", h.DownloadSkillFile)
+	router.PUT("/skills/:id/files/content", h.SaveSkillFileContent)
+	router.GET("/skills/:id/files/content", h.GetSkillFileContent)
+}
+
+// UploadSkillFile handles multipart file upload for a skill.
+func (h *Handler) UploadSkillFile(c *gin.Context) {
+	skillID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid skill ID", err)
 		return
 	}
 
-	req := &sacv1.CreateSkillRequest{}
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		response.BadRequest(c, "No file provided", err)
+		return
+	}
+	defer file.Close()
+
+	filepath := c.PostForm("filepath")
+	if filepath == "" {
+		filepath = header.Filename
+	}
+
+	if h.syncService.storage == nil {
+		response.ServiceUnavailable(c, "Storage not configured")
+		return
+	}
+	backend := h.syncService.storage.GetClient(c.Request.Context())
+	if backend == nil {
+		response.ServiceUnavailable(c, "Storage not configured")
+		return
+	}
+
+	s3Key := fmt.Sprintf("skills/%d/%s", skillID, filepath)
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	// Read file and compute MD5 checksum
+	ctx := context.Background()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		response.InternalError(c, "Failed to read file", err)
+		return
+	}
+	hash := md5.Sum(data)
+	checksum := hex.EncodeToString(hash[:])
+
+	if err := backend.Upload(ctx, s3Key, bytes.NewReader(data), int64(len(data)), contentType); err != nil {
+		response.InternalError(c, "Failed to upload file", err)
+		return
+	}
+
+	sf := &models.SkillFile{
+		SkillID:     skillID,
+		Filepath:    filepath,
+		S3Key:       s3Key,
+		Checksum:    checksum,
+		Size:        int64(len(data)),
+		ContentType: contentType,
+		CreatedAt:   time.Now(),
+	}
+
+	_, err = h.db.NewInsert().Model(sf).
+		On("CONFLICT (skill_id, filepath) DO UPDATE").
+		Set("s3_key = EXCLUDED.s3_key").
+		Set("checksum = EXCLUDED.checksum").
+		Set("size = EXCLUDED.size").
+		Set("content_type = EXCLUDED.content_type").
+		Exec(ctx)
+	if err != nil {
+		response.InternalError(c, "Failed to save file record", err)
+		return
+	}
+
+	// Recompute content_checksum and bump version
+	if err := h.syncService.RebuildSkillBundle(ctx, skillID); err != nil {
+		response.InternalError(c, "Failed to recompute checksum", err)
+		return
+	}
+
+	protobind.Created(c, convert.SkillFileToProto(sf))
+}
+
+// ListSkillFiles lists all files attached to a skill.
+func (h *Handler) ListSkillFiles(c *gin.Context) {
+	skillID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid skill ID", err)
+		return
+	}
+
+	ctx := context.Background()
+	var files []models.SkillFile
+	err = h.db.NewSelect().Model(&files).Where("skill_id = ?", skillID).Order("filepath ASC").Scan(ctx)
+	if err != nil {
+		response.InternalError(c, "Failed to list files", err)
+		return
+	}
+
+	protobind.OK(c, &sacv1.SkillFileListResponse{Files: convert.SkillFilesToProto(files)})
+}
+
+// DeleteSkillFile deletes a file attached to a skill.
+func (h *Handler) DeleteSkillFile(c *gin.Context) {
+	skillID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid skill ID", err)
+		return
+	}
+
+	filepath := c.Query("path")
+	if filepath == "" {
+		response.BadRequest(c, "path parameter required")
+		return
+	}
+
+	ctx := context.Background()
+
+	var sf models.SkillFile
+	err = h.db.NewSelect().Model(&sf).Where("skill_id = ? AND filepath = ?", skillID, filepath).Scan(ctx)
+	if err != nil {
+		response.NotFound(c, "File not found", err)
+		return
+	}
+
+	// Delete from S3
+	if h.syncService.storage != nil {
+		if backend := h.syncService.storage.GetClient(ctx); backend != nil {
+			_ = backend.Delete(ctx, sf.S3Key)
+		}
+	}
+
+	_, err = h.db.NewDelete().Model(&sf).Where("id = ?", sf.ID).Exec(ctx)
+	if err != nil {
+		response.InternalError(c, "Failed to delete file", err)
+		return
+	}
+
+	// Recompute content_checksum and bump version
+	if err := h.syncService.RebuildSkillBundle(ctx, skillID); err != nil {
+		response.InternalError(c, "Failed to recompute checksum", err)
+		return
+	}
+
+	protobind.OK(c, &sacv1.SuccessMessage{Message: "File deleted"})
+}
+
+// DownloadSkillFile downloads a file attached to a skill.
+func (h *Handler) DownloadSkillFile(c *gin.Context) {
+	skillID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid skill ID", err)
+		return
+	}
+
+	filepath := c.Query("path")
+	if filepath == "" {
+		response.BadRequest(c, "path parameter required")
+		return
+	}
+
+	ctx := context.Background()
+
+	var sf models.SkillFile
+	err = h.db.NewSelect().Model(&sf).Where("skill_id = ? AND filepath = ?", skillID, filepath).Scan(ctx)
+	if err != nil {
+		response.NotFound(c, "File not found", err)
+		return
+	}
+
+	if h.syncService.storage == nil {
+		response.ServiceUnavailable(c, "Storage not configured")
+		return
+	}
+	backend := h.syncService.storage.GetClient(ctx)
+	if backend == nil {
+		response.ServiceUnavailable(c, "Storage not configured")
+		return
+	}
+
+	body, err := backend.Download(ctx, sf.S3Key)
+	if err != nil {
+		response.NotFound(c, "File not found in storage", err)
+		return
+	}
+	defer body.Close()
+
+	c.Header("Content-Type", sf.ContentType)
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, path.Base(filepath)))
+	io.Copy(c.Writer, body)
+}
+
+// SaveSkillFileContent saves text content as a skill file.
+func (h *Handler) SaveSkillFileContent(c *gin.Context) {
+	skillID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid skill ID", err)
+		return
+	}
+
+	req := &sacv1.SaveSkillFileContentRequest{}
 	if !protobind.Bind(c, req) {
 		return
 	}
 
-	if req.Name == "" {
-		response.BadRequest(c, "name is required")
+	if req.Filepath == "" {
+		response.BadRequest(c, "filepath is required")
 		return
 	}
 
-	skill := models.Skill{
-		Name:        req.Name,
-		Description: req.Description,
-		Icon:        req.Icon,
-		Category:    req.Category,
-		Prompt:      req.Prompt,
-		CommandName: req.CommandName,
-		Parameters:  convert.SkillParametersFromProto(req.Parameters),
-		IsPublic:    req.IsPublic,
-		CreatedBy:   userID.(int64),
+	if h.syncService.storage == nil {
+		response.ServiceUnavailable(c, "Storage not configured")
+		return
+	}
+	backend := h.syncService.storage.GetClient(c.Request.Context())
+	if backend == nil {
+		response.ServiceUnavailable(c, "Storage not configured")
+		return
+	}
+
+	ctx := context.Background()
+	s3Key := fmt.Sprintf("skills/%d/%s", skillID, req.Filepath)
+	contentType := "text/plain"
+
+	// Compute MD5 checksum
+	contentBytes := []byte(req.Content)
+	hash := md5.Sum(contentBytes)
+	checksum := hex.EncodeToString(hash[:])
+
+	if err := backend.Upload(ctx, s3Key, strings.NewReader(req.Content), int64(len(req.Content)), contentType); err != nil {
+		response.InternalError(c, "Failed to upload file content", err)
+		return
+	}
+
+	sf := &models.SkillFile{
+		SkillID:     skillID,
+		Filepath:    req.Filepath,
+		S3Key:       s3Key,
+		Checksum:    checksum,
+		Size:        int64(len(req.Content)),
+		ContentType: contentType,
 		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-		IsOfficial:  false,
 	}
 
-	// Auto-generate command_name from name if not provided
-	if skill.CommandName == "" {
-		skill.CommandName = SanitizeCommandName(skill.Name)
-	}
-
-	if skill.CommandName == "" {
-		response.BadRequest(c, "Cannot derive a valid command name from skill name")
-		return
-	}
-
-	ctx := context.Background()
-
-	// Check command_name uniqueness
-	exists2, err := h.db.NewSelect().Model((*models.Skill)(nil)).
-		Where("command_name = ?", skill.CommandName).
-		Exists(ctx)
-	if err != nil {
-		response.InternalError(c, "Failed to check command name", err)
-		return
-	}
-	if exists2 {
-		response.Conflict(c, fmt.Sprintf("Command name '/%s' is already taken", skill.CommandName))
-		return
-	}
-
-	_, err = h.db.NewInsert().Model(&skill).Exec(ctx)
-	if err != nil {
-		response.InternalError(c, "Failed to create skill", err)
-		return
-	}
-
-	protobind.Created(c, convert.SkillToProto(&skill))
-}
-
-// GetSkills retrieves all skills for the current user
-func (h *Handler) GetSkills(c *gin.Context) {
-	userID, exists := c.Get("userID")
-	if !exists {
-		response.Unauthorized(c, "User not authenticated")
-		return
-	}
-
-	ctx := context.Background()
-	var skills []models.Skill
-
-	// Get official skills + user's own skills + public skills
-	err := h.db.NewSelect().
-		Model(&skills).
-		Where("is_official = ? OR created_by = ? OR is_public = ?", true, userID.(int64), true).
-		Order("category ASC", "name ASC").
-		Scan(ctx)
-
-	if err != nil {
-		response.InternalError(c, "Failed to retrieve skills", err)
-		return
-	}
-
-	protobind.OK(c, &sacv1.SkillListResponse{Skills: convert.SkillsToProto(skills)})
-}
-
-// GetSkill retrieves a single skill by ID
-func (h *Handler) GetSkill(c *gin.Context) {
-	skillID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		response.BadRequest(c, "Invalid skill ID", err)
-		return
-	}
-
-	ctx := context.Background()
-	var skill models.Skill
-
-	err = h.db.NewSelect().
-		Model(&skill).
-		Where("id = ?", skillID).
-		Scan(ctx)
-
-	if err != nil {
-		response.NotFound(c, "Skill not found", err)
-		return
-	}
-
-	protobind.OK(c, convert.SkillToProto(&skill))
-}
-
-// UpdateSkill updates an existing skill
-func (h *Handler) UpdateSkill(c *gin.Context) {
-	skillID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		response.BadRequest(c, "Invalid skill ID", err)
-		return
-	}
-
-	userID, exists := c.Get("userID")
-	if !exists {
-		response.Unauthorized(c, "User not authenticated")
-		return
-	}
-
-	ctx := context.Background()
-
-	// Check ownership
-	var existingSkill models.Skill
-	err = h.db.NewSelect().
-		Model(&existingSkill).
-		Where("id = ?", skillID).
-		Scan(ctx)
-
-	if err != nil {
-		response.NotFound(c, "Skill not found", err)
-		return
-	}
-
-	// Ownership check: owner can edit their own skill; admin can edit official skills
-	role, _ := c.Get("role")
-	isAdmin := role == "admin"
-	if existingSkill.IsOfficial && !isAdmin {
-		response.Forbidden(c, "Only admins can edit official skills")
-		return
-	}
-	if !existingSkill.IsOfficial && existingSkill.CreatedBy != userID.(int64) {
-		response.Forbidden(c, "You don't have permission to update this skill")
-		return
-	}
-
-	// Parse update data via protobuf
-	req := &sacv1.UpdateSkillRequest{}
-	if !protobind.Bind(c, req) {
-		return
-	}
-
-	var updateData models.Skill
-	updateData.ID = skillID
-	updateData.UpdatedAt = time.Now()
-	updateData.Version = existingSkill.Version + 1
-
-	// Apply optional fields from proto request
-	if req.Name != nil {
-		updateData.Name = *req.Name
-	}
-	if req.Description != nil {
-		updateData.Description = *req.Description
-	}
-	if req.Icon != nil {
-		updateData.Icon = *req.Icon
-	}
-	if req.Category != nil {
-		updateData.Category = *req.Category
-	}
-	if req.Prompt != nil {
-		updateData.Prompt = *req.Prompt
-	}
-	if req.CommandName != nil {
-		updateData.CommandName = *req.CommandName
-	}
-	if req.Parameters != nil {
-		updateData.Parameters = convert.SkillParametersFromProto(req.Parameters)
-	}
-	if req.IsPublic != nil {
-		updateData.IsPublic = *req.IsPublic
-	}
-
-	// If user supplied a command_name, use it; otherwise regenerate from name
-	if updateData.CommandName == "" && updateData.Name != "" {
-		updateData.CommandName = SanitizeCommandName(updateData.Name)
-	}
-
-	if updateData.CommandName == "" {
-		updateData.CommandName = existingSkill.CommandName
-	}
-
-	// Check command_name uniqueness (exclude self)
-	if updateData.CommandName != existingSkill.CommandName {
-		dup, dupErr := h.db.NewSelect().Model((*models.Skill)(nil)).
-			Where("command_name = ? AND id != ?", updateData.CommandName, skillID).
-			Exists(ctx)
-		if dupErr != nil {
-			response.InternalError(c, "Failed to check command name", dupErr)
-			return
-		}
-		if dup {
-			response.Conflict(c, fmt.Sprintf("Command name '/%s' is already taken", updateData.CommandName))
-			return
-		}
-	}
-
-	_, err = h.db.NewUpdate().
-		Model(&updateData).
-		Column("name", "description", "icon", "category", "prompt", "command_name", "parameters", "is_public", "updated_at", "version").
-		Where("id = ?", skillID).
+	_, err = h.db.NewInsert().Model(sf).
+		On("CONFLICT (skill_id, filepath) DO UPDATE").
+		Set("s3_key = EXCLUDED.s3_key").
+		Set("checksum = EXCLUDED.checksum").
+		Set("size = EXCLUDED.size").
+		Set("content_type = EXCLUDED.content_type").
 		Exec(ctx)
-
 	if err != nil {
-		response.InternalError(c, "Failed to update skill", err)
+		response.InternalError(c, "Failed to save file record", err)
 		return
 	}
 
-	// Re-read full record from DB to return complete data
-	var updatedSkill models.Skill
-	err = h.db.NewSelect().
-		Model(&updatedSkill).
-		Where("id = ?", skillID).
-		Scan(ctx)
-	if err != nil {
-		response.InternalError(c, "Failed to reload skill after update", err)
+	// Recompute content_checksum and bump version
+	if err := h.syncService.RebuildSkillBundle(ctx, skillID); err != nil {
+		response.InternalError(c, "Failed to recompute checksum", err)
 		return
 	}
 
-	protobind.OK(c, convert.SkillToProto(&updatedSkill))
+	protobind.OK(c, convert.SkillFileToProto(sf))
 }
 
-// DeleteSkill deletes a skill
-func (h *Handler) DeleteSkill(c *gin.Context) {
+// GetSkillFileContent reads a text file's content.
+func (h *Handler) GetSkillFileContent(c *gin.Context) {
 	skillID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid skill ID", err)
 		return
 	}
 
-	userID, exists := c.Get("userID")
-	if !exists {
-		response.Unauthorized(c, "User not authenticated")
+	filepath := c.Query("path")
+	if filepath == "" {
+		response.BadRequest(c, "path parameter required")
 		return
 	}
 
 	ctx := context.Background()
 
-	// Check ownership
-	var skill models.Skill
-	err = h.db.NewSelect().
-		Model(&skill).
-		Where("id = ?", skillID).
-		Scan(ctx)
-
+	var sf models.SkillFile
+	err = h.db.NewSelect().Model(&sf).Where("skill_id = ? AND filepath = ?", skillID, filepath).Scan(ctx)
 	if err != nil {
-		response.NotFound(c, "Skill not found", err)
+		response.NotFound(c, "File not found", err)
 		return
 	}
 
-	if skill.CreatedBy != userID.(int64) {
-		response.Forbidden(c, "You don't have permission to delete this skill")
+	if h.syncService.storage == nil {
+		response.ServiceUnavailable(c, "Storage not configured")
+		return
+	}
+	backend := h.syncService.storage.GetClient(ctx)
+	if backend == nil {
+		response.ServiceUnavailable(c, "Storage not configured")
 		return
 	}
 
-	if skill.IsOfficial {
-		response.Forbidden(c, "Cannot delete official skills")
-		return
-	}
-
-	// Find all agents that have this skill installed (before deleting)
-	var agentSkills []models.AgentSkill
-	_ = h.db.NewSelect().
-		Model(&agentSkills).
-		Where("skill_id = ?", skillID).
-		Scan(ctx)
-
-	_, err = h.db.NewDelete().
-		Model(&skill).
-		Where("id = ?", skillID).
-		Exec(ctx)
-
+	body, err := backend.Download(ctx, sf.S3Key)
 	if err != nil {
-		response.InternalError(c, "Failed to delete skill", err)
+		response.NotFound(c, "File not found in storage", err)
 		return
 	}
+	defer body.Close()
 
-	// Async: remove .md files from all agent pods
-	if skill.CommandName != "" {
-		go func() {
-			bgCtx := context.Background()
-			for _, as := range agentSkills {
-				var agent models.Agent
-				err := h.db.NewSelect().Model(&agent).Where("id = ?", as.AgentID).Scan(bgCtx)
-				if err != nil {
-					continue
-				}
-				userIDStr := fmt.Sprintf("%d", agent.CreatedBy)
-				if err := h.syncService.RemoveSkillFromAgent(bgCtx, userIDStr, as.AgentID, skill.CommandName); err != nil {
-					log.Printf("Warning: failed to remove skill /%s from agent %d: %v", skill.CommandName, as.AgentID, err)
-				}
-			}
-		}()
-	}
-
-	protobind.OK(c, &sacv1.SuccessMessage{Message: "Skill deleted successfully"})
-}
-
-// ForkSkill creates a copy of a public skill
-func (h *Handler) ForkSkill(c *gin.Context) {
-	skillID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	data, err := io.ReadAll(body)
 	if err != nil {
-		response.BadRequest(c, "Invalid skill ID", err)
+		response.InternalError(c, "Failed to read file", err)
 		return
 	}
 
-	userID, exists := c.Get("userID")
-	if !exists {
-		response.Unauthorized(c, "User not authenticated")
-		return
-	}
-
-	ctx := context.Background()
-
-	// Get original skill
-	var originalSkill models.Skill
-	err = h.db.NewSelect().
-		Model(&originalSkill).
-		Where("id = ?", skillID).
-		Scan(ctx)
-
-	if err != nil {
-		response.NotFound(c, "Skill not found", err)
-		return
-	}
-
-	if !originalSkill.IsPublic && !originalSkill.IsOfficial {
-		response.Forbidden(c, "This skill is not public")
-		return
-	}
-
-	// Create forked skill with a unique command_name
-	forkedName := originalSkill.Name + " (Fork)"
-	baseCmd := SanitizeCommandName(forkedName)
-	cmdName := baseCmd
-
-	// Ensure uniqueness by appending a numeric suffix if needed
-	for i := 2; i <= 100; i++ {
-		exists2, exErr := h.db.NewSelect().Model((*models.Skill)(nil)).
-			Where("command_name = ?", cmdName).
-			Exists(ctx)
-		if exErr != nil {
-			response.InternalError(c, "Failed to check command name", exErr)
-			return
-		}
-		if !exists2 {
-			break
-		}
-		cmdName = fmt.Sprintf("%s-%d", baseCmd, i)
-	}
-
-	forkedSkill := models.Skill{
-		Name:        forkedName,
-		Description: originalSkill.Description,
-		Icon:        originalSkill.Icon,
-		Category:    originalSkill.Category,
-		Prompt:      originalSkill.Prompt,
-		CommandName: cmdName,
-		Parameters:  originalSkill.Parameters,
-		IsOfficial:  false,
-		CreatedBy:   userID.(int64),
-		IsPublic:    false,
-		ForkedFrom:  &originalSkill.ID,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-	}
-
-	_, err = h.db.NewInsert().Model(&forkedSkill).Exec(ctx)
-	if err != nil {
-		response.InternalError(c, "Failed to fork skill", err)
-		return
-	}
-
-	protobind.Created(c, convert.SkillToProto(&forkedSkill))
-}
-
-// GetPublicSkills retrieves all public skills
-func (h *Handler) GetPublicSkills(c *gin.Context) {
-	ctx := context.Background()
-	var skills []models.Skill
-
-	err := h.db.NewSelect().
-		Model(&skills).
-		Where("is_public = ? OR is_official = ?", true, true).
-		Relation("Creator").
-		Order("category ASC", "name ASC").
-		Scan(ctx)
-
-	if err != nil {
-		response.InternalError(c, "Failed to retrieve public skills", err)
-		return
-	}
-
-	protobind.OK(c, &sacv1.SkillListResponse{Skills: convert.SkillsToProto(skills)})
-}
-
-// RegisterRoutes registers skill routes
-func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
-	router.GET("/skills", h.GetSkills)
-	router.GET("/skills/:id", h.GetSkill)
-	router.POST("/skills", h.CreateSkill)
-	router.PUT("/skills/:id", h.UpdateSkill)
-	router.DELETE("/skills/:id", h.DeleteSkill)
-	router.POST("/skills/:id/fork", h.ForkSkill)
-	router.GET("/skills/public", h.GetPublicSkills)
+	protobind.OK(c, &sacv1.SkillFileContentResponse{
+		Filepath:    sf.Filepath,
+		Content:     string(data),
+		ContentType: sf.ContentType,
+		Size:        sf.Size,
+	})
 }

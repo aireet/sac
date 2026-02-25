@@ -25,24 +25,3 @@ func WorkspaceFileToProto(m *models.WorkspaceFile) *sacv1.WorkspaceFile {
 	}
 	return pb
 }
-
-func WorkspaceQuotaToProto(m *models.WorkspaceQuota) *sacv1.WorkspaceQuota {
-	return &sacv1.WorkspaceQuota{
-		UserId:       m.UserID,
-		AgentId:      m.AgentID,
-		UsedBytes:    m.UsedBytes,
-		MaxBytes:     m.MaxBytes,
-		FileCount:    int32(m.FileCount),
-		MaxFileCount: int32(m.MaxFileCount),
-	}
-}
-
-func GroupWorkspaceQuotaToProto(m *models.GroupWorkspaceQuota) *sacv1.GroupWorkspaceQuota {
-	return &sacv1.GroupWorkspaceQuota{
-		GroupId:      m.GroupID,
-		UsedBytes:    m.UsedBytes,
-		MaxBytes:     m.MaxBytes,
-		FileCount:    int32(m.FileCount),
-		MaxFileCount: int32(m.MaxFileCount),
-	}
-}
