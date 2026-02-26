@@ -4,9 +4,9 @@
 >
 > **警告**：本快速启动仅用于**本地开发和功能评估**，请勿在生产环境中使用此部署方式。详见 [生产环境部署](#生产环境部署)。
 
-Get SAC running locally in a [kind](https://kind.sigs.k8s.io/) (Kubernetes in Docker) cluster. One script, ~10 minutes.
+Get SAC running locally in a [kind](https://kind.sigs.k8s.io/) (Kubernetes in Docker) cluster. One script, ~3 minutes.
 
-使用 [kind](https://kind.sigs.k8s.io/)（Kubernetes in Docker）在本地运行 SAC。一个脚本，约 10 分钟。
+使用 [kind](https://kind.sigs.k8s.io/)（Kubernetes in Docker）在本地运行 SAC。一个脚本，约 3 分钟。
 
 ## Prerequisites / 前置条件
 
@@ -37,13 +37,18 @@ cd sac
 ./quickstart/quickstart.sh
 ```
 
-The script will / 脚本会自动完成以下步骤：
-1. Build 6 Docker images (no external registry needed) / 构建 6 个 Docker 镜像（无需外部镜像仓库）
-2. Create a single-node kind cluster with port mapping / 创建单节点 kind 集群并映射端口
-3. Deploy PostgreSQL (TimescaleDB), MinIO (S3 storage), and Redis / 部署 PostgreSQL、MinIO、Redis
-4. Run database migrations and seed the admin user / 执行数据库迁移并创建管理员账号
-5. Deploy SAC services via Helm / 通过 Helm 部署 SAC 服务
-6. Deploy an nginx reverse proxy as the single entry point / 部署 nginx 反向代理作为统一入口
+The script will guide you through / 脚本将引导你完成：
+
+1. **Select Language / 选择语言** — English or 简体中文
+2. **Select Image Registry / 选择镜像仓库** — Docker Hub or Huawei Cloud (for China users)
+   - Docker Hub — for international users
+   - 华为云 — 国内用户推荐，访问速度更快
+3. Pull pre-built images (no local build needed) / 拉取预构建镜像（无需本地构建）
+4. Create a single-node kind cluster with port mapping / 创建单节点 kind 集群并映射端口
+5. Deploy PostgreSQL (TimescaleDB), MinIO (S3 storage), and Redis / 部署 PostgreSQL、MinIO、Redis
+6. Run database migrations and seed the admin user / 执行数据库迁移并创建管理员账号
+7. Deploy SAC services via Helm / 通过 Helm 部署 SAC 服务
+8. Deploy an nginx reverse proxy as the single entry point / 部署 nginx 反向代理作为统一入口
 
 When it's done / 完成后：
 
@@ -106,6 +111,19 @@ localhost:8080 (your browser / 浏览器)
 └─────────────────────────────────────────────────┘
 ```
 
+## Image Registries / 镜像仓库
+
+The quickstart supports two image registries / 快速启动支持两个镜像仓库：
+
+| Registry / 仓库 | Address | Best For / 适用场景 |
+|----------------|---------|-------------------|
+| Docker Hub | `docker.io/opensac` | International users / 海外用户 |
+| Huawei Cloud / 华为云 | `swr.cn-east-3.myhuaweicloud.com/open-sac` | China users / 国内用户 |
+
+You can switch between them during setup. Both provide the same pre-built images.
+
+你可以在设置过程中切换。两者提供相同的预构建镜像。
+
 ## Useful Commands / 常用命令
 
 ```bash
@@ -118,7 +136,7 @@ kubectl logs -n sac -l app=api-gateway --tail=50 -f
 # View a specific agent pod's logs / 查看特定 Agent Pod 日志
 kubectl logs -n sac claude-code-1-1-0 -c claude-code --tail=50
 
-# Restart SAC services (after code changes) / 重启 SAC 服务（代码修改后）
+# Restart SAC services / 重启 SAC 服务
 ./quickstart/quickstart.sh   # re-running is safe / 重复运行是安全的，会复用已有集群
 
 # Access MinIO console (optional) / 访问 MinIO 控制台（可选）
@@ -132,34 +150,27 @@ kubectl port-forward -n sac svc/minio 9001:9001
 ./quickstart/cleanup.sh
 ```
 
-This deletes the Helm release, all infrastructure pods, the namespace, and the kind cluster. Local Docker images (`sac-local/*`) are retained — remove them manually if desired:
+This deletes the Helm release, all infrastructure pods, the namespace, and the kind cluster.
 
-该命令会删除 Helm release、所有基础设施 Pod、命名空间和 kind 集群。本地 Docker 镜像（`sac-local/*`）会保留，如需删除：
-
-```bash
-docker rmi $(docker images 'sac-local/*' -q) 2>/dev/null
-```
+该命令会删除 Helm release、所有基础设施 Pod、命名空间和 kind 集群。
 
 ## Troubleshooting / 故障排查
 
-**Build fails during `go mod download` / 构建时 `go mod download` 失败**
-Network issues downloading Go modules. Retry, or set a Go proxy:
-网络问题导致 Go 模块下载失败，重试或设置 Go 代理：
-```bash
-export GOPROXY=https://proxy.golang.org,direct
-# 国内用户推荐 / For users in China:
-export GOPROXY=https://goproxy.cn,direct
-```
+**Images fail to pull / 镜像拉取失败**
 
-**Images fail to pull inside kind (`ErrImageNeverPull`) / 镜像拉取失败**
-Images are loaded via `kind load` with `imagePullPolicy: Never`. Re-load the specific image:
-镜像通过 `kind load` 加载，使用 `imagePullPolicy: Never`。重新加载指定镜像：
+If you're in China and Docker Hub is slow, select Huawei Cloud registry during setup.
+
+如果在国内且 Docker Hub 速度慢，请在设置时选择华为云镜像仓库。
+
 ```bash
-kind load docker-image sac-local/IMAGE:quickstart --name sac
+# Manual pull test / 手动拉取测试
+docker pull swr.cn-east-3.myhuaweicloud.com/open-sac/api-gateway:0.0.33
 ```
 
 **Pod stuck in Pending / Pod 卡在 Pending 状态**
+
 The kind node is likely out of resources. Check with `kubectl describe node` and increase Docker's RAM allocation to at least 8 GB.
+
 kind 节点资源不足。使用 `kubectl describe node` 检查，并将 Docker 内存分配增加到至少 8 GB。
 
 **Agent pod won't start / Agent Pod 无法启动**
@@ -168,29 +179,49 @@ kind 节点资源不足。使用 `kubectl describe node` 检查，并将 Docker 
 - Check the agent pod events / 查看 Agent Pod 事件：`kubectl describe pod -n sac claude-code-{user}-{agent}-0`
 
 **Terminal connects but Claude doesn't respond / 终端已连接但 Claude 无响应**
+
 Your Anthropic API key may be invalid or rate-limited. Check the claude-code container logs:
+
 API Key 可能无效或已达到速率限制。查看 claude-code 容器日志：
+
 ```bash
 kubectl logs -n sac claude-code-{user}-{agent}-0 -c claude-code --tail=20
 ```
 
 **File upload/download errors / 文件上传下载错误**
+
 MinIO must be running with the bucket created:
+
 MinIO 必须正常运行且 bucket 已创建：
+
 ```bash
 kubectl get pods -n sac -l app=minio
 ```
+
 If MinIO was restarted, re-create the bucket / 如果 MinIO 重启过，重新创建 bucket：
+
 ```bash
 kubectl run minio-fix --rm -it --restart=Never -n sac --image=minio/mc:latest -- \
   bash -c "mc alias set local http://minio:9000 minioadmin minioadmin123 && mc mb local/sac-workspace --ignore-existing"
 ```
 
 **Database connection errors / 数据库连接错误**
+
 ```bash
 kubectl get pods -n sac -l app=postgres
 kubectl logs -n sac -l app=postgres --tail=20
 ```
+
+## Default Credentials / 默认凭据
+
+> ⚠️ **Security Warning / 安全警告**: These are hardcoded for quickstart only. Change them for any non-local use.
+
+| Service | Username | Password |
+|---------|----------|----------|
+| SAC Web | `admin` | `admin123` |
+| PostgreSQL | `sac` | `sac-quickstart-pass` |
+| MinIO | `minioadmin` | `minioadmin123` |
+| Redis | (no auth) | (no auth) |
 
 ## Production Deployment / 生产环境部署
 
@@ -216,7 +247,7 @@ For production, you should / 生产环境建议：
 | Redis | Bitnami standalone / 单机 | Managed Redis (ElastiCache, Tair) / 托管 Redis |
 | Ingress / 入口 | nginx reverse proxy / 反向代理 | Envoy Gateway with TLS termination / 带 TLS 的 Envoy Gateway |
 | Secrets / 密钥 | Hardcoded in YAML / 硬编码 | K8s Secrets + external secret manager / 外部密钥管理 |
-| Images / 镜像 | Local build + kind load / 本地构建 | Container registry (ECR, ACR, GHCR) / 容器镜像仓库 |
+| Images / 镜像 | Pre-built from registry / 预构建镜像 | Container registry (ECR, ACR, GHCR) / 容器镜像仓库 |
 | Monitoring / 监控 | None / 无 | Prometheus + Grafana |
 | Backup / 备份 | None / 无 | Automated DB snapshots + S3 versioning / 自动快照 + S3 版本控制 |
 
