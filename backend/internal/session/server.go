@@ -181,15 +181,15 @@ func (s *Server) CreateSession(ctx context.Context, req *sacv1.CreateSessionRequ
 			log.Warn().Err(err).Int64("agent_id", req.AgentId).Msg("failed to restore output files")
 		}
 	} else {
+		// Existing pod: only sync skills + CLAUDE.md in background.
+		// Skip RestoreOutputFiles — output files are already on the pod
+		// (they originate from the pod and are uploaded to S3 by the sidecar).
 		go func() {
 			bgCtx := context.Background()
 			if err := s.syncService.SyncAllSkillsToAgent(bgCtx, userIDStr, req.AgentId); err != nil {
 				log.Warn().Err(err).Msg("background skill sync failed")
 			}
 			s.writeClaudeMD(bgCtx, userIDStr, req.AgentId, agent.Instructions)
-			if err := workspace.RestoreOutputFiles(bgCtx, s.db, s.storageProvider, s.containerManager, userID, req.AgentId); err != nil {
-				log.Warn().Err(err).Msg("background output file restore failed")
-			}
 			log.Debug().Str("user_id", userIDStr).Int64("agent_id", req.AgentId).Msg("background sync completed")
 		}()
 	}
