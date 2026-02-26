@@ -11,7 +11,7 @@ apiGateway:
   replicaCount: 2
   image:
     name: api-gateway
-    tag: "0.0.28"
+    tag: "0.0.31"
   port: 8080
   resources:
     requests:
@@ -24,14 +24,14 @@ apiGateway:
     DB_NAME: sandbox
     K8S_NAMESPACE: sac
     DOCKER_REGISTRY: docker-register-registry-vpc.cn-shanghai.cr.aliyuncs.com
-    DOCKER_IMAGE: prod/sac/cc:0.0.28
+    DOCKER_IMAGE: prod/sac/cc:0.0.31
 
 # --- WebSocket Proxy ---
 wsProxy:
   replicaCount: 2
   image:
     name: ws-proxy
-    tag: "0.0.28"
+    tag: "0.0.31"
   port: 8081
   resources:
     requests:
@@ -46,7 +46,7 @@ frontend:
   replicaCount: 2
   image:
     name: frontend
-    tag: "0.0.28"
+    tag: "0.0.31"
   port: 80
   resources:
     requests:
