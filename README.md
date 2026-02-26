@@ -27,77 +27,75 @@ Claude Code is a revolutionary AI agent that can do almost anything, but using i
 
 ```mermaid
 graph TB
-    Browser[Browser]
+    Browser["🌐 Browser"]
+    GW["Envoy Gateway"]
 
-    GW[Envoy Gateway]
-
-    subgraph Services
-        API[API Gateway :8080]
-        WS[WS Proxy :8081]
-        FE[Frontend :80]
+    subgraph Services["SAC Services"]
+        API["API Gateway :8080<br/>REST + gRPC-Gateway + SSE"]
+        WS["WS Proxy :8081<br/>binary WebSocket"]
+        FE["Frontend :80<br/>Vue 3 SPA"]
     end
 
-    subgraph Data
-        PG[PostgreSQL + TimescaleDB]
-        Redis[Redis Pub/Sub]
-        S3[S3 Storage]
+    subgraph Data["Data Layer"]
+        PG["PostgreSQL 17 + TimescaleDB"]
+        Redis["Redis Pub/Sub"]
+        S3["S3-compatible Storage<br/>OSS / MinIO / AWS S3"]
     end
 
-    subgraph AgentPod[StatefulSet per user-agent]
-        Main[claude-code container]
-        Sidecar[sidecar: output-watcher]
-        Hook[conversation-sync.mjs]
+    subgraph AgentPod["Kubernetes - StatefulSet per user-agent"]
+        Main["claude-code container<br/>dtach + ttyd :7681 + claude CLI"]
+        Sidecar["sidecar: output-watcher<br/>fsnotify"]
+        Hook["conversation-sync.mjs<br/>hook on Stop + Submit"]
+        Cron["CronJob: maintenance<br/>skill sync + cleanup"]
     end
 
-    Cron[CronJob: maintenance]
-
-    Browser -->|HTTP + SSE| GW
-    Browser -->|WebSocket| GW
+    Browser -->|"HTTP + SSE"| GW
+    Browser -->|"WebSocket"| GW
     GW --> FE
     GW --> API
     GW --> WS
 
-    WS -->|WS binary ttyd| Main
-    API -->|K8s API| Main
+    WS -->|"WS binary ttyd"| Main
+    API -->|"K8s API"| Main
     API --> PG
     API --> S3
-    API -->|Pub/Sub| Redis
-    Redis -->|Pub/Sub| API
+    API -->|"Pub/Sub"| Redis
+    Redis -->|"Pub/Sub"| API
 
-    Sidecar -->|POST /internal/output| API
-    Hook -->|POST /internal/conversations| API
-    Main ---|shared volume| Sidecar
+    Sidecar -->|"POST /internal/output"| API
+    Hook -->|"POST /internal/conversations"| API
+    Main ---|"shared emptyDir /workspace"| Sidecar
 
-    S3 -.->|sync workspace + skills| Main
-    Redis -.->|SSE push| Browser
-    Cron -.->|periodic| API
+    S3 -.->|"sync workspace + skills"| Main
+    Redis -.->|"SSE push"| Browser
+    Cron -.->|"periodic"| API
 ```
 
 ### Agent Pod Internals
 
 ```mermaid
 graph LR
-    subgraph AgentPod[Pod: claude-code-uid-aid-0]
-        ttyd[ttyd :7681] --> claude[claude CLI]
-        Hook[conversation-sync.mjs]
-        Private[/workspace/private/]
-        Public[/workspace/public/]
-        Output[/workspace/output/]
-        Skills[/root/.claude/skills/]
-        Settings[ConfigMap: settings.json]
-        Watcher[sidecar: fsnotify]
+    subgraph AgentPod["Pod: claude-code-uid-aid-0"]
+        ttyd["ttyd :7681"] --> claude["claude CLI"]
+        Hook["conversation-sync.mjs"]
+        Private["/workspace/private"]
+        Public["/workspace/public"]
+        Output["/workspace/output<br/>code + images + docs"]
+        Skills["/root/.claude/skills/<br/>SKILL.md + attachments"]
+        Settings["ConfigMap: settings.json + hooks"]
+        Watcher["sidecar: fsnotify watcher"]
     end
 
-    claude -.->|writes files| Output
-    claude -.->|Stop + Submit| Hook
-    Hook -->|POST /internal/conversations| API[API Gateway]
-    S3[S3 Storage] -->|session start| Skills
-    S3 -->|session start| Private
-    S3 -->|session start| Public
-    Output -->|detect changes| Watcher
-    Watcher -->|POST upload/delete| API
-    API -->|store + PUBLISH| Redis[Redis]
-    Redis -->|SSE to Browser| Browser[Browser]
+    claude -.->|"writes files"| Output
+    claude -.->|"Stop + Submit events"| Hook
+    Hook -->|"POST /internal/conversations<br/>incremental sync"| API["API Gateway"]
+    S3["S3 Storage"] -->|"session start<br/>tar + checksum"| Skills
+    S3 -->|"session start"| Private
+    S3 -->|"session start"| Public
+    Output -->|"detect changes"| Watcher
+    Watcher -->|"POST upload/delete"| API
+    API -->|"store + PUBLISH"| Redis["Redis"]
+    Redis -->|"SSE to Browser"| Browser["🌐 Browser"]
 ```
 
 > **How it works**: Each agent runs in a dedicated StatefulSet pod with two containers. The main container runs `claude CLI` behind `ttyd` (terminal over WebSocket) with `dtach` for session persistence. When Claude generates files in `/workspace/output`, the sidecar detects changes via fsnotify and uploads them to S3 through the internal API — Redis Pub/Sub then pushes SSE events to the browser for real-time updates. Conversation history is captured by a hook script (`conversation-sync.mjs`) that triggers on Stop/Submit events and incrementally syncs transcripts to TimescaleDB. Skills are synced to pods as tar bundles with checksum-based deduplication. A maintenance CronJob periodically syncs skills, cleans stale sessions, expired conversations, and orphaned files.
