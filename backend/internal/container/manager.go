@@ -891,8 +891,10 @@ func (m *Manager) ListFilesInPod(ctx context.Context, podName, dirPath string) (
 // RestartClaudeCodeProcess kills the Claude Code process in a pod, triggering auto-restart.
 // The pod's entrypoint script (/tmp/claude-loop.sh) will automatically restart Claude Code.
 func (m *Manager) RestartClaudeCodeProcess(ctx context.Context, podName string) error {
-	// Use pkill with exact match to avoid killing other processes
-	cmd := []string{"pkill", "-9", "-f", "^claude$"}
+	// Use pkill -x for exact process name match (matches comm, not full cmdline).
+	// -f "^claude$" does NOT work because -f matches /proc/PID/cmdline which may
+	// contain trailing NUL bytes or other invisible characters.
+	cmd := []string{"pkill", "-9", "-x", "claude"}
 	_, stderr, err := m.ExecInPod(ctx, podName, cmd, nil)
 	if err != nil {
 		// pkill returns exit code 1 if no process matched, which is fine

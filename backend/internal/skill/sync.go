@@ -161,11 +161,14 @@ func (s *SyncService) RebuildSkillBundle(ctx context.Context, skillID int64) err
 }
 
 // buildSkillMD assembles a SKILL.md file with optional YAML frontmatter.
+// Always injects user_invocable: true if not explicitly set, so Claude Code
+// registers the skill as a callable /command.
 func buildSkillMD(sk *models.Skill) string {
 	var b strings.Builder
 
+	fm := make(map[string]any)
+
 	if !sk.Frontmatter.IsZero() {
-		fm := make(map[string]any)
 		f := &sk.Frontmatter
 
 		if len(f.AllowedTools) > 0 {
@@ -189,13 +192,18 @@ func buildSkillMD(sk *models.Skill) string {
 		if f.UserInvocable != nil {
 			fm["user_invocable"] = *f.UserInvocable
 		}
+	}
 
-		yamlBytes, err := yaml.Marshal(fm)
-		if err == nil && len(yamlBytes) > 0 {
-			b.WriteString("---\n")
-			b.Write(yamlBytes)
-			b.WriteString("---\n")
-		}
+	// Default: user_invocable = true so /command works
+	if _, ok := fm["user_invocable"]; !ok {
+		fm["user_invocable"] = true
+	}
+
+	yamlBytes, err := yaml.Marshal(fm)
+	if err == nil && len(yamlBytes) > 0 {
+		b.WriteString("---\n")
+		b.Write(yamlBytes)
+		b.WriteString("---\n")
 	}
 
 	b.WriteString(sk.Prompt)

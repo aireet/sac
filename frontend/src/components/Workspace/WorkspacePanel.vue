@@ -106,7 +106,8 @@
             v-for="as in installedSkills"
             :key="as.id"
             class="skill-item"
-            @click="as.skill && emit('executeCommand', '/' + as.skill.command_name)"
+            :class="{ 'skill-syncing': as.skill && isSkillSyncing(as.skill.id) }"
+            @click="as.skill && !isSkillSyncing(as.skill.id) && emit('executeCommand', '/' + as.skill.command_name)"
           >
             <span class="skill-icon">{{ as.skill?.icon || '🔧' }}</span>
             <div class="skill-info">
@@ -258,6 +259,11 @@ const activeSyncCount = computed(() => props.syncProgress?.size ?? 0)
 
 function getSyncEvent(skillId: number): SkillSyncEvent | undefined {
   return props.syncProgress?.get(skillId)
+}
+
+function isSkillSyncing(skillId: number): boolean {
+  const event = getSyncEvent(skillId)
+  return !!event && event.action === 'progress'
 }
 
 const outdatedCount = computed(() => {
@@ -784,6 +790,15 @@ onUnmounted(() => {
 
 .skill-item:hover {
   background: rgba(255, 255, 255, 0.06);
+}
+
+.skill-item.skill-syncing {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.skill-item.skill-syncing:hover {
+  background: transparent;
 }
 
 .skill-icon {

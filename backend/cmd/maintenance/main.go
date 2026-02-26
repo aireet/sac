@@ -70,16 +70,25 @@ func syncSkills(ctx context.Context, containerMgr *container.Manager) {
 
 	log.Info().Int("count", len(agents)).Msg("maintenance: skill-sync: syncing agents")
 
-	var failed int
+	var failed, restarted int
 	for _, a := range agents {
 		userID := fmt.Sprintf("%d", a.CreatedBy)
 		if err := syncService.SyncAllSkillsToAgent(ctx, userID, a.ID); err != nil {
 			log.Error().Err(err).Int64("agent_id", a.ID).Msg("maintenance: skill-sync: agent failed")
 			failed++
+			continue
+		}
+
+		// Restart Claude Code process so it picks up updated skills
+		podName := fmt.Sprintf("claude-code-%s-%d-0", userID, a.ID)
+		if err := containerMgr.RestartClaudeCodeProcess(ctx, podName); err != nil {
+			log.Warn().Err(err).Str("pod", podName).Msg("maintenance: skill-sync: failed to restart Claude Code")
+		} else {
+			restarted++
 		}
 	}
 
-	log.Info().Int("synced", len(agents)-failed).Int("failed", failed).Msg("maintenance: skill-sync: done")
+	log.Info().Int("synced", len(agents)-failed).Int("restarted", restarted).Int("failed", failed).Msg("maintenance: skill-sync: done")
 }
 
 func cleanupConversations(ctx context.Context) {

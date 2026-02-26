@@ -10,6 +10,7 @@ import (
 	"g.echo.tech/dev/sac/internal/ctxkeys"
 	"g.echo.tech/dev/sac/internal/grpcerr"
 	"g.echo.tech/dev/sac/internal/models"
+	"github.com/rs/zerolog/log"
 	"github.com/uptrace/bun"
 )
 
@@ -130,52 +131,66 @@ func (s *Server) UpdateSkill(ctx context.Context, req *sacv1.UpdateSkillByIdRequ
 	updateData.UpdatedAt = time.Now()
 	updateData.Version = existingSkill.Version + 1
 
+	// Dynamic columns: only update fields that were actually provided
+	columns := []string{"updated_at", "version"}
+
 	if req.Name != nil {
 		updateData.Name = *req.Name
+		columns = append(columns, "name")
 	}
 	if req.Description != nil {
 		updateData.Description = *req.Description
+		columns = append(columns, "description")
 	}
 	if req.Icon != nil {
 		updateData.Icon = *req.Icon
+		columns = append(columns, "icon")
 	}
 	if req.Category != nil {
 		updateData.Category = *req.Category
+		columns = append(columns, "category")
 	}
 	if req.Prompt != nil {
 		updateData.Prompt = *req.Prompt
+		columns = append(columns, "prompt")
 	}
 	if req.CommandName != nil {
 		updateData.CommandName = *req.CommandName
+		columns = append(columns, "command_name")
 	}
 	if req.Parameters != nil {
 		updateData.Parameters = convert.SkillParametersFromProto(req.Parameters)
+		columns = append(columns, "parameters")
 	}
 	if req.IsPublic != nil {
 		updateData.IsPublic = *req.IsPublic
+		columns = append(columns, "is_public")
 	}
 	if req.Frontmatter != nil {
 		updateData.Frontmatter = convert.FrontmatterFromProto(req.Frontmatter)
+		columns = append(columns, "frontmatter")
 	}
 	if req.GroupId != nil {
 		if *req.GroupId > 0 && !s.isGroupMember(ctx, *req.GroupId, userID) {
 			return nil, grpcerr.Forbidden("You are not a member of this group")
 		}
 		updateData.GroupID = req.GroupId
+		columns = append(columns, "group_id")
 	}
 
 	// Mutual exclusion: is_public and group_id cannot both be set
 	if req.IsPublic != nil && *req.IsPublic {
 		updateData.GroupID = nil // clear group when going public
+		columns = append(columns, "group_id")
 	}
 	if req.GroupId != nil && *req.GroupId > 0 {
 		updateData.IsPublic = false // clear public when assigning to group
+		columns = append(columns, "is_public")
 	}
-
-	columns := []string{"name", "description", "icon", "category", "prompt", "command_name", "parameters", "is_public", "updated_at", "version", "frontmatter", "group_id"}
 
 	if updateData.CommandName == "" && updateData.Name != "" {
 		updateData.CommandName = SanitizeCommandName(updateData.Name)
+		columns = append(columns, "command_name")
 	}
 	if updateData.CommandName == "" {
 		updateData.CommandName = existingSkill.CommandName
@@ -200,6 +215,13 @@ func (s *Server) UpdateSkill(ctx context.Context, req *sacv1.UpdateSkillByIdRequ
 		Exec(ctx)
 	if err != nil {
 		return nil, grpcerr.Internal("Failed to update skill", err)
+	}
+
+	// Rebuild bundle.tar when content changed (prompt or frontmatter)
+	if req.Prompt != nil || req.Frontmatter != nil {
+		if err := s.syncService.RebuildSkillBundle(ctx, req.Id); err != nil {
+			log.Warn().Err(err).Int64("skill_id", req.Id).Msg("failed to rebuild skill bundle after update")
+		}
 	}
 
 	var updatedSkill models.Skill

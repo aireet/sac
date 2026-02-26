@@ -393,6 +393,12 @@ func (s *Server) SyncSkills(ctx context.Context, req *sacv1.GetAgentRequest) (*s
 		return nil, grpcerr.Internal("Failed to sync skills", err)
 	}
 
+	// Restart Claude Code process so it picks up the updated skills
+	podName := fmt.Sprintf("claude-code-%s-%d-0", userIDStr, req.Id)
+	if err := s.containerManager.RestartClaudeCodeProcess(ctx, podName); err != nil {
+		log.Warn().Err(err).Str("pod", podName).Msg("failed to restart Claude Code after skill sync")
+	}
+
 	return &sacv1.SuccessMessage{Message: "Skills synced successfully"}, nil
 }
 
