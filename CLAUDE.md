@@ -67,6 +67,7 @@ make helm-upgrade       # Helm upgrade release
 | `ws-proxy` | 8081 | WebSocket proxy: browser ↔ ttyd in pod (binary protocol) |
 | `migrate` | — | DB migrations (up/down/status/seed) |
 | `output-watcher` | — | Sidecar in pods: watches `/workspace/output/` via fsnotify, POSTs to API |
+| `maintenance` | — | CronJob: skill sync, conversation cleanup, stale session cleanup, orphaned file cleanup |
 
 ### Route Layers (api-gateway/main.go)
 
@@ -92,8 +93,8 @@ Routes are registered in this order in `main.go`:
 ```
 Frontend: createSession(agentId)
   → Backend: check/create StatefulSet → wait pod ready (300s timeout)
-  → Sync workspace files from S3 (private + public + claude-commands)
-  → Sync installed skills as .md files to /root/.claude/commands/
+  → Sync workspace files from S3 (private + public)
+  → Sync installed skills as directories to /root/.claude/skills/ (tar bundles with SKILL.md + attached files)
   → Return session ID + Pod IP
 Frontend: waitForSessionReady(sessionId) [poll 60x, 2s intervals]
   → connectWebSocket → xterm.js terminal
@@ -140,6 +141,28 @@ Graceful degradation: if Redis unavailable, SSE returns 503, frontend falls back
 - Lazy init from `system_settings` table, cached with config fingerprint hash
 - Returns `nil` if not configured (graceful degradation)
 
+### Skill Visibility Model
+
+4-tier: Official → Public → Group → Private. `is_public` and `group_id` are mutually exclusive.
+- Visibility check on install: `InstallSkill` query includes WHERE clause filtering by user access
+- Lazy revocation on sync: `SyncAllSkillsToAgent` filters out inaccessible skills, deletes `agent_skills` records; stale cleanup removes pod directories
+- Skills synced to pods as tar bundles with `.checksum` for incremental sync
+
+### Data Flow Directions
+
+- **Workspace files (private/public):** S3 → pod (on session create only)
+- **Output files:** pod → S3 (real-time via sidecar fsnotify), frontend reads from S3
+- **Skills:** S3 → pod (on session create or manual sync), with checksum-based skip
+- **Session ≠ Pod:** Session is a DB record (connection state); pod is long-lived (StatefulSet). Pod survives session changes, emptyDir wiped only on pod restart.
+
+### Maintenance CronJob (cmd/maintenance)
+
+Runs periodically via K8s CronJob, executes 4 tasks sequentially:
+1. **Skill sync** — syncs all agents' installed skills to their pods
+2. **Conversation cleanup** — deletes conversation_histories older than retention period (default 30 days, configurable via `conversation_retention_days` setting)
+3. **Stale session cleanup** — deletes sessions in stopped/deleted/idle status older than threshold (default 24h, configurable via `session_stale_hours` setting)
+4. **Orphaned file cleanup** — deletes workspace_files and workspace_quotas whose agent_id no longer exists in agents table, removes corresponding S3 objects
+
 ## Coding Conventions
 
 ### Go Backend
@@ -177,8 +200,8 @@ Graceful degradation: if Redis unavailable, SSE returns 503, frontend falls back
 
 ## Database Migrations
 
-18 migrations in `backend/migrations/` (000001–000018), run via `make migrate-up`.
-Latest: `000018_add_agent_instructions` — adds instructions field to agents table.
+26 migrations in `backend/migrations/` (000001–000026), run via `make migrate-up`.
+Latest: `000026_skill_file_checksum` — adds content checksum to skill files.
 
 ## Troubleshooting
 

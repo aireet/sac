@@ -76,7 +76,7 @@ graph LR
             Private["/workspace/private"]
             Public["/workspace/public"]
             Output["/workspace/output<br/>📄 代码、图片、文档<br/>Claude Code 的文件产出"]
-            Skills["/root/.claude/commands"]
+            Skills["/root/.claude/skills"]
         end
         subgraph Sidecar["Sidecar: output-watcher"]
             Watcher["fsnotify 监听"]
@@ -111,7 +111,8 @@ graph LR
 ### 技能市场
 - 创建、Fork 和共享可复用的斜杠命令
 - 支持参数化技能，动态表单输入（文本、数字、日期、下拉选择）
-- 技能以 `.md` 文件同步到 Pod 的 `/root/.claude/commands/`
+- 4 级可见性：官方 → 公开 → 团队 → 私有
+- 技能以 tar 包同步到 Pod 的 `/root/.claude/skills/`，基于 checksum 增量同步
 - 侧边栏一键执行
 
 ### 工作区文件
@@ -276,6 +277,7 @@ sac/
 │   │   ├── api-gateway/          # HTTP API 服务
 │   │   ├── ws-proxy/             # WebSocket 终端代理
 │   │   ├── output-watcher/       # Sidecar: fsnotify → API 上传
+│   │   ├── maintenance/          # 定时任务: 技能同步、会话/文件清理
 │   │   └── migrate/              # 数据库迁移工具
 │   ├── internal/
 │   │   ├── admin/                # 管理面板处理器 + 设置
@@ -292,7 +294,7 @@ sac/
 │   │   ├── storage/              # 可插拔 S3 兼容存储后端
 │   │   ├── websocket/            # ttyd WebSocket 代理
 │   │   └── workspace/            # 文件操作、配额、Output SSE 推送
-│   ├── migrations/               # 17 个数据库迁移
+│   ├── migrations/               # 26 个数据库迁移
 │   └── pkg/
 │       ├── config/               # 基于环境变量的配置
 │       └── response/             # 标准化 HTTP 响应

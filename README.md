@@ -76,7 +76,7 @@ graph LR
             Private["/workspace/private"]
             Public["/workspace/public"]
             Output["/workspace/output<br/>📄 code, images, docs<br/>produced by Claude Code"]
-            Skills["/root/.claude/commands"]
+            Skills["/root/.claude/skills"]
         end
         subgraph Sidecar["sidecar: output-watcher"]
             Watcher["fsnotify watcher"]
@@ -111,7 +111,8 @@ graph LR
 ### Skill Marketplace
 - Create, fork, and share reusable slash commands
 - Parameterized skills with dynamic form inputs (text, number, date, select)
-- Skills sync to pods as `.md` files in `/root/.claude/commands/`
+- 4-tier visibility: Official → Public → Group → Private
+- Skills sync to pods as tar bundles in `/root/.claude/skills/` with checksum-based incremental sync
 - One-click execution from the sidebar
 
 ### Workspace Files
@@ -276,6 +277,7 @@ sac/
 │   │   ├── api-gateway/          # HTTP API server
 │   │   ├── ws-proxy/             # WebSocket terminal proxy
 │   │   ├── output-watcher/       # Sidecar: fsnotify → API upload
+│   │   ├── maintenance/          # CronJob: skill sync, session/file cleanup
 │   │   └── migrate/              # Database migration CLI
 │   ├── internal/
 │   │   ├── admin/                # Admin panel handlers + settings
@@ -292,7 +294,7 @@ sac/
 │   │   ├── storage/              # Pluggable S3-compatible backend
 │   │   ├── websocket/            # ttyd WebSocket proxy
 │   │   └── workspace/            # File ops, quota, output SSE watch
-│   ├── migrations/               # 17 database migrations
+│   ├── migrations/               # 26 database migrations
 │   └── pkg/
 │       ├── config/               # Environment-based configuration
 │       └── response/             # Standardized HTTP responses
