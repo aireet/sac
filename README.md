@@ -159,6 +159,8 @@ See the **[Guide](docs/guide.md)** for full setup instructions, local developmen
 
 - [ ] Adopt a [JuiceFS](https://github.com/juicefs/juicefs)-like approach for more flexible and user-friendly file sharing and agent persistence
 - [ ] Support agents beyond Claude Code (e.g. Codex, Gemini CLI, etc.)
+- [ ] Messaging integrations (Slack, Discord, Feishu, etc.) for agent notifications and interaction
+- [ ] Built-in MCP + Skill support for agents to deploy and manage CronJobs internally
 
 ## License
 

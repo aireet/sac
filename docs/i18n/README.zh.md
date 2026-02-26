@@ -159,6 +159,8 @@ graph LR
 
 - [ ] 参考 [JuiceFS](https://github.com/juicefs/juicefs) 等方案，实现更灵活友好的文件共享与 Agent 持久化
 - [ ] 支持 Claude Code 以外的其他 Agent（如 Codex、Gemini CLI 等）
+- [ ] 为 Agent 配置 Slack、Discord、飞书等通讯软件集成，实现消息通知与交互
+- [ ] 提供内置 MCP + Skill，支持 Agent 在内部部署和管理 CronJob 等定时任务
 
 ## 开源协议
 
