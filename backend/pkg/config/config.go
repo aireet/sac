@@ -49,23 +49,23 @@ func Load() (*Config, error) {
 		WSProxyPort:    getEnv("WS_PROXY_PORT", "8081"),
 
 		// Database
-		DBHost:     getEnv("DB_HOST", "pgm-uf60863vpy60vl6s.pg.rds.aliyuncs.com"),
+		DBHost:     getEnv("DB_HOST", "localhost"),
 		DBPort:     getEnv("DB_PORT", "5432"),
-		DBUser:     getEnv("DB_USER", "sandbox"),
-		DBPassword: getEnv("DB_PASSWORD", "4SOZfo6t6Oyj9A=="),
-		DBName:     getEnv("DB_NAME", "sandbox"),
+		DBUser:     getEnv("DB_USER", "sac"),
+		DBPassword: getEnv("DB_PASSWORD", ""),
+		DBName:     getEnv("DB_NAME", "sac"),
 
 		// Kubernetes
 		KubeconfigPath: getEnv("KUBECONFIG_PATH", "../kubeconfig.yaml"),
 		Namespace:      getEnv("K8S_NAMESPACE", "sac"),
 
 		// Docker Registry
-		DockerRegistry: getEnv("DOCKER_REGISTRY", "docker-register-registry-vpc.cn-shanghai.cr.aliyuncs.com"),
-		DockerImage:    getEnv("DOCKER_IMAGE", "prod/sac/cc:0.0.3"),
-		SidecarImage:   getEnv("SIDECAR_IMAGE", "prod/sac/output-watcher:0.0.1"),
+		DockerRegistry: getEnv("DOCKER_REGISTRY", ""),
+		DockerImage:    getEnv("DOCKER_IMAGE", ""),
+		SidecarImage:   getEnv("SIDECAR_IMAGE", ""),
 
 		// Auth
-		JWTSecret: getEnv("JWT_SECRET", "sac-dev-jwt-secret-change-in-production"),
+		JWTSecret: getEnv("JWT_SECRET", ""),
 
 		// Redis
 		RedisURL: getEnv("REDIS_URL", ""),

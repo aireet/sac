@@ -10,3 +10,6 @@ backend/vendor/
 
 # Environment
 .env
+
+# Local development secrets (never commit)
+.local/

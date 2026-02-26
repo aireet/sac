@@ -1,4 +1,5 @@
 # SAC Platform Helm Values
+# IMPORTANT: Copy this file to .local/values-production.yaml and fill in real secrets
 
 global:
   registry: docker-register-registry-vpc.cn-shanghai.cr.aliyuncs.com/prod/sac
@@ -57,16 +58,18 @@ frontend:
       memory: 256Mi
 
 # --- Database ---
+# IMPORTANT: Use environment variables or external secrets for production
 database:
-  host: pgm-uf60863vpy60vl6s.pg.rds.aliyuncs.com
+  host: YOUR_RDS_HOST
   port: "5432"
-  user: sandbox
-  password: 4SOZfo6t6Oyj9A==
-  name: sandbox
+  user: YOUR_DB_USER
+  password: YOUR_DB_PASSWORD
+  name: YOUR_DB_NAME
 
 # --- Auth ---
+# IMPORTANT: Change this in production
 auth:
-  jwtSecret: sac-dev-jwt-secret-change-in-production
+  jwtSecret: CHANGE_THIS_SECRET_IN_PRODUCTION
 
 # --- RBAC ---
 rbac:
@@ -80,7 +83,7 @@ serviceAccount:
 envoyGateway:
   enabled: true
   # Domain name for the platform
-  host: sac.echo.tech
+  host: sac.example.com
   # Envoy Proxy data plane image (used in EnvoyProxy CRD)
   proxyImage: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/envoyproxy/envoy:distroless-v1.36.3
   # Service type: NodePort or LoadBalancer
