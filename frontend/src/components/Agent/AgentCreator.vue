@@ -69,7 +69,7 @@
           </n-space>
           <n-alert v-if="activePresetInfo" type="info" :show-icon="true" style="margin-top: 4px">
             {{ activePresetInfo.doc_hint }}
-            <n-a :href="activePresetInfo.doc_url" target="_blank" style="margin-left: 4px">
+            <n-a v-if="activePresetInfo.doc_url" :href="activePresetInfo.doc_url" target="_blank" style="margin-left: 4px">
               View Documentation
             </n-a>
           </n-alert>
@@ -126,6 +126,29 @@
               v-model:value="formData.https_proxy"
               placeholder="http://proxy.example.com:8080"
             />
+          </n-form-item>
+
+          <n-form-item label="Custom Environment Variables">
+            <n-space vertical :size="8" style="width: 100%">
+              <n-space v-for="(env, idx) in formData.custom_envs" :key="idx" :size="8" style="width: 100%">
+                <n-input
+                  v-model:value="env.key"
+                  placeholder="ENV_NAME"
+                  style="flex: 1"
+                />
+                <n-input
+                  v-model:value="env.value"
+                  placeholder="value"
+                  style="flex: 2"
+                />
+                <n-button quaternary size="small" @click="formData.custom_envs.splice(idx, 1)">
+                  &times;
+                </n-button>
+              </n-space>
+              <n-button size="small" dashed @click="formData.custom_envs.push({ key: '', value: '' })">
+                + Add Variable
+              </n-button>
+            </n-space>
           </n-form-item>
         </n-collapse-item>
       </n-collapse>
@@ -192,6 +215,7 @@ const formData = ref({
   anthropic_sonnet_model: 'claude-sonnet-4.5',
   http_proxy: '',
   https_proxy: '',
+  custom_envs: [] as { key: string; value: string }[],
 })
 
 const activePreset = ref('')
@@ -238,14 +262,24 @@ const providerPresets = [
     doc_hint: 'Login to Alibaba Cloud console, go to Model Studio to get your API key.',
   },
   {
-    name: 'Nebula',
+    name: 'Kimi',
     token: '',
-    base_url: 'https://llm.ai-nebula.com',
-    haiku: 'claude-haiku-4-6',
-    sonnet: 'claude-sonnet-4-6',
-    opus: 'claude-opus-4-6',
-    doc_url: 'https://llm.ai-nebula.com',
-    doc_hint: 'Sign up at AI Nebula to get your API key.',
+    base_url: 'https://api.moonshot.ai/anthropic',
+    haiku: 'kimi-k2-thinking-turbo',
+    sonnet: 'kimi-k2-thinking-turbo',
+    opus: 'kimi-k2-thinking-turbo',
+    doc_url: 'https://platform.moonshot.cn',
+    doc_hint: 'Sign up at Moonshot AI platform to get your API key.',
+  },
+  {
+    name: 'Others',
+    token: '',
+    base_url: '',
+    haiku: '',
+    sonnet: '',
+    opus: '',
+    doc_url: '',
+    doc_hint: 'Enter your provider\'s base URL, API key, and model names manually.',
   },
 ]
 
@@ -312,6 +346,7 @@ const resetForm = () => {
     anthropic_sonnet_model: 'claude-sonnet-4.5',
     http_proxy: '',
     https_proxy: '',
+    custom_envs: [],
   }
   isEditing.value = false
 }
@@ -334,6 +369,7 @@ const handleSubmit = async () => {
         anthropic_sonnet_model: formData.value.anthropic_sonnet_model,
         http_proxy: formData.value.http_proxy,
         https_proxy: formData.value.https_proxy,
+        custom_envs: formData.value.custom_envs.filter(e => e.key.trim()),
       },
     }
 
@@ -375,6 +411,7 @@ watch(() => props.agent, (agent) => {
       anthropic_sonnet_model: agent.config?.anthropic_sonnet_model || 'claude-sonnet-4.5',
       http_proxy: agent.config?.http_proxy || '',
       https_proxy: agent.config?.https_proxy || '',
+      custom_envs: (agent.config?.custom_envs as { key: string; value: string }[] || []).map(e => ({ ...e })),
     }
   } else {
     resetForm()

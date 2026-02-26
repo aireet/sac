@@ -151,7 +151,7 @@ func (h *Handler) ListSkillFiles(c *gin.Context) {
 	protobind.OK(c, &sacv1.SkillFileListResponse{Files: convert.SkillFilesToProto(files)})
 }
 
-// DeleteSkillFile deletes a file attached to a skill.
+// DeleteSkillFile deletes a file (or directory) attached to a skill.
 func (h *Handler) DeleteSkillFile(c *gin.Context) {
 	skillID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -167,24 +167,42 @@ func (h *Handler) DeleteSkillFile(c *gin.Context) {
 
 	ctx := context.Background()
 
-	var sf models.SkillFile
-	err = h.db.NewSelect().Model(&sf).Where("skill_id = ? AND filepath = ?", skillID, filepath).Scan(ctx)
-	if err != nil {
-		response.NotFound(c, "File not found", err)
-		return
-	}
+	// Directory delete: path ends with "/"
+	if strings.HasSuffix(filepath, "/") {
+		prefix := fmt.Sprintf("skills/%d/%s", skillID, filepath)
 
-	// Delete from S3
-	if h.syncService.storage != nil {
-		if backend := h.syncService.storage.GetClient(ctx); backend != nil {
-			_ = backend.Delete(ctx, sf.S3Key)
+		if h.syncService.storage != nil {
+			if backend := h.syncService.storage.GetClient(ctx); backend != nil {
+				_ = backend.DeletePrefix(ctx, prefix)
+			}
 		}
-	}
 
-	_, err = h.db.NewDelete().Model(&sf).Where("id = ?", sf.ID).Exec(ctx)
-	if err != nil {
-		response.InternalError(c, "Failed to delete file", err)
-		return
+		_, err = h.db.NewDelete().Model((*models.SkillFile)(nil)).
+			Where("skill_id = ? AND filepath LIKE ?", skillID, filepath+"%").
+			Exec(ctx)
+		if err != nil {
+			response.InternalError(c, "Failed to delete directory", err)
+			return
+		}
+	} else {
+		var sf models.SkillFile
+		err = h.db.NewSelect().Model(&sf).Where("skill_id = ? AND filepath = ?", skillID, filepath).Scan(ctx)
+		if err != nil {
+			response.NotFound(c, "File not found", err)
+			return
+		}
+
+		if h.syncService.storage != nil {
+			if backend := h.syncService.storage.GetClient(ctx); backend != nil {
+				_ = backend.Delete(ctx, sf.S3Key)
+			}
+		}
+
+		_, err = h.db.NewDelete().Model(&sf).Where("id = ?", sf.ID).Exec(ctx)
+		if err != nil {
+			response.InternalError(c, "Failed to delete file", err)
+			return
+		}
 	}
 
 	// Recompute content_checksum and bump version

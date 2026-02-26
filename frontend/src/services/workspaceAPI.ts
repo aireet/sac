@@ -15,7 +15,19 @@ function normalizeFileList(data: FileListResponse): FileListResponse {
   return data
 }
 
-// ---- Output workspace (read-only, populated by sidecar) ----
+// ---- Output workspace ----
+
+export const uploadOutputFile = async (
+  agentId: number, file: File, path?: string,
+): Promise<void> => {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('agent_id', String(agentId))
+  formData.append('path', path || file.name)
+  await api.post('/workspace/output/files', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
 
 export const listOutputFiles = async (agentId: number, path = '/'): Promise<FileListResponse> => {
   const response = await api.get('/workspace/output/files', { params: { agent_id: agentId, path } })

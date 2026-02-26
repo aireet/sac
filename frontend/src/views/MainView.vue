@@ -55,37 +55,6 @@
               Marketplace
             </n-button>
             <n-divider vertical />
-            <n-button-group size="small">
-              <n-tooltip trigger="hover">
-                <template #trigger>
-                  <n-button
-                    :type="inputMode === 'chat' ? 'primary' : 'default'"
-                    :secondary="inputMode === 'chat'"
-                    @click="inputMode = 'chat'"
-                  >
-                    <template #icon>
-                      <n-icon><ChatbubblesOutline /></n-icon>
-                    </template>
-                  </n-button>
-                </template>
-                Chat Mode
-              </n-tooltip>
-              <n-tooltip trigger="hover">
-                <template #trigger>
-                  <n-button
-                    :type="inputMode === 'terminal' ? 'primary' : 'default'"
-                    :secondary="inputMode === 'terminal'"
-                    @click="inputMode = 'terminal'"
-                  >
-                    <template #icon>
-                      <n-icon><TerminalOutline /></n-icon>
-                    </template>
-                  </n-button>
-                </template>
-                Terminal Mode
-              </n-tooltip>
-            </n-button-group>
-            <n-divider vertical />
             <n-button
               v-if="authStore.isAdmin"
               size="small"
@@ -226,14 +195,8 @@
                 :session-id="sessionId"
                 :ws-url="wsUrl"
                 :agent-id="selectedAgentId"
-                :interactive-mode="inputMode === 'terminal'"
               />
             </div>
-            <ChatInput
-              v-if="sessionId && inputMode === 'chat' && !editorFile"
-              @send="handleSendMessage"
-              @interrupt="handleInterrupt"
-            />
           </template>
           <SkillMarketplace
             v-else
@@ -320,7 +283,6 @@ import {
   NIcon,
   NDivider,
   NEmpty,
-  NTooltip,
   NTag,
   NModal,
   NInput,
@@ -328,10 +290,9 @@ import {
   useMessage,
 } from 'naive-ui'
 import {
-  Add, StorefrontOutline, TerminalOutline, ChatbubblesOutline, SettingsOutline, LogOutOutline, KeyOutline,
+  Add, StorefrontOutline, SettingsOutline, LogOutOutline, KeyOutline,
 } from '@vicons/ionicons5'
 import Terminal from '../components/Terminal/Terminal.vue'
-import ChatInput from '../components/ChatInput/ChatInput.vue'
 import SkillPanel from '../components/SkillPanel/SkillPanel.vue'
 import SkillMarketplace from '../components/SkillMarketplace/SkillMarketplace.vue'
 import AgentSelector from '../components/Agent/AgentSelector.vue'
@@ -368,7 +329,6 @@ const selectedAgent = ref<Agent | null>(null)
 const showAgentCreator = ref(false)
 const editingAgent = ref<Agent | null>(null)
 const viewMode = ref<'terminal' | 'marketplace'>('terminal')
-const inputMode = ref<'chat' | 'terminal'>('terminal')
 const userGroups = ref<Group[]>([])
 
 // CLAUDE.md editor
@@ -707,25 +667,14 @@ const handleAgentCreated = async () => {
   }
 }
 
-const handleSendMessage = (text: string) => {
-  console.log('[MainView] handleSendMessage:', text, 'terminalRef:', !!terminalRef.value)
-  if (terminalRef.value) {
-    terminalRef.value.sendMessage(text)
-  } else {
-    console.warn('[MainView] Terminal not available, cannot send message')
-    message.warning('Terminal not connected. Please wait for the session to be ready.')
-  }
-}
-
-const handleInterrupt = () => {
-  if (terminalRef.value) {
-    terminalRef.value.sendInterrupt()
-  }
-}
-
 const handleExecuteCommand = (command: string) => {
   console.log('[MainView] handleExecuteCommand:', command)
-  handleSendMessage(command)
+  if (terminalRef.value) {
+    terminalRef.value.sendMessage(command)
+  } else {
+    console.warn('[MainView] Terminal not available, cannot send command')
+    message.warning('Terminal not connected. Please wait for the session to be ready.')
+  }
 }
 
 const handleSkillsChanged = async () => {

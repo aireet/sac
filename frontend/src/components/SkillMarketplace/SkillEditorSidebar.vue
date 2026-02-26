@@ -107,6 +107,7 @@ import {
   DocumentTextOutline, ImageOutline, CloseOutline, TrashOutline,
 } from '@vicons/ionicons5'
 import type { SkillFile } from '../../services/skillAPI'
+import { parseDropItems } from '../../utils/dropUpload'
 
 const props = defineProps<{
   files: SkillFile[]
@@ -278,8 +279,9 @@ const renderSuffix = ({ option }: { option: TreeOption }) => {
       )
     }
   } else {
-    // Folder actions: new file in dir, delete empty pending dir
+    // Folder actions: new file in dir, delete folder
     const dirPath = (option as any)._dirPath as string
+    const isPending = pendingDirs.value.has(dirPath)
     items.push(
       h(NButton, {
         size: 'tiny', quaternary: true, circle: true, title: 'New file in ' + option.label,
@@ -290,8 +292,8 @@ const renderSuffix = ({ option }: { option: TreeOption }) => {
         },
       }, { default: () => '+' }),
     )
-    // Show delete button for empty directories (pending or no children with real files)
-    if (!option.children?.length || option.children.every((c: TreeOption) => !c.isLeaf && !c.children?.length)) {
+    if (isPending) {
+      // Pending dir (frontend-only): just remove from set
       items.push(
         h(NButton, {
           size: 'tiny', quaternary: true, circle: true, type: 'error', title: 'Delete folder',
@@ -300,6 +302,17 @@ const renderSuffix = ({ option }: { option: TreeOption }) => {
             pendingDirs.value.delete(dirPath)
             pendingDirs.value = new Set(pendingDirs.value)
             if (activeDir.value === dirPath) activeDir.value = '/'
+          },
+        }, { icon: () => h(NIcon, { size: 14 }, () => h(TrashOutline)) })
+      )
+    } else if (props.skillId) {
+      // Real dir with files: emit deleteFile with trailing slash
+      items.push(
+        h(NButton, {
+          size: 'tiny', quaternary: true, circle: true, type: 'error', title: 'Delete folder',
+          onClick: (e: Event) => {
+            e.stopPropagation()
+            emit('deleteFile', dirPath + '/')
           },
         }, { icon: () => h(NIcon, { size: 14 }, () => h(TrashOutline)) })
       )
@@ -410,31 +423,8 @@ async function handleDrop(e: DragEvent) {
   dragOver.value = false
   if (props.readonly || !props.skillId || !e.dataTransfer) return
 
-  const items = e.dataTransfer.items
-  if (!items?.length) return
+  const { files: singleFiles, folderFiles } = await parseDropItems(e.dataTransfer)
 
-  const files: { file: File; filepath: string }[] = []
-  const singleFiles: File[] = []
-
-  // Use webkitGetAsEntry to detect folders vs files
-  const entries: FileSystemEntry[] = []
-  for (const item of items) {
-    const entry = item.webkitGetAsEntry?.()
-    if (entry) entries.push(entry)
-  }
-
-  if (entries.length > 0) {
-    for (const entry of entries) {
-      if (entry.isFile) {
-        const file = await entryToFile(entry as FileSystemFileEntry)
-        if (file) singleFiles.push(file)
-      } else if (entry.isDirectory) {
-        await readDirectoryEntry(entry as FileSystemDirectoryEntry, entry.name, files)
-      }
-    }
-  }
-
-  // Emit single files as individual uploads, folder contents as batch
   for (const f of singleFiles) {
     if (activeDir.value === '/') {
       emit('upload', f)
@@ -442,41 +432,8 @@ async function handleDrop(e: DragEvent) {
       emit('uploadIn', f, activeDir.value)
     }
   }
-  if (files.length > 0) {
-    emit('uploadFolder', files)
-  }
-}
-
-function entryToFile(entry: FileSystemFileEntry): Promise<File | null> {
-  return new Promise(resolve => {
-    entry.file(f => resolve(f), () => resolve(null))
-  })
-}
-
-async function readDirectoryEntry(
-  dirEntry: FileSystemDirectoryEntry,
-  basePath: string,
-  out: { file: File; filepath: string }[],
-) {
-  const reader = dirEntry.createReader()
-  let entries: FileSystemEntry[] = []
-  // readEntries may return partial results, must call repeatedly
-  let batch: FileSystemEntry[]
-  do {
-    batch = await new Promise<FileSystemEntry[]>((resolve, reject) => {
-      reader.readEntries(resolve, reject)
-    })
-    entries = entries.concat(batch)
-  } while (batch.length > 0)
-
-  for (const entry of entries) {
-    const path = basePath ? basePath + '/' + entry.name : entry.name
-    if (entry.isFile) {
-      const file = await entryToFile(entry as FileSystemFileEntry)
-      if (file) out.push({ file, filepath: path })
-    } else if (entry.isDirectory) {
-      await readDirectoryEntry(entry as FileSystemDirectoryEntry, path, out)
-    }
+  if (folderFiles.length > 0) {
+    emit('uploadFolder', folderFiles)
   }
 }
 </script>

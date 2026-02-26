@@ -5,8 +5,8 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"github.com/rs/zerolog/log"
 	"io"
-"github.com/rs/zerolog/log"
 	"net/http"
 	"path"
 	"strconv"
@@ -124,6 +124,94 @@ func (h *Handler) InternalOutputUpload(c *gin.Context) {
 	// Notify subscribers via Redis
 	if h.hub != nil {
 		h.hub.Publish(ctx, userID, agentID, OutputEvent{
+			Action: "upload",
+			Path:   filePath,
+			Name:   path.Base(filePath),
+			Size:   header.Size,
+		})
+	}
+
+	protobind.Created(c, convert.WorkspaceFileToProto(wf))
+}
+
+// UploadOutputFile handles multipart file upload from the browser (JWT-protected).
+func (h *Handler) UploadOutputFile(c *gin.Context) {
+	oss := h.getOSS(c)
+	userID, _ := c.Get("userID")
+	userIDInt := userID.(int64)
+
+	agentIDStr := c.PostForm("agent_id")
+	filePath := c.PostForm("path")
+
+	agentID, err := strconv.ParseInt(agentIDStr, 10, 64)
+	if err != nil || agentID <= 0 {
+		response.BadRequest(c, "invalid agent_id")
+		return
+	}
+	if filePath == "" {
+		response.BadRequest(c, "path is required")
+		return
+	}
+	filePath = sanitizePath(filePath)
+
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		response.BadRequest(c, "No file provided", err)
+		return
+	}
+	defer file.Close()
+
+	if header.Size > maxUploadSize {
+		response.BadRequest(c, fmt.Sprintf("File too large: %d bytes (max %d)", header.Size, maxUploadSize))
+		return
+	}
+
+	ctx := context.Background()
+	ossKey := outputOSSKeyPrefix(userIDInt, agentID) + filePath
+
+	hasher := md5.New()
+	tee := io.TeeReader(file, hasher)
+
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	if err := oss.Upload(ctx, ossKey, tee, header.Size, contentType); err != nil {
+		response.InternalError(c, "Failed to upload file", err)
+		return
+	}
+
+	checksum := fmt.Sprintf("%x", hasher.Sum(nil))
+
+	wf := &models.WorkspaceFile{
+		UserID:        userIDInt,
+		AgentID:       agentID,
+		WorkspaceType: "output",
+		OSSKey:        ossKey,
+		FileName:      path.Base(filePath),
+		FilePath:      filePath,
+		ContentType:   contentType,
+		SizeBytes:     header.Size,
+		Checksum:      checksum,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+
+	_, err = h.db.NewInsert().Model(wf).
+		On("CONFLICT (oss_key) DO UPDATE").
+		Set("size_bytes = EXCLUDED.size_bytes").
+		Set("checksum = EXCLUDED.checksum").
+		Set("content_type = EXCLUDED.content_type").
+		Set("updated_at = EXCLUDED.updated_at").
+		Exec(ctx)
+	if err != nil {
+		response.InternalError(c, "Failed to save file record", err)
+		return
+	}
+
+	if h.hub != nil {
+		h.hub.Publish(ctx, userIDInt, agentID, OutputEvent{
 			Action: "upload",
 			Path:   filePath,
 			Name:   path.Base(filePath),

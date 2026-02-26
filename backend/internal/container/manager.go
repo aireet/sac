@@ -343,6 +343,19 @@ func (m *Manager) buildAgentEnvVars(userID string, agentID int64, agentConfig ma
 		}
 	}
 
+	// Add custom environment variables
+	if customEnvs, ok := agentConfig["custom_envs"].([]interface{}); ok {
+		for _, item := range customEnvs {
+			if env, ok := item.(map[string]interface{}); ok {
+				key, _ := env["key"].(string)
+				value, _ := env["value"].(string)
+				if key != "" {
+					envVars = append(envVars, corev1.EnvVar{Name: key, Value: value})
+				}
+			}
+		}
+	}
+
 	return envVars
 }
 

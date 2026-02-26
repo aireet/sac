@@ -183,6 +183,7 @@ func main() {
 	{
 		ws := protected.Group("/workspace")
 		ws.GET("/output/files/download", workspaceHandler.RequireOSS(), workspaceHandler.DownloadOutputFile)
+		ws.POST("/output/files", workspaceHandler.RequireOSS(), workspaceHandler.UploadOutputFile)
 
 		// Skill file management (multipart upload, not suitable for gRPC-gateway)
 		skillHandler.RegisterFileRoutes(protected)

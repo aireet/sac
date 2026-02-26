@@ -164,6 +164,14 @@ func (s *Server) UpdateSkill(ctx context.Context, req *sacv1.UpdateSkillByIdRequ
 		updateData.GroupID = req.GroupId
 	}
 
+	// Mutual exclusion: is_public and group_id cannot both be set
+	if req.IsPublic != nil && *req.IsPublic {
+		updateData.GroupID = nil // clear group when going public
+	}
+	if req.GroupId != nil && *req.GroupId > 0 {
+		updateData.IsPublic = false // clear public when assigning to group
+	}
+
 	columns := []string{"name", "description", "icon", "category", "prompt", "command_name", "parameters", "is_public", "updated_at", "version", "frontmatter", "group_id"}
 
 	if updateData.CommandName == "" && updateData.Name != "" {
@@ -358,6 +366,7 @@ func (s *Server) ShareSkillToGroup(ctx context.Context, req *sacv1.ShareSkillToG
 	_, err = s.db.NewUpdate().
 		Model((*models.Skill)(nil)).
 		Set("group_id = ?", groupID).
+		Set("is_public = ?", false).
 		Set("updated_at = ?", time.Now()).
 		Set("version = version + 1").
 		Where("id = ?", req.Id).

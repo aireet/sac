@@ -261,7 +261,12 @@ func (s *Server) InstallSkill(ctx context.Context, req *sacv1.InstallSkillByAgen
 	}
 
 	var sk models.Skill
-	err = s.db.NewSelect().Model(&sk).Where("id = ?", req.SkillId).Scan(ctx)
+	err = s.db.NewSelect().Model(&sk).
+		Where("id = ?", req.SkillId).
+		Where(`(is_official = ? OR created_by = ? OR is_public = ?
+			OR group_id IN (SELECT group_id FROM group_members WHERE user_id = ?))`,
+			true, userID, true, userID).
+		Scan(ctx)
 	if err != nil {
 		return nil, grpcerr.NotFound("Skill not found", err)
 	}

@@ -390,6 +390,33 @@ func (s *SyncService) SyncAllSkillsToAgent(ctx context.Context, userID string, a
 
 	pod := s.podName(userID, agentID)
 
+	// Lazy revocation: filter out skills the user can no longer access
+	var userGroupIDs []int64
+	_ = s.db.NewSelect().TableExpr("group_members").
+		Column("group_id").
+		Where("user_id = ?", uid).
+		Scan(ctx, &userGroupIDs)
+	groupSet := make(map[int64]bool, len(userGroupIDs))
+	for _, gid := range userGroupIDs {
+		groupSet[gid] = true
+	}
+
+	var visible []skillWithSync
+	for i := range skills {
+		sk := &skills[i].Skill
+		if sk.IsOfficial || sk.IsPublic || sk.CreatedBy == uid {
+			visible = append(visible, skills[i])
+		} else if sk.GroupID != nil && groupSet[*sk.GroupID] {
+			visible = append(visible, skills[i])
+		} else {
+			// Revoked: remove agent_skills record; stale cleanup below removes pod dir
+			_, _ = s.db.NewDelete().Model((*models.AgentSkill)(nil)).
+				Where("agent_id = ? AND skill_id = ?", agentID, sk.ID).Exec(ctx)
+			log.Info().Int64("skill_id", sk.ID).Str("command", sk.CommandName).Str("pod", pod).Msg("revoked inaccessible skill")
+		}
+	}
+	skills = visible
+
 	// Detect if skills dir exists on pod. If not (pod restart, emptyDir wiped),
 	// force full sync by ignoring version skip.
 	forceSync := false

@@ -15,6 +15,14 @@
           <n-space :size="4" style="flex-shrink: 0">
             <n-tooltip trigger="hover">
               <template #trigger>
+                <n-button size="small" quaternary @click="triggerUpload" :loading="uploading">
+                  <template #icon><n-icon><CloudUploadOutline /></n-icon></template>
+                </n-button>
+              </template>
+              Upload files
+            </n-tooltip>
+            <n-tooltip trigger="hover">
+              <template #trigger>
                 <n-button size="small" quaternary @click="refreshTree">
                   <template #icon><n-icon><RefreshOutline /></n-icon></template>
                 </n-button>
@@ -22,6 +30,7 @@
               Refresh file list
             </n-tooltip>
           </n-space>
+          <input ref="fileInputRef" type="file" multiple style="display: none" @change="handleFileInput" />
         </div>
 
         <!-- Active directory indicator -->
@@ -49,7 +58,7 @@
         </div>
 
         <!-- Body: Tree -->
-        <div class="ws-body">
+        <div class="ws-body" :class="{ 'ws-drop-active': dragOver }" @dragover.prevent="onDragOver" @dragleave.prevent="onDragLeave" @drop.prevent="onDrop">
           <div class="ws-content">
             <n-spin :show="rootLoading">
               <n-tree
@@ -184,7 +193,7 @@ import {
   RefreshOutline, DocumentOutline,
   DownloadOutline, TrashOutline, FolderOutline, CodeSlashOutline,
   DocumentTextOutline, ImageOutline, SettingsOutline, CloseOutline,
-  ShareSocialOutline, EyeOutline,
+  ShareSocialOutline, EyeOutline, CloudUploadOutline,
 } from '@vicons/ionicons5'
 import type { AgentSkill } from '../../generated/sac/v1/agent'
 import type { Skill } from '../../generated/sac/v1/skill'
@@ -195,10 +204,11 @@ import { uninstallSkill } from '../../services/agentAPI'
 import { extractApiError } from '../../utils/error'
 import {
   listOutputFiles, downloadOutputFile, deleteOutputFile, shareOutputFile, deleteShare,
-  watchOutputFiles,
+  uploadOutputFile, watchOutputFiles,
   type WorkspaceFile, type SpaceTab,
 } from '../../services/workspaceAPI'
 import { getFileIcon } from '../../utils/fileTypes'
+import { parseDropItems } from '../../utils/dropUpload'
 
 const props = defineProps<{
   agentId: number
@@ -232,6 +242,11 @@ const showShareModal = ref(false)
 const shareUrl = ref('')
 const shareCode = ref('')
 const sharingFile = ref(false)
+
+// Upload state
+const uploading = ref(false)
+const dragOver = ref(false)
+const fileInputRef = ref<HTMLInputElement | null>(null)
 
 // Skill management state
 const showSkillDetail = ref(false)
@@ -540,6 +555,56 @@ const handleBatchDelete = async () => {
   checkedKeys.value = []
 }
 
+// --- Upload ---
+const triggerUpload = () => {
+  fileInputRef.value?.click()
+}
+
+const uploadItems = async (items: { file: File; path: string }[]) => {
+  if (items.length === 0) return
+  uploading.value = true
+  let ok = 0
+  let fail = 0
+  for (const item of items) {
+    try {
+      await uploadOutputFile(props.agentId, item.file, item.path)
+      ok++
+    } catch (err) {
+      fail++
+      console.error('Upload failed:', item.path, err)
+    }
+  }
+  uploading.value = false
+  if (ok > 0) message.success(`Uploaded ${ok} file${ok > 1 ? 's' : ''}`)
+  if (fail > 0) message.error(`${fail} file${fail > 1 ? 's' : ''} failed to upload`)
+}
+
+const dirPrefix = () => activeDir.value === '/' ? '' : activeDir.value.replace(/\/$/, '') + '/'
+
+const handleFileInput = (e: Event) => {
+  const input = e.target as HTMLInputElement
+  if (input.files) {
+    const prefix = dirPrefix()
+    const items = Array.from(input.files).map(f => ({ file: f, path: prefix + f.name }))
+    uploadItems(items)
+    input.value = ''
+  }
+}
+
+const onDragOver = () => { dragOver.value = true }
+const onDragLeave = () => { dragOver.value = false }
+const onDrop = async (e: DragEvent) => {
+  dragOver.value = false
+  if (!e.dataTransfer) return
+  const { files, folderFiles } = await parseDropItems(e.dataTransfer)
+  const prefix = dirPrefix()
+  const items = [
+    ...files.map(f => ({ file: f, path: prefix + f.name })),
+    ...folderFiles.map(f => ({ file: f.file, path: prefix + f.filepath })),
+  ]
+  uploadItems(items)
+}
+
 // --- Utilities ---
 const formatBytes = (bytes: number): string => {
   if (bytes === 0) return '0 B'
@@ -813,6 +878,14 @@ onUnmounted(() => {
   overflow-y: auto;
   padding: 0 8px 12px;
   min-height: 0;
+  transition: border-color 0.2s, background 0.2s;
+  border: 2px solid transparent;
+  border-radius: 8px;
+}
+
+.ws-body.ws-drop-active {
+  border-color: rgba(99, 226, 183, 0.5);
+  background: rgba(99, 226, 183, 0.04);
 }
 
 .ws-content {

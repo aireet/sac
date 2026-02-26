@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
@@ -17,7 +17,6 @@ const props = defineProps<{
   sessionId: string
   wsUrl?: string
   agentId?: number
-  interactiveMode?: boolean
 }>()
 
 const authStore = useAuthStore()
@@ -37,8 +36,8 @@ const initTerminal = () => {
 
   // Create terminal instance
   terminal = new Terminal({
-    cursorBlink: !!props.interactiveMode,
-    disableStdin: !props.interactiveMode,
+    cursorBlink: true,
+    disableStdin: false,
     fontSize: 14,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     allowProposedApi: true,
@@ -82,14 +81,12 @@ const initTerminal = () => {
   // Connect to WebSocket
   connectWebSocket()
 
-  // In interactive mode, forward keystrokes directly to the PTY via WebSocket
-  if (props.interactiveMode) {
-    terminal.onData((data) => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(data)
-      }
-    })
-  }
+  // Forward keystrokes directly to the PTY via WebSocket
+  terminal.onData((data) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(data)
+    }
+  })
 
   // Handle terminal resize - notify backend so ttyd can resize the PTY
   terminal.onResize(({ cols, rows }) => {
@@ -283,24 +280,6 @@ watch(() => props.sessionId, (newId, oldId) => {
       connectWebSocket()
     }
   }
-})
-
-// When interactiveMode changes, re-create the terminal with new settings
-watch(() => props.interactiveMode, () => {
-  // Tear down old terminal and WebSocket
-  cleanup()
-  if (resizeObserver) {
-    resizeObserver.disconnect()
-    resizeObserver = null
-  }
-  if (terminal) {
-    terminal.dispose()
-    terminal = null
-  }
-  // Re-create with new mode
-  nextTick(() => {
-    initTerminal()
-  })
 })
 
 onUnmounted(() => {

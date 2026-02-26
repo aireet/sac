@@ -172,7 +172,7 @@ const installedSkillIds = computed(() => {
 })
 
 const browseSkills = computed(() =>
-  allSkills.value.filter(s => s.is_official || s.is_public || isOwned(s))
+  allSkills.value.filter(s => s.is_official || s.is_public || s.group_id || isOwned(s))
 )
 
 const mySkills = computed(() =>

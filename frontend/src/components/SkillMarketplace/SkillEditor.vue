@@ -66,16 +66,28 @@
                   <div class="meta-field" style="flex: 1">
                     <label class="meta-label">Visibility</label>
                     <n-select
-                      :value="meta.is_public ? 'public' : 'private'"
+                      :value="visibilityValue"
                       :options="[
                         { label: 'Private', value: 'private' },
                         { label: 'Public', value: 'public' },
+                        { label: 'Group', value: 'group' },
                       ]"
                       size="small"
                       :disabled="readonly"
-                      @update:value="(v: string) => meta.is_public = v === 'public'"
+                      @update:value="handleVisibilityChange"
                     />
                   </div>
+                </div>
+                <div v-if="visibilityValue === 'group'" class="meta-field">
+                  <label class="meta-label">Group</label>
+                  <n-select
+                    v-model:value="meta.group_id"
+                    :options="groupOptions"
+                    :loading="loadingGroups"
+                    placeholder="Select a group"
+                    size="small"
+                    :disabled="readonly"
+                  />
                 </div>
               </div>
             </n-collapse-item>
@@ -138,6 +150,7 @@ import {
 } from '../../services/skillAPI'
 import { buildSkillMD, parseSkillMD, defaultSkillTemplate } from '../../utils/skillMarkdown'
 import { extractApiError } from '../../utils/error'
+import { listGroups } from '../../services/groupAPI'
 
 const props = defineProps<{
   skill: Skill | null
@@ -158,6 +171,7 @@ const meta = ref({
   icon: '📝',
   command_name: '',
   is_public: false,
+  group_id: undefined as number | undefined,
 })
 
 // --- Editor state ---
@@ -167,6 +181,41 @@ const uploading = ref(false)
 const activeFile = ref('SKILL.md')
 const attachedFiles = ref<SkillFile[]>([])
 const dirtyFiles = ref(new Set<string>())
+
+// --- Group visibility ---
+const loadingGroups = ref(false)
+const groups = ref<{ id: number; name: string }[]>([])
+const groupOptions = computed(() => groups.value.map(g => ({ label: g.name, value: g.id })))
+const visibilityValue = computed(() => {
+  if (meta.value.group_id) return 'group'
+  if (meta.value.is_public) return 'public'
+  return 'private'
+})
+
+function handleVisibilityChange(v: string) {
+  if (v === 'private') {
+    meta.value.is_public = false
+    meta.value.group_id = undefined
+  } else if (v === 'public') {
+    meta.value.is_public = true
+    meta.value.group_id = undefined
+  } else if (v === 'group') {
+    meta.value.is_public = false
+    meta.value.group_id = groups.value[0]?.id
+    if (!groups.value.length) fetchGroups()
+  }
+}
+
+async function fetchGroups() {
+  loadingGroups.value = true
+  try {
+    groups.value = await listGroups()
+    if (visibilityValue.value === 'group' && !meta.value.group_id && groups.value.length) {
+      meta.value.group_id = groups.value[0]!.id
+    }
+  } catch { /* ignore */ }
+  finally { loadingGroups.value = false }
+}
 
 const fileCache = ref<Map<string, string>>(new Map())
 const originalCache = ref<Map<string, string>>(new Map())
@@ -205,6 +254,7 @@ onMounted(async () => {
       icon: props.skill.icon || '📝',
       command_name: props.skill.command_name || '',
       is_public: props.skill.is_public,
+      group_id: props.skill.group_id,
     }
     const fm = props.skill.frontmatter ?? {}
     const md = buildSkillMD(fm, props.skill.prompt || '')
@@ -216,6 +266,8 @@ onMounted(async () => {
     fileCache.value.set('SKILL.md', tpl)
     originalCache.value.set('SKILL.md', tpl)
   }
+  // Pre-fetch groups if skill has group visibility or for the dropdown
+  fetchGroups()
 })
 
 // --- File operations ---
@@ -278,11 +330,19 @@ async function handleDeleteFile(filepath: string) {
   if (!currentSkillId.value) return
   try {
     await deleteSkillFile(currentSkillId.value, filepath)
-    message.success('File removed')
-    fileCache.value.delete(filepath)
-    originalCache.value.delete(filepath)
-    dirtyFiles.value.delete(filepath)
-    if (activeFile.value === filepath) activeFile.value = 'SKILL.md'
+    message.success(filepath.endsWith('/') ? 'Folder removed' : 'File removed')
+    // Clear caches for deleted path (or all files under deleted dir)
+    const isDir = filepath.endsWith('/')
+    for (const key of fileCache.value.keys()) {
+      if (isDir ? key.startsWith(filepath) : key === filepath) {
+        fileCache.value.delete(key)
+        originalCache.value.delete(key)
+        dirtyFiles.value.delete(key)
+      }
+    }
+    if (isDir ? activeFile.value.startsWith(filepath) : activeFile.value === filepath) {
+      activeFile.value = 'SKILL.md'
+    }
     await loadFiles()
   } catch (error) {
     message.error(extractApiError(error, 'Delete failed'))
@@ -369,6 +429,7 @@ async function handleSave() {
         icon: meta.value.icon,
         command_name: meta.value.command_name,
         is_public: meta.value.is_public,
+        group_id: meta.value.group_id,
         prompt,
         frontmatter: fm,
       })
@@ -385,6 +446,7 @@ async function handleSave() {
         icon: meta.value.icon,
         command_name: meta.value.command_name,
         is_public: meta.value.is_public,
+        group_id: meta.value.group_id,
         prompt,
         category: '',
         parameters: [],
