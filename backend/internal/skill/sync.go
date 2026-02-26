@@ -462,7 +462,7 @@ func (s *SyncService) SyncAllSkillsToAgent(ctx context.Context, userID string, a
 		synced++
 	}
 
-	if skippedByVersion > 0 {
+	if skippedByVersion > 0 && synced > 0 {
 		s.publish(ctx, uid, agentID, SkillSyncEvent{
 			Action: "progress", AgentID: agentID,
 			Step:    "up_to_date",
@@ -471,10 +471,12 @@ func (s *SyncService) SyncAllSkillsToAgent(ctx context.Context, userID string, a
 	}
 
 	// Clean up stale skill directories
-	s.publish(ctx, uid, agentID, SkillSyncEvent{
-		Action: "progress", AgentID: agentID,
-		Step: "cleaning_stale", Message: "Cleaning up stale skills...",
-	})
+	if synced > 0 {
+		s.publish(ctx, uid, agentID, SkillSyncEvent{
+			Action: "progress", AgentID: agentID,
+			Step: "cleaning_stale", Message: "Cleaning up stale skills...",
+		})
+	}
 
 	existingDirs, err := s.containerManager.ListFilesInPod(ctx, pod, skillsDir)
 	if err != nil {
@@ -508,11 +510,13 @@ func (s *SyncService) SyncAllSkillsToAgent(ctx context.Context, userID string, a
 		}
 	}
 
-	s.publish(ctx, uid, agentID, SkillSyncEvent{
-		Action: "complete", AgentID: agentID,
-		Step:    "done",
-		Message: fmt.Sprintf("Sync complete: %d synced, %d up to date", synced, skippedByVersion),
-	})
+	if synced > 0 {
+		s.publish(ctx, uid, agentID, SkillSyncEvent{
+			Action: "complete", AgentID: agentID,
+			Step:    "done",
+			Message: fmt.Sprintf("Sync complete: %d synced, %d up to date", synced, skippedByVersion),
+		})
+	}
 
 	log.Info().Int("synced", synced).Int("skipped", skippedByVersion).Int("total", len(skills)).Str("pod", pod).Msg("synced skills")
 	return nil

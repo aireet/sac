@@ -20,7 +20,8 @@ type Server struct {
 	settingsService *admin.SettingsService
 }
 
-func NewServer(db *bun.DB, jwtService *JWTService, settingsService *admin.SettingsService) *Server {
+func 
+NewServer(db *bun.DB, jwtService *JWTService, settingsService *admin.SettingsService) *Server {
 	return &Server{db: db, jwtService: jwtService, settingsService: settingsService}
 }
 
