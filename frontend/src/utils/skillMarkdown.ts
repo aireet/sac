@@ -41,7 +41,7 @@ export function parseSkillMD(content: string): ParsedSkillMD {
   }
 
   try {
-    const raw = yaml.load(match[1]) as Record<string, unknown> | null
+    const raw = yaml.load(match[1]!) as Record<string, unknown> | null
     if (!raw || typeof raw !== 'object') {
       return { frontmatter: {}, prompt: content }
     }
@@ -55,7 +55,7 @@ export function parseSkillMD(content: string): ParsedSkillMD {
     if (typeof raw.argument_hint === 'string') fm.argument_hint = raw.argument_hint
     if (typeof raw.user_invocable === 'boolean') fm.user_invocable = raw.user_invocable
 
-    return { frontmatter: fm, prompt: match[2] }
+    return { frontmatter: fm, prompt: match[2] ?? '' }
   } catch {
     return { frontmatter: {}, prompt: content }
   }

@@ -279,7 +279,6 @@ import {
   NText,
   NSelect,
   NButton,
-  NButtonGroup,
   NIcon,
   NDivider,
   NEmpty,
@@ -405,7 +404,7 @@ const editorBlobUrl = ref('')
 const editorLoading = ref(false)
 const editorSaving = ref(false)
 const csvColumns = ref<Array<{ title: string; key: string }>>([])
-const csvData = ref<Array<Record<string, string>>>([])
+const csvData = ref<Array<Record<string, string | number>>>([])
 const editorDirty = computed(() => editorCategory.value === 'text' && editorContent.value !== editorOriginalContent.value)
 const editorCanSave = computed(() => {
   // Output workspace is read-only

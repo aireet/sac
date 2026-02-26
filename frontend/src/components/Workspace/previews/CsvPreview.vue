@@ -19,7 +19,7 @@ import { NDataTable } from 'naive-ui'
 
 defineProps<{
   columns: Array<{ title: string; key: string }>
-  data: Array<Record<string, string>>
+  data: Array<Record<string, string | number>>
 }>()
 
 const tableHeight = computed(() => window.innerHeight - 140)

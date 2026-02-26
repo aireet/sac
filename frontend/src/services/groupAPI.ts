@@ -1,6 +1,6 @@
 import api from './api'
 import type { Group, GroupMember, GroupListResponse, GroupMemberListResponse } from '../generated/sac/v1/group'
-import { normalizeInt64, normalizeInt64Array } from '../utils/proto'
+import { normalizeInt64 } from '../utils/proto'
 
 export type { Group, GroupMember }
 

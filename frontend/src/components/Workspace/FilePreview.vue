@@ -84,7 +84,7 @@ const props = defineProps<{
   dirty: boolean
   canSave: boolean
   csvColumns: Array<{ title: string; key: string }>
-  csvData: Array<Record<string, string>>
+  csvData: Array<Record<string, string | number>>
   hideHeader?: boolean
 }>()
 

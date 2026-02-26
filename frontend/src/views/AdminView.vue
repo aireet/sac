@@ -735,7 +735,7 @@ const userColumns = computed<DataTableColumns<AdminUser>>(() => [
     title: 'Created',
     key: 'created_at',
     render(row) {
-      return new Date(row.created_at).toLocaleDateString()
+      return new Date(row.created_at ?? '').toLocaleDateString()
     },
   },
   {
@@ -1186,7 +1186,7 @@ const groupColumns = computed<DataTableColumns<AdminGroup>>(() => [
     title: 'Created',
     key: 'created_at',
     render(row) {
-      return new Date(row.created_at).toLocaleDateString()
+      return new Date(row.created_at ?? '').toLocaleDateString()
     },
   },
   {
@@ -1259,7 +1259,7 @@ const groupMemberColumns = computed<DataTableColumns<AdminGroupMember>>(() => [
     title: 'Joined',
     key: 'created_at',
     render(row) {
-      return new Date(row.created_at).toLocaleDateString()
+      return new Date(row.created_at ?? '').toLocaleDateString()
     },
   },
   {
@@ -1516,7 +1516,7 @@ const conversationColumns = computed<DataTableColumns<ConversationRecord>>(() =>
     key: 'timestamp',
     width: 170,
     render(row) {
-      return new Date(row.timestamp).toLocaleString()
+      return new Date(row.timestamp ?? '').toLocaleString()
     },
   },
   { title: 'User', key: 'username', width: 100 },

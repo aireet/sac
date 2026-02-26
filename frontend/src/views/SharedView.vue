@@ -68,7 +68,7 @@ const category = ref<FileCategory>('binary')
 const content = ref('')
 const blobUrl = ref('')
 const csvColumns = ref<Array<{ title: string; key: string }>>([])
-const csvData = ref<Array<Record<string, string>>>([])
+const csvData = ref<Array<Record<string, string | number>>>([])
 
 const previewFile = ref<WorkspaceFile>({
   name: '',

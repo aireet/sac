@@ -303,7 +303,7 @@ const sessionOptions = computed(() =>
   }))
 )
 
-const formatTime = (ts: string) => new Date(ts).toLocaleString()
+const formatTime = (ts: string | undefined) => ts ? new Date(ts).toLocaleString() : '-'
 
 const openHistory = async () => {
   showHistoryModal.value = true
