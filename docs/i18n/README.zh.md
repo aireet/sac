@@ -23,6 +23,8 @@ Claude Code 是一个革命性的 AI Agent，它几乎能做一切，但使用�
 
 ## 架构
 
+### 系统总览
+
 ```mermaid
 graph TB
     Browser["🌐 浏览器"]
@@ -32,9 +34,9 @@ graph TB
     end
 
     subgraph Services["SAC 服务"]
-        API["API Gateway<br/>(Go, :8080)"]
-        WS["WS Proxy<br/>(Go, :8081)"]
-        FE["Frontend<br/>(Vue 3, :80)"]
+        API["API Gateway :8080<br/>REST · gRPC-Gateway · SSE"]
+        WS["WS Proxy :8081<br/>二进制 WebSocket"]
+        FE["Frontend :80<br/>Vue 3 SPA"]
     end
 
     subgraph Data["数据层"]
@@ -43,56 +45,68 @@ graph TB
         S3["S3 兼容存储<br/>(OSS / MinIO / AWS S3)"]
     end
 
-    subgraph K8s["Kubernetes — 每用户/Agent 一个 StatefulSet"]
-        direction TB
-        subgraph Pod["claude-code-{uid}-{aid}-0"]
-            Main["主容器<br/>ttyd → claude CLI"]
-            Sidecar["Sidecar<br/>output-watcher"]
+    subgraph K8s["Kubernetes"]
+        subgraph Pod["每用户·Agent 一个 StatefulSet"]
+            Main["claude-code 容器<br/>dtach → ttyd :7681 → claude CLI"]
+            Sidecar["Sidecar 容器<br/>output-watcher (fsnotify)"]
+            Hook["conversation-sync.mjs<br/>(Stop · Submit 事件触发)"]
         end
+        Cron["CronJob: maintenance<br/>技能同步 · 会话清理<br/>对话清理 · 孤儿文件清理"]
     end
 
-    Browser -->|HTTP| Gateway
-    Gateway --> API
-    Gateway -->|WebSocket| WS
+    Browser -->|"HTTP / SSE"| Gateway
+    Browser -->|WebSocket| Gateway
     Gateway --> FE
+    Gateway --> API
+    Gateway --> WS
 
-    WS -->|"WS (ttyd 二进制协议)"| Main
-    API -->|K8s API| Pod
+    WS -->|"WS 二进制 (ttyd 协议)"| Main
+    API -->|"K8s API<br/>StatefulSet 生命周期"| Pod
     API --> PG
     API --> S3
-    API -->|Pub/Sub| Redis
+    API <-->|Pub/Sub| Redis
 
-    Sidecar -->|"fsnotify → POST /api/internal/output"| API
-    Redis -.->|"SSE 推送"| Browser
+    Sidecar -->|"POST /internal/output<br/>上传 · 删除"| API
+    Hook -->|"POST /internal/conversations"| API
+    Main ---|"共享 emptyDir<br/>/workspace"| Sidecar
 
-    Main ---|共享卷| Sidecar
+    S3 -.->|"同步工作区 + 技能<br/>(会话启动时)"| Pod
+    Redis -.->|"SSE 推送<br/>(文件 · 同步事件)"| Browser
+    Cron -.->|定时执行| API
 ```
+
+### Agent Pod 内部结构
 
 ```mermaid
 graph LR
     subgraph Pod["Pod: claude-code-{uid}-{aid}-0"]
-        subgraph Main["主容器"]
+        subgraph Main["claude-code 容器"]
             ttyd["ttyd :7681"] --> claude["claude CLI"]
+            Hook["conversation-sync.mjs"]
             Private["/workspace/private"]
             Public["/workspace/public"]
-            Output["/workspace/output<br/>📄 代码、图片、文档<br/>Claude Code 的文件产出"]
-            Skills["/root/.claude/skills"]
+            Output["/workspace/output<br/>📄 代码 · 图片 · 文档"]
+            Skills["/root/.claude/skills/<br/>SKILL.md + 附件"]
+            Settings["settings.json + hooks<br/>(ConfigMap)"]
         end
         subgraph Sidecar["Sidecar: output-watcher"]
             Watcher["fsnotify 监听"]
         end
     end
 
-    claude -.->|"写入文件<br/>（代码、图片、文档）"| Output
-    OSS["S3 存储"] -->|"会话启动时同步"| Private
-    OSS -->|"会话启动时同步"| Public
-    Output -->|"检测文件新增/变更/删除"| Watcher
-    Watcher -->|"POST 上传/删除"| API["API Gateway"]
-    API -->|"PUBLISH"| Redis["Redis"]
+    claude -.->|"写入文件"| Output
+    claude -.->|"Stop · Submit 事件"| Hook
+    Hook -->|"POST /internal/conversations<br/>(增量同步)"| API["API Gateway"]
+    S3["S3 存储"] -->|"会话启动时<br/>(tar + checksum)"| Skills
+    S3 -->|"会话启动时"| Private
+    S3 -->|"会话启动时"| Public
+    Output -->|"检测变更"| Watcher
+    Watcher -->|"POST 上传/删除"| API
+    API -->|"存储 + PUBLISH"| Redis["Redis"]
     Redis -->|"SSE → 浏览器"| Browser["🌐 浏览器"]
 ```
 
-> **Output 工作区**：当 Claude Code 生成文件 — 源代码、图片、文档或任何产物 — 它们会落入 `/workspace/output`。Sidecar（`output-watcher`）通过 fsnotify 检测这些文件变更，并通过内部 API 上传到 S3 存储。API 随后向 Redis 发布事件，Redis 将 SSE 通知推送到浏览器，用户无需轮询即可实时看到新文件出现。
+> **工作原理**：每个 Agent 运行在专属的 StatefulSet Pod 中，包含两个容器。主容器通过 `ttyd`（终端 WebSocket 化）运行 `claude CLI`，并使用 `dtach` 实现会话持久化。当 Claude 在 `/workspace/output` 中生成文件时，Sidecar 通过 fsnotify 检测变更并上传到 S3 — Redis Pub/Sub 随后将 SSE 事件推送到浏览器，实现实时更新。对话历史由 Hook 脚本（`conversation-sync.mjs`）在 Stop/Submit 事件触发时增量同步到 TimescaleDB。技能以 tar 包形式同步到 Pod，基于 checksum 去重。维护 CronJob 定期执行技能同步、过期会话清理、对话清理和孤儿文件清理。
 
 ## 功能特性
 

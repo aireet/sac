@@ -23,6 +23,8 @@ Claude Code is a revolutionary AI agent that can do almost anything, but using i
 
 ## Architecture
 
+### System Overview
+
 ```mermaid
 graph TB
     Browser["🌐 Browser"]
@@ -32,9 +34,9 @@ graph TB
     end
 
     subgraph Services["SAC Services"]
-        API["API Gateway<br/>(Go, :8080)"]
-        WS["WS Proxy<br/>(Go, :8081)"]
-        FE["Frontend<br/>(Vue 3, :80)"]
+        API["API Gateway :8080<br/>REST · gRPC-Gateway · SSE"]
+        WS["WS Proxy :8081<br/>binary WebSocket"]
+        FE["Frontend :80<br/>Vue 3 SPA"]
     end
 
     subgraph Data["Data Layer"]
@@ -43,56 +45,68 @@ graph TB
         S3["S3-compatible Storage<br/>(OSS / MinIO / AWS S3)"]
     end
 
-    subgraph K8s["Kubernetes — per user/agent StatefulSet"]
-        direction TB
-        subgraph Pod["claude-code-{uid}-{aid}-0"]
-            Main["main container<br/>ttyd → claude CLI"]
-            Sidecar["sidecar<br/>output-watcher"]
+    subgraph K8s["Kubernetes"]
+        subgraph Pod["StatefulSet per user·agent"]
+            Main["claude-code container<br/>dtach → ttyd :7681 → claude CLI"]
+            Sidecar["sidecar container<br/>output-watcher (fsnotify)"]
+            Hook["conversation-sync.mjs<br/>(hook on Stop · Submit)"]
         end
+        Cron["CronJob: maintenance<br/>skill sync · session cleanup<br/>conversation cleanup · orphan cleanup"]
     end
 
-    Browser -->|HTTP| Gateway
-    Gateway --> API
-    Gateway -->|WebSocket| WS
+    Browser -->|"HTTP / SSE"| Gateway
+    Browser -->|WebSocket| Gateway
     Gateway --> FE
+    Gateway --> API
+    Gateway --> WS
 
-    WS -->|"WS (ttyd binary)"| Main
-    API -->|K8s API| Pod
+    WS -->|"WS binary (ttyd protocol)"| Main
+    API -->|"K8s API<br/>StatefulSet lifecycle"| Pod
     API --> PG
     API --> S3
-    API -->|Pub/Sub| Redis
+    API <-->|Pub/Sub| Redis
 
-    Sidecar -->|"fsnotify → POST /api/internal/output"| API
-    Redis -.->|"SSE push"| Browser
+    Sidecar -->|"POST /internal/output<br/>upload · delete"| API
+    Hook -->|"POST /internal/conversations"| API
+    Main ---|"shared emptyDir<br/>/workspace"| Sidecar
 
-    Main ---|shared volume| Sidecar
+    S3 -.->|"sync workspace + skills<br/>(session start)"| Pod
+    Redis -.->|"SSE push<br/>(output · sync events)"| Browser
+    Cron -.->|periodic| API
 ```
+
+### Agent Pod Internals
 
 ```mermaid
 graph LR
     subgraph Pod["Pod: claude-code-{uid}-{aid}-0"]
-        subgraph Main["main container"]
+        subgraph Main["claude-code container"]
             ttyd["ttyd :7681"] --> claude["claude CLI"]
+            Hook["conversation-sync.mjs"]
             Private["/workspace/private"]
             Public["/workspace/public"]
-            Output["/workspace/output<br/>📄 code, images, docs<br/>produced by Claude Code"]
-            Skills["/root/.claude/skills"]
+            Output["/workspace/output<br/>📄 code · images · docs"]
+            Skills["/root/.claude/skills/<br/>SKILL.md + attachments"]
+            Settings["settings.json + hooks<br/>(ConfigMap)"]
         end
         subgraph Sidecar["sidecar: output-watcher"]
             Watcher["fsnotify watcher"]
         end
     end
 
-    claude -.->|"writes files<br/>(code, images, docs)"| Output
-    OSS["S3 Storage"] -->|"sync on session start"| Private
-    OSS -->|"sync on session start"| Public
-    Output -->|"detect new/changed/deleted files"| Watcher
-    Watcher -->|"POST upload/delete"| API["API Gateway"]
-    API -->|"PUBLISH"| Redis["Redis"]
+    claude -.->|"writes files"| Output
+    claude -.->|"Stop · Submit events"| Hook
+    Hook -->|"POST /internal/conversations<br/>(incremental sync)"| API["API Gateway"]
+    S3["S3 Storage"] -->|"session start<br/>(tar + checksum)"| Skills
+    S3 -->|"session start"| Private
+    S3 -->|"session start"| Public
+    Output -->|"detect changes"| Watcher
+    Watcher -->|"POST upload/delete"| API
+    API -->|"store + PUBLISH"| Redis["Redis"]
     Redis -->|"SSE → Browser"| Browser["🌐 Browser"]
 ```
 
-> **Output Workspace**: When Claude Code generates files — source code, images, documents, or any artifact — they land in `/workspace/output`. The sidecar (`output-watcher`) detects these file changes via fsnotify and uploads them to S3 storage through the internal API. The API then publishes an event to Redis, which pushes an SSE notification to the browser so the user sees new files appear in real time without polling.
+> **How it works**: Each agent runs in a dedicated StatefulSet pod with two containers. The main container runs `claude CLI` behind `ttyd` (terminal over WebSocket) with `dtach` for session persistence. When Claude generates files in `/workspace/output`, the sidecar detects changes via fsnotify and uploads them to S3 through the internal API — Redis Pub/Sub then pushes SSE events to the browser for real-time updates. Conversation history is captured by a hook script (`conversation-sync.mjs`) that triggers on Stop/Submit events and incrementally syncs transcripts to TimescaleDB. Skills are synced to pods as tar bundles with checksum-based deduplication. A maintenance CronJob periodically syncs skills, cleans stale sessions, expired conversations, and orphaned files.
 
 ## Features
 
